@@ -26,7 +26,7 @@
 
 #include "allocator_type.h"
 #include "arch/instruction_set.h"
-#include "atomic.h"
+#include "base/atomic.h"
 #include "base/macros.h"
 #include "base/mutex.h"
 #include "base/runtime_debug.h"
@@ -832,10 +832,13 @@ class Heap {
 
   const Verification* GetVerification() const;
 
+  void PostForkChildAction(Thread* self);
+
  private:
   class ConcurrentGCTask;
   class CollectorTransitionTask;
   class HeapTrimTask;
+  class TriggerPostForkCCGcTask;
 
   // Compact source space to target space. Returns the collector used.
   collector::GarbageCollector* Compact(space::ContinuousMemMapAllocSpace* target_space,

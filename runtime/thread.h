@@ -28,7 +28,7 @@
 
 #include "arch/context.h"
 #include "arch/instruction_set.h"
-#include "atomic.h"
+#include "base/atomic.h"
 #include "base/enums.h"
 #include "base/macros.h"
 #include "base/mutex.h"
@@ -207,7 +207,6 @@ class Thread {
 
   // Dumps the detailed thread state and the thread stack (used for SIGQUIT).
   void Dump(std::ostream& os,
-            bool dump_native_stack = true,
             BacktraceMap* backtrace_map = nullptr,
             bool force_dump_stack = false) const
       REQUIRES(!Locks::thread_suspend_count_lock_)
@@ -1303,7 +1302,6 @@ class Thread {
 
   void DumpState(std::ostream& os) const REQUIRES_SHARED(Locks::mutator_lock_);
   void DumpStack(std::ostream& os,
-                 bool dump_native_stack = true,
                  BacktraceMap* backtrace_map = nullptr,
                  bool force_dump_stack = false) const
       REQUIRES(!Locks::thread_suspend_count_lock_)

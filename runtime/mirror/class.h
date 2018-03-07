@@ -21,6 +21,8 @@
 #include "base/casts.h"
 #include "base/enums.h"
 #include "base/iteration_range.h"
+#include "base/stride_iterator.h"
+#include "base/utils.h"
 #include "class_flags.h"
 #include "class_status.h"
 #include "dex/dex_file.h"
@@ -33,9 +35,7 @@
 #include "object.h"
 #include "object_array.h"
 #include "read_barrier_option.h"
-#include "stride_iterator.h"
 #include "thread.h"
-#include "utils.h"
 
 namespace art {
 
@@ -185,6 +185,11 @@ class MANAGED Class FINAL : public Object {
   void SetClassFlags(uint32_t new_flags) REQUIRES_SHARED(Locks::mutator_lock_);
 
   void SetAccessFlags(uint32_t new_access_flags) REQUIRES_SHARED(Locks::mutator_lock_);
+
+  // Returns true if the class is an enum.
+  ALWAYS_INLINE bool IsEnum() REQUIRES_SHARED(Locks::mutator_lock_) {
+    return (GetAccessFlags() & kAccEnum) != 0;
+  }
 
   // Returns true if the class is an interface.
   ALWAYS_INLINE bool IsInterface() REQUIRES_SHARED(Locks::mutator_lock_) {

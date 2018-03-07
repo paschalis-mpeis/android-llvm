@@ -21,6 +21,7 @@
 
 #include "art_field.h"
 #include "base/callee_save_type.h"
+#include "base/utils.h"
 #include "class_linker-inl.h"
 #include "common_throws.h"
 #include "dex/code_item_accessors-inl.h"
@@ -44,7 +45,6 @@
 #include "runtime-inl.h"
 #include "scoped_thread_state_change-inl.h"
 #include "thread-current-inl.h"
-#include "utils.h"
 
 namespace art {
 
@@ -293,6 +293,11 @@ inline uint16_t ArtMethod::GetClassDefIndex() {
 inline const DexFile::ClassDef& ArtMethod::GetClassDef() {
   DCHECK(!IsProxyMethod());
   return GetDexFile()->GetClassDef(GetClassDefIndex());
+}
+
+inline size_t ArtMethod::GetNumberOfParameters() {
+  constexpr size_t return_type_count = 1u;
+  return strlen(GetShorty()) - return_type_count;
 }
 
 inline const char* ArtMethod::GetReturnTypeDescriptor() {
