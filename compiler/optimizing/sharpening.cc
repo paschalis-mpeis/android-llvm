@@ -125,8 +125,12 @@ void HSharpening::SharpenInvokeStaticOrDirect(HInvokeStaticOrDirect* invoke,
              BootImageAOTCanEmbedMethod(callee, compiler_driver)) {
     method_load_kind = HInvokeStaticOrDirect::MethodLoadKind::kBootImageLinkTimePcRelative;
     code_ptr_location = HInvokeStaticOrDirect::CodePtrLocation::kCallArtMethod;
+  } else if (IsInBootImage(callee)) {
+    // Use PC-relative access to the .data.bimg.rel.ro methods array.
+    method_load_kind = HInvokeStaticOrDirect::MethodLoadKind::kBootImageRelRo;
+    code_ptr_location = HInvokeStaticOrDirect::CodePtrLocation::kCallArtMethod;
   } else {
-    // Use PC-relative access to the .bss methods arrays.
+    // Use PC-relative access to the .bss methods array.
     method_load_kind = HInvokeStaticOrDirect::MethodLoadKind::kBssEntry;
     code_ptr_location = HInvokeStaticOrDirect::CodePtrLocation::kCallArtMethod;
   }
@@ -207,7 +211,7 @@ HLoadClass::LoadKind HSharpening::ComputeLoadClassKind(
       } else if (is_in_boot_image) {
         // AOT app compilation, boot image class.
         if (codegen->GetCompilerOptions().GetCompilePic()) {
-          desired_load_kind = HLoadClass::LoadKind::kBootImageClassTable;
+          desired_load_kind = HLoadClass::LoadKind::kBootImageRelRo;
         } else {
           desired_load_kind = HLoadClass::LoadKind::kBootImageAddress;
         }
@@ -288,7 +292,7 @@ void HSharpening::ProcessLoadString(
       string = class_linker->LookupString(string_index, dex_cache.Get());
       if (string != nullptr && runtime->GetHeap()->ObjectIsInBootImageSpace(string)) {
         if (codegen->GetCompilerOptions().GetCompilePic()) {
-          desired_load_kind = HLoadString::LoadKind::kBootImageInternTable;
+          desired_load_kind = HLoadString::LoadKind::kBootImageRelRo;
         } else {
           desired_load_kind = HLoadString::LoadKind::kBootImageAddress;
         }

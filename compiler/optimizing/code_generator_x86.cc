@@ -3836,9 +3836,9 @@ static void CreateMinMaxLocations(ArenaAllocator* allocator, HBinaryOperation* m
   }
 }
 
-void InstructionCodeGeneratorX86::GenerateMinMax(LocationSummary* locations,
-                                                 bool is_min,
-                                                 DataType::Type type) {
+void InstructionCodeGeneratorX86::GenerateMinMaxInt(LocationSummary* locations,
+                                                    bool is_min,
+                                                    DataType::Type type) {
   Location op1_loc = locations->InAt(0);
   Location op2_loc = locations->InAt(1);
 
@@ -3978,23 +3978,28 @@ void InstructionCodeGeneratorX86::GenerateMinMaxFP(LocationSummary* locations,
   __ Bind(&done);
 }
 
+void InstructionCodeGeneratorX86::GenerateMinMax(HBinaryOperation* minmax, bool is_min) {
+  DataType::Type type = minmax->GetResultType();
+  switch (type) {
+    case DataType::Type::kInt32:
+    case DataType::Type::kInt64:
+      GenerateMinMaxInt(minmax->GetLocations(), is_min, type);
+      break;
+    case DataType::Type::kFloat32:
+    case DataType::Type::kFloat64:
+      GenerateMinMaxFP(minmax->GetLocations(), is_min, type);
+      break;
+    default:
+      LOG(FATAL) << "Unexpected type for HMinMax " << type;
+  }
+}
+
 void LocationsBuilderX86::VisitMin(HMin* min) {
   CreateMinMaxLocations(GetGraph()->GetAllocator(), min);
 }
 
 void InstructionCodeGeneratorX86::VisitMin(HMin* min) {
-  switch (min->GetResultType()) {
-    case DataType::Type::kInt32:
-    case DataType::Type::kInt64:
-      GenerateMinMax(min->GetLocations(), /*is_min*/ true, min->GetResultType());
-      break;
-    case DataType::Type::kFloat32:
-    case DataType::Type::kFloat64:
-      GenerateMinMaxFP(min->GetLocations(), /*is_min*/ true, min->GetResultType());
-      break;
-    default:
-      LOG(FATAL) << "Unexpected type for HMin " << min->GetResultType();
-  }
+  GenerateMinMax(min, /*is_min*/ true);
 }
 
 void LocationsBuilderX86::VisitMax(HMax* max) {
@@ -4002,18 +4007,7 @@ void LocationsBuilderX86::VisitMax(HMax* max) {
 }
 
 void InstructionCodeGeneratorX86::VisitMax(HMax* max) {
-  switch (max->GetResultType()) {
-    case DataType::Type::kInt32:
-    case DataType::Type::kInt64:
-      GenerateMinMax(max->GetLocations(), /*is_min*/ false, max->GetResultType());
-      break;
-    case DataType::Type::kFloat32:
-    case DataType::Type::kFloat64:
-      GenerateMinMaxFP(max->GetLocations(), /*is_min*/ false, max->GetResultType());
-      break;
-    default:
-      LOG(FATAL) << "Unexpected type for HMax " << max->GetResultType();
-  }
+  GenerateMinMax(max, /*is_min*/ false);
 }
 
 void LocationsBuilderX86::VisitAbs(HAbs* abs) {
@@ -4838,6 +4832,15 @@ void CodeGeneratorX86::GenerateStaticOrDirectCall(
     case HInvokeStaticOrDirect::MethodLoadKind::kDirectAddress:
       __ movl(temp.AsRegister<Register>(), Immediate(invoke->GetMethodAddress()));
       break;
+    case HInvokeStaticOrDirect::MethodLoadKind::kBootImageRelRo: {
+      Register base_reg = GetInvokeStaticOrDirectExtraParameter(invoke,
+                                                                temp.AsRegister<Register>());
+      __ movl(temp.AsRegister<Register>(), Address(base_reg, kDummy32BitOffset));
+      RecordBootImageRelRoPatch(
+          invoke->InputAt(invoke->GetSpecialInputIndex())->AsX86ComputeBaseMethodAddress(),
+          GetBootImageOffset(invoke));
+      break;
+    }
     case HInvokeStaticOrDirect::MethodLoadKind::kBssEntry: {
       Register base_reg = GetInvokeStaticOrDirectExtraParameter(invoke,
                                                                 temp.AsRegister<Register>());
@@ -4897,6 +4900,13 @@ void CodeGeneratorX86::GenerateVirtualCall(
   __ call(Address(
       temp, ArtMethod::EntryPointFromQuickCompiledCodeOffset(kX86PointerSize).Int32Value()));
   RecordPcInfo(invoke, invoke->GetDexPc(), slow_path);
+}
+
+void CodeGeneratorX86::RecordBootImageRelRoPatch(HX86ComputeBaseMethodAddress* method_address,
+                                                 uint32_t boot_image_offset) {
+  boot_image_method_patches_.emplace_back(
+      method_address, /* target_dex_file */ nullptr, boot_image_offset);
+  __ Bind(&boot_image_method_patches_.back().label);
 }
 
 void CodeGeneratorX86::RecordBootImageMethodPatch(HInvokeStaticOrDirect* invoke) {
@@ -4968,6 +4978,14 @@ inline void CodeGeneratorX86::EmitPcRelativeLinkerPatches(
   }
 }
 
+linker::LinkerPatch DataBimgRelRoPatchAdapter(size_t literal_offset,
+                                              const DexFile* target_dex_file,
+                                              uint32_t pc_insn_offset,
+                                              uint32_t boot_image_offset) {
+  DCHECK(target_dex_file == nullptr);  // Unused for DataBimgRelRoPatch(), should be null.
+  return linker::LinkerPatch::DataBimgRelRoPatch(literal_offset, pc_insn_offset, boot_image_offset);
+}
+
 void CodeGeneratorX86::EmitLinkerPatches(ArenaVector<linker::LinkerPatch>* linker_patches) {
   DCHECK(linker_patches->empty());
   size_t size =
@@ -4986,11 +5004,10 @@ void CodeGeneratorX86::EmitLinkerPatches(ArenaVector<linker::LinkerPatch>* linke
     EmitPcRelativeLinkerPatches<linker::LinkerPatch::RelativeStringPatch>(
         boot_image_string_patches_, linker_patches);
   } else {
-    DCHECK(boot_image_method_patches_.empty());
-    EmitPcRelativeLinkerPatches<linker::LinkerPatch::TypeClassTablePatch>(
-        boot_image_type_patches_, linker_patches);
-    EmitPcRelativeLinkerPatches<linker::LinkerPatch::StringInternTablePatch>(
-        boot_image_string_patches_, linker_patches);
+    EmitPcRelativeLinkerPatches<DataBimgRelRoPatchAdapter>(
+        boot_image_method_patches_, linker_patches);
+    DCHECK(boot_image_type_patches_.empty());
+    DCHECK(boot_image_string_patches_.empty());
   }
   EmitPcRelativeLinkerPatches<linker::LinkerPatch::MethodBssEntryPatch>(
       method_bss_entry_patches_, linker_patches);
@@ -6359,7 +6376,7 @@ HLoadClass::LoadKind CodeGeneratorX86::GetSupportedLoadClassKind(
     case HLoadClass::LoadKind::kReferrersClass:
       break;
     case HLoadClass::LoadKind::kBootImageLinkTimePcRelative:
-    case HLoadClass::LoadKind::kBootImageClassTable:
+    case HLoadClass::LoadKind::kBootImageRelRo:
     case HLoadClass::LoadKind::kBssEntry:
       DCHECK(!Runtime::Current()->UseJitCompilation());
       break;
@@ -6397,7 +6414,7 @@ void LocationsBuilderX86::VisitLoadClass(HLoadClass* cls) {
 
   if (load_kind == HLoadClass::LoadKind::kReferrersClass ||
       load_kind == HLoadClass::LoadKind::kBootImageLinkTimePcRelative ||
-      load_kind == HLoadClass::LoadKind::kBootImageClassTable ||
+      load_kind == HLoadClass::LoadKind::kBootImageRelRo ||
       load_kind == HLoadClass::LoadKind::kBssEntry) {
     locations->SetInAt(0, Location::RequiresRegister());
   }
@@ -6473,17 +6490,12 @@ void InstructionCodeGeneratorX86::VisitLoadClass(HLoadClass* cls) NO_THREAD_SAFE
       __ movl(out, Immediate(address));
       break;
     }
-    case HLoadClass::LoadKind::kBootImageClassTable: {
+    case HLoadClass::LoadKind::kBootImageRelRo: {
       DCHECK(!codegen_->GetCompilerOptions().IsBootImage());
       Register method_address = locations->InAt(0).AsRegister<Register>();
       __ movl(out, Address(method_address, CodeGeneratorX86::kDummy32BitOffset));
-      codegen_->RecordBootImageTypePatch(cls);
-      // Extract the reference from the slot data, i.e. clear the hash bits.
-      int32_t masked_hash = ClassTable::TableSlot::MaskHash(
-          ComputeModifiedUtf8Hash(cls->GetDexFile().StringByTypeIdx(cls->GetTypeIndex())));
-      if (masked_hash != 0) {
-        __ subl(out, Immediate(masked_hash));
-      }
+      codegen_->RecordBootImageRelRoPatch(cls->InputAt(0)->AsX86ComputeBaseMethodAddress(),
+                                          codegen_->GetBootImageOffset(cls));
       break;
     }
     case HLoadClass::LoadKind::kBssEntry: {
@@ -6563,7 +6575,7 @@ HLoadString::LoadKind CodeGeneratorX86::GetSupportedLoadStringKind(
     HLoadString::LoadKind desired_string_load_kind) {
   switch (desired_string_load_kind) {
     case HLoadString::LoadKind::kBootImageLinkTimePcRelative:
-    case HLoadString::LoadKind::kBootImageInternTable:
+    case HLoadString::LoadKind::kBootImageRelRo:
     case HLoadString::LoadKind::kBssEntry:
       DCHECK(!Runtime::Current()->UseJitCompilation());
       break;
@@ -6582,7 +6594,7 @@ void LocationsBuilderX86::VisitLoadString(HLoadString* load) {
   LocationSummary* locations = new (GetGraph()->GetAllocator()) LocationSummary(load, call_kind);
   HLoadString::LoadKind load_kind = load->GetLoadKind();
   if (load_kind == HLoadString::LoadKind::kBootImageLinkTimePcRelative ||
-      load_kind == HLoadString::LoadKind::kBootImageInternTable ||
+      load_kind == HLoadString::LoadKind::kBootImageRelRo ||
       load_kind == HLoadString::LoadKind::kBssEntry) {
     locations->SetInAt(0, Location::RequiresRegister());
   }
@@ -6636,11 +6648,12 @@ void InstructionCodeGeneratorX86::VisitLoadString(HLoadString* load) NO_THREAD_S
       __ movl(out, Immediate(address));
       return;
     }
-    case HLoadString::LoadKind::kBootImageInternTable: {
+    case HLoadString::LoadKind::kBootImageRelRo: {
       DCHECK(!codegen_->GetCompilerOptions().IsBootImage());
       Register method_address = locations->InAt(0).AsRegister<Register>();
       __ movl(out, Address(method_address, CodeGeneratorX86::kDummy32BitOffset));
-      codegen_->RecordBootImageStringPatch(load);
+      codegen_->RecordBootImageRelRoPatch(load->InputAt(0)->AsX86ComputeBaseMethodAddress(),
+                                          codegen_->GetBootImageOffset(load));
       return;
     }
     case HLoadString::LoadKind::kBssEntry: {

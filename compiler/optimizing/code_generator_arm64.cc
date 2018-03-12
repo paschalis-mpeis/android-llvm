@@ -4460,12 +4460,23 @@ void CodeGeneratorARM64::GenerateStaticOrDirectCall(
       // Load method address from literal pool.
       __ Ldr(XRegisterFrom(temp), DeduplicateUint64Literal(invoke->GetMethodAddress()));
       break;
+    case HInvokeStaticOrDirect::MethodLoadKind::kBootImageRelRo: {
+      // Add ADRP with its PC-relative .data.bimg.rel.ro patch.
+      uint32_t boot_image_offset = GetBootImageOffset(invoke);
+      vixl::aarch64::Label* adrp_label = NewBootImageRelRoPatch(boot_image_offset);
+      EmitAdrpPlaceholder(adrp_label, XRegisterFrom(temp));
+      // Add LDR with its PC-relative .data.bimg.rel.ro patch.
+      vixl::aarch64::Label* ldr_label = NewBootImageRelRoPatch(boot_image_offset, adrp_label);
+      // Note: Boot image is in the low 4GiB and the entry is 32-bit, so emit a 32-bit load.
+      EmitLdrOffsetPlaceholder(ldr_label, WRegisterFrom(temp), XRegisterFrom(temp));
+      break;
+    }
     case HInvokeStaticOrDirect::MethodLoadKind::kBssEntry: {
-      // Add ADRP with its PC-relative DexCache access patch.
+      // Add ADRP with its PC-relative .bss entry patch.
       MethodReference target_method(&GetGraph()->GetDexFile(), invoke->GetDexMethodIndex());
       vixl::aarch64::Label* adrp_label = NewMethodBssEntryPatch(target_method);
       EmitAdrpPlaceholder(adrp_label, XRegisterFrom(temp));
-      // Add LDR with its PC-relative DexCache access patch.
+      // Add LDR with its PC-relative .bss entry patch.
       vixl::aarch64::Label* ldr_label =
           NewMethodBssEntryPatch(target_method, adrp_label);
       EmitLdrOffsetPlaceholder(ldr_label, XRegisterFrom(temp), XRegisterFrom(temp));
@@ -4558,6 +4569,13 @@ void LocationsBuilderARM64::VisitInvokePolymorphic(HInvokePolymorphic* invoke) {
 void InstructionCodeGeneratorARM64::VisitInvokePolymorphic(HInvokePolymorphic* invoke) {
   codegen_->GenerateInvokePolymorphicCall(invoke);
   codegen_->MaybeGenerateMarkingRegisterCheck(/* code */ __LINE__);
+}
+
+vixl::aarch64::Label* CodeGeneratorARM64::NewBootImageRelRoPatch(
+    uint32_t boot_image_offset,
+    vixl::aarch64::Label* adrp_label) {
+  return NewPcRelativePatch(
+      /* dex_file */ nullptr, boot_image_offset, adrp_label, &boot_image_method_patches_);
 }
 
 vixl::aarch64::Label* CodeGeneratorARM64::NewBootImageMethodPatch(
@@ -4682,6 +4700,14 @@ inline void CodeGeneratorARM64::EmitPcRelativeLinkerPatches(
   }
 }
 
+linker::LinkerPatch DataBimgRelRoPatchAdapter(size_t literal_offset,
+                                              const DexFile* target_dex_file,
+                                              uint32_t pc_insn_offset,
+                                              uint32_t boot_image_offset) {
+  DCHECK(target_dex_file == nullptr);  // Unused for DataBimgRelRoPatch(), should be null.
+  return linker::LinkerPatch::DataBimgRelRoPatch(literal_offset, pc_insn_offset, boot_image_offset);
+}
+
 void CodeGeneratorARM64::EmitLinkerPatches(ArenaVector<linker::LinkerPatch>* linker_patches) {
   DCHECK(linker_patches->empty());
   size_t size =
@@ -4701,11 +4727,10 @@ void CodeGeneratorARM64::EmitLinkerPatches(ArenaVector<linker::LinkerPatch>* lin
     EmitPcRelativeLinkerPatches<linker::LinkerPatch::RelativeStringPatch>(
         boot_image_string_patches_, linker_patches);
   } else {
-    DCHECK(boot_image_method_patches_.empty());
-    EmitPcRelativeLinkerPatches<linker::LinkerPatch::TypeClassTablePatch>(
-        boot_image_type_patches_, linker_patches);
-    EmitPcRelativeLinkerPatches<linker::LinkerPatch::StringInternTablePatch>(
-        boot_image_string_patches_, linker_patches);
+    EmitPcRelativeLinkerPatches<DataBimgRelRoPatchAdapter>(
+        boot_image_method_patches_, linker_patches);
+    DCHECK(boot_image_type_patches_.empty());
+    DCHECK(boot_image_string_patches_.empty());
   }
   EmitPcRelativeLinkerPatches<linker::LinkerPatch::MethodBssEntryPatch>(
       method_bss_entry_patches_, linker_patches);
@@ -4780,7 +4805,7 @@ HLoadClass::LoadKind CodeGeneratorARM64::GetSupportedLoadClassKind(
     case HLoadClass::LoadKind::kReferrersClass:
       break;
     case HLoadClass::LoadKind::kBootImageLinkTimePcRelative:
-    case HLoadClass::LoadKind::kBootImageClassTable:
+    case HLoadClass::LoadKind::kBootImageRelRo:
     case HLoadClass::LoadKind::kBssEntry:
       DCHECK(!Runtime::Current()->UseJitCompilation());
       break;
@@ -4889,23 +4914,16 @@ void InstructionCodeGeneratorARM64::VisitLoadClass(HLoadClass* cls) NO_THREAD_SA
       __ Ldr(out.W(), codegen_->DeduplicateBootImageAddressLiteral(address));
       break;
     }
-    case HLoadClass::LoadKind::kBootImageClassTable: {
+    case HLoadClass::LoadKind::kBootImageRelRo: {
       DCHECK(!codegen_->GetCompilerOptions().IsBootImage());
-      // Add ADRP with its PC-relative type patch.
-      const DexFile& dex_file = cls->GetDexFile();
-      dex::TypeIndex type_index = cls->GetTypeIndex();
-      vixl::aarch64::Label* adrp_label = codegen_->NewBootImageTypePatch(dex_file, type_index);
+      uint32_t boot_image_offset = codegen_->GetBootImageOffset(cls);
+      // Add ADRP with its PC-relative .data.bimg.rel.ro patch.
+      vixl::aarch64::Label* adrp_label = codegen_->NewBootImageRelRoPatch(boot_image_offset);
       codegen_->EmitAdrpPlaceholder(adrp_label, out.X());
-      // Add LDR with its PC-relative type patch.
+      // Add LDR with its PC-relative .data.bimg.rel.ro patch.
       vixl::aarch64::Label* ldr_label =
-          codegen_->NewBootImageTypePatch(dex_file, type_index, adrp_label);
+          codegen_->NewBootImageRelRoPatch(boot_image_offset, adrp_label);
       codegen_->EmitLdrOffsetPlaceholder(ldr_label, out.W(), out.X());
-      // Extract the reference from the slot data, i.e. clear the hash bits.
-      int32_t masked_hash = ClassTable::TableSlot::MaskHash(
-          ComputeModifiedUtf8Hash(dex_file.StringByTypeIdx(type_index)));
-      if (masked_hash != 0) {
-        __ Sub(out.W(), out.W(), Operand(masked_hash));
-      }
       break;
     }
     case HLoadClass::LoadKind::kBssEntry: {
@@ -4915,7 +4933,7 @@ void InstructionCodeGeneratorARM64::VisitLoadClass(HLoadClass* cls) NO_THREAD_SA
       vixl::aarch64::Register temp = XRegisterFrom(out_loc);
       vixl::aarch64::Label* adrp_label = codegen_->NewBssEntryTypePatch(dex_file, type_index);
       codegen_->EmitAdrpPlaceholder(adrp_label, temp);
-      // Add LDR with its PC-relative Class patch.
+      // Add LDR with its PC-relative Class .bss entry patch.
       vixl::aarch64::Label* ldr_label =
           codegen_->NewBssEntryTypePatch(dex_file, type_index, adrp_label);
       // /* GcRoot<mirror::Class> */ out = *(base_address + offset)  /* PC-relative */
@@ -4990,7 +5008,7 @@ HLoadString::LoadKind CodeGeneratorARM64::GetSupportedLoadStringKind(
     HLoadString::LoadKind desired_string_load_kind) {
   switch (desired_string_load_kind) {
     case HLoadString::LoadKind::kBootImageLinkTimePcRelative:
-    case HLoadString::LoadKind::kBootImageInternTable:
+    case HLoadString::LoadKind::kBootImageRelRo:
     case HLoadString::LoadKind::kBssEntry:
       DCHECK(!Runtime::Current()->UseJitCompilation());
       break;
@@ -5056,16 +5074,15 @@ void InstructionCodeGeneratorARM64::VisitLoadString(HLoadString* load) NO_THREAD
       __ Ldr(out.W(), codegen_->DeduplicateBootImageAddressLiteral(address));
       return;
     }
-    case HLoadString::LoadKind::kBootImageInternTable: {
+    case HLoadString::LoadKind::kBootImageRelRo: {
       DCHECK(!codegen_->GetCompilerOptions().IsBootImage());
-      // Add ADRP with its PC-relative String patch.
-      const DexFile& dex_file = load->GetDexFile();
-      const dex::StringIndex string_index = load->GetStringIndex();
-      vixl::aarch64::Label* adrp_label = codegen_->NewBootImageStringPatch(dex_file, string_index);
+      // Add ADRP with its PC-relative .data.bimg.rel.ro patch.
+      uint32_t boot_image_offset = codegen_->GetBootImageOffset(load);
+      vixl::aarch64::Label* adrp_label = codegen_->NewBootImageRelRoPatch(boot_image_offset);
       codegen_->EmitAdrpPlaceholder(adrp_label, out.X());
-      // Add LDR with its PC-relative String patch.
+      // Add LDR with its PC-relative .data.bimg.rel.ro patch.
       vixl::aarch64::Label* ldr_label =
-          codegen_->NewBootImageStringPatch(dex_file, string_index, adrp_label);
+          codegen_->NewBootImageRelRoPatch(boot_image_offset, adrp_label);
       codegen_->EmitLdrOffsetPlaceholder(ldr_label, out.W(), out.X());
       return;
     }
@@ -5077,7 +5094,7 @@ void InstructionCodeGeneratorARM64::VisitLoadString(HLoadString* load) NO_THREAD
       Register temp = XRegisterFrom(out_loc);
       vixl::aarch64::Label* adrp_label = codegen_->NewStringBssEntryPatch(dex_file, string_index);
       codegen_->EmitAdrpPlaceholder(adrp_label, temp);
-      // Add LDR with its .bss entry String patch.
+      // Add LDR with its PC-relative String .bss entry patch.
       vixl::aarch64::Label* ldr_label =
           codegen_->NewStringBssEntryPatch(dex_file, string_index, adrp_label);
       // /* GcRoot<mirror::String> */ out = *(base_address + offset)  /* PC-relative */
@@ -5484,9 +5501,9 @@ static void CreateMinMaxLocations(ArenaAllocator* allocator, HBinaryOperation* m
   }
 }
 
-void InstructionCodeGeneratorARM64::GenerateMinMax(LocationSummary* locations,
-                                                   bool is_min,
-                                                   DataType::Type type) {
+void InstructionCodeGeneratorARM64::GenerateMinMaxInt(LocationSummary* locations,
+                                                      bool is_min,
+                                                      DataType::Type type) {
   Location op1 = locations->InAt(0);
   Location op2 = locations->InAt(1);
   Location out = locations->Out();
@@ -5537,24 +5554,29 @@ void InstructionCodeGeneratorARM64::GenerateMinMaxFP(LocationSummary* locations,
   }
 }
 
+// TODO: integrate with HandleBinaryOp?
+void InstructionCodeGeneratorARM64::GenerateMinMax(HBinaryOperation* minmax, bool is_min) {
+  DataType::Type type = minmax->GetResultType();
+  switch (type) {
+    case DataType::Type::kInt32:
+    case DataType::Type::kInt64:
+      GenerateMinMaxInt(minmax->GetLocations(), is_min, type);
+      break;
+    case DataType::Type::kFloat32:
+    case DataType::Type::kFloat64:
+      GenerateMinMaxFP(minmax->GetLocations(), is_min, type);
+      break;
+    default:
+      LOG(FATAL) << "Unexpected type for HMinMax " << type;
+  }
+}
+
 void LocationsBuilderARM64::VisitMin(HMin* min) {
   CreateMinMaxLocations(GetGraph()->GetAllocator(), min);
 }
 
-// TODO: integrate with HandleBinaryOp?
 void InstructionCodeGeneratorARM64::VisitMin(HMin* min) {
-  switch (min->GetResultType()) {
-    case DataType::Type::kInt32:
-    case DataType::Type::kInt64:
-      GenerateMinMax(min->GetLocations(), /*is_min*/ true, min->GetResultType());
-      break;
-    case DataType::Type::kFloat32:
-    case DataType::Type::kFloat64:
-      GenerateMinMaxFP(min->GetLocations(), /*is_min*/ true, min->GetResultType());
-      break;
-    default:
-      LOG(FATAL) << "Unexpected type for HMin " << min->GetResultType();
-  }
+  GenerateMinMax(min, /*is_min*/ true);
 }
 
 void LocationsBuilderARM64::VisitMax(HMax* max) {
@@ -5562,18 +5584,7 @@ void LocationsBuilderARM64::VisitMax(HMax* max) {
 }
 
 void InstructionCodeGeneratorARM64::VisitMax(HMax* max) {
-  switch (max->GetResultType()) {
-    case DataType::Type::kInt32:
-    case DataType::Type::kInt64:
-      GenerateMinMax(max->GetLocations(), /*is_min*/ false, max->GetResultType());
-      break;
-    case DataType::Type::kFloat32:
-    case DataType::Type::kFloat64:
-      GenerateMinMaxFP(max->GetLocations(), /*is_min*/ false, max->GetResultType());
-      break;
-    default:
-      LOG(FATAL) << "Unexpected type for HMax " << max->GetResultType();
-  }
+  GenerateMinMax(max, /*is_min*/ false);
 }
 
 void LocationsBuilderARM64::VisitAbs(HAbs* abs) {

@@ -172,6 +172,7 @@ class OatSymbolizer FINAL {
     builder_->PrepareDynamicSection(elf_file->GetPath(),
                                     rodata_size,
                                     text_size,
+                                    oat_file_->DataBimgRelRoSize(),
                                     oat_file_->BssSize(),
                                     oat_file_->BssMethodsOffset(),
                                     oat_file_->BssRootsOffset(),
@@ -2179,7 +2180,7 @@ class ImageDumper {
 
     // Intern table is 8-byte aligned.
     uint32_t end_caches = dex_cache_arrays_section.Offset() + dex_cache_arrays_section.Size();
-    CHECK_ALIGNED(intern_section.Offset(), sizeof(uint64_t));
+    CHECK_EQ(RoundUp(end_caches, 8U), intern_section.Offset());
     stats_.alignment_bytes += intern_section.Offset() - end_caches;
 
     // Add space between intern table and class table.

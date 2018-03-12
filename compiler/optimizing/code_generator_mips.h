@@ -246,8 +246,9 @@ class InstructionCodeGeneratorMIPS : public InstructionCodeGenerator {
                       bool value_can_be_null);
   void HandleFieldGet(HInstruction* instruction, const FieldInfo& field_info, uint32_t dex_pc);
 
-  void GenerateMinMax(LocationSummary* locations, bool is_min, bool isR6, DataType::Type type);
+  void GenerateMinMaxInt(LocationSummary* locations, bool is_min, bool isR6, DataType::Type type);
   void GenerateMinMaxFP(LocationSummary* locations, bool is_min, bool isR6, DataType::Type type);
+  void GenerateMinMax(HBinaryOperation*, bool is_min);
   void GenerateAbsFP(LocationSummary* locations, DataType::Type type, bool isR2OrNewer, bool isR6);
 
   // Generate a heap reference load using one register `out`:
@@ -619,6 +620,8 @@ class CodeGeneratorMIPS : public CodeGenerator {
     DISALLOW_COPY_AND_ASSIGN(PcRelativePatchInfo);
   };
 
+  PcRelativePatchInfo* NewBootImageRelRoPatch(uint32_t boot_image_offset,
+                                              const PcRelativePatchInfo* info_high = nullptr);
   PcRelativePatchInfo* NewBootImageMethodPatch(MethodReference target_method,
                                                const PcRelativePatchInfo* info_high = nullptr);
   PcRelativePatchInfo* NewMethodBssEntryPatch(MethodReference target_method,
@@ -693,7 +696,8 @@ class CodeGeneratorMIPS : public CodeGenerator {
 
   // Deduplication map for 32-bit literals, used for non-patchable boot image addresses.
   Uint32ToLiteralMap uint32_literals_;
-  // PC-relative method patch info for kBootImageLinkTimePcRelative.
+  // PC-relative method patch info for kBootImageLinkTimePcRelative/kBootImageRelRo.
+  // Also used for type/string patches for kBootImageRelRo (same linker patch as for methods).
   ArenaDeque<PcRelativePatchInfo> boot_image_method_patches_;
   // PC-relative method patch info for kBssEntry.
   ArenaDeque<PcRelativePatchInfo> method_bss_entry_patches_;
@@ -701,7 +705,7 @@ class CodeGeneratorMIPS : public CodeGenerator {
   ArenaDeque<PcRelativePatchInfo> boot_image_type_patches_;
   // PC-relative type patch info for kBssEntry.
   ArenaDeque<PcRelativePatchInfo> type_bss_entry_patches_;
-  // PC-relative String patch info; type depends on configuration (intern table or boot image PIC).
+  // PC-relative String patch info for kBootImageLinkTimePcRelative.
   ArenaDeque<PcRelativePatchInfo> boot_image_string_patches_;
   // PC-relative String patch info for kBssEntry.
   ArenaDeque<PcRelativePatchInfo> string_bss_entry_patches_;

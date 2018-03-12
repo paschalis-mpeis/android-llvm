@@ -222,8 +222,9 @@ class InstructionCodeGeneratorX86_64 : public InstructionCodeGenerator {
                       bool value_can_be_null);
   void HandleFieldGet(HInstruction* instruction, const FieldInfo& field_info);
 
-  void GenerateMinMax(LocationSummary* locations, bool is_min, DataType::Type type);
+  void GenerateMinMaxInt(LocationSummary* locations, bool is_min, DataType::Type type);
   void GenerateMinMaxFP(LocationSummary* locations, bool is_min, DataType::Type type);
+  void GenerateMinMax(HBinaryOperation* minmax, bool is_min);
 
   // Generate a heap reference load using one register `out`:
   //
@@ -413,6 +414,7 @@ class CodeGeneratorX86_64 : public CodeGenerator {
   void GenerateVirtualCall(
       HInvokeVirtual* invoke, Location temp, SlowPathCode* slow_path = nullptr) OVERRIDE;
 
+  void RecordBootImageRelRoPatch(uint32_t boot_image_offset);
   void RecordBootImageMethodPatch(HInvokeStaticOrDirect* invoke);
   void RecordMethodBssEntryPatch(HInvokeStaticOrDirect* invoke);
   void RecordBootImageTypePatch(HLoadClass* load_class);
@@ -607,17 +609,18 @@ class CodeGeneratorX86_64 : public CodeGenerator {
   // Used for fixups to the constant area.
   int constant_area_start_;
 
-  // PC-relative method patch info for kBootImageLinkTimePcRelative.
+  // PC-relative method patch info for kBootImageLinkTimePcRelative/kBootImageRelRo.
+  // Also used for type/string patches for kBootImageRelRo (same linker patch as for methods).
   ArenaDeque<PatchInfo<Label>> boot_image_method_patches_;
   // PC-relative method patch info for kBssEntry.
   ArenaDeque<PatchInfo<Label>> method_bss_entry_patches_;
   // PC-relative type patch info for kBootImageLinkTimePcRelative.
   ArenaDeque<PatchInfo<Label>> boot_image_type_patches_;
-  // Type patch locations for kBssEntry.
+  // PC-relative type patch info for kBssEntry.
   ArenaDeque<PatchInfo<Label>> type_bss_entry_patches_;
-  // String patch locations; type depends on configuration (intern table or boot image PIC).
+  // PC-relative String patch info for kBootImageLinkTimePcRelative.
   ArenaDeque<PatchInfo<Label>> boot_image_string_patches_;
-  // String patch locations for kBssEntry.
+  // PC-relative String patch info for kBssEntry.
   ArenaDeque<PatchInfo<Label>> string_bss_entry_patches_;
 
   // Patches for string literals in JIT compiled code.

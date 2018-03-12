@@ -375,16 +375,19 @@ OatWriter::OatWriter(bool compiling_boot_image,
     vdex_dex_shared_data_offset_(0u),
     vdex_verifier_deps_offset_(0u),
     vdex_quickening_info_offset_(0u),
+    code_size_(0u),
     oat_size_(0u),
+    data_bimg_rel_ro_start_(0u),
+    data_bimg_rel_ro_size_(0u),
     bss_start_(0u),
     bss_size_(0u),
     bss_methods_offset_(0u),
     bss_roots_offset_(0u),
+    data_bimg_rel_ro_entries_(),
     bss_method_entry_references_(),
     bss_method_entries_(),
     bss_type_entries_(),
     bss_string_entries_(),
-    map_boot_image_tables_to_bss_(false),
     oat_data_offset_(0u),
     oat_header_(nullptr),
     size_vdex_header_(0),
@@ -409,6 +412,8 @@ OatWriter::OatWriter(bool compiling_boot_image,
     size_method_header_(0),
     size_code_(0),
     size_code_alignment_(0),
+    size_data_bimg_rel_ro_(0),
+    size_data_bimg_rel_ro_alignment_(0),
     size_relative_call_thunks_(0),
     size_misc_thunks_(0),
     size_vmap_table_(0),
@@ -737,8 +742,13 @@ void OatWriter::PrepareLayout(MultiOatRelativePatcher* relative_patcher) {
   {
     TimingLogger::ScopedTiming split("InitOatCodeDexFiles", timings_);
     offset = InitOatCodeDexFiles(offset);
+    code_size_ = offset - GetOatHeader().GetExecutableOffset();
   }
-  oat_size_ = offset;
+  {
+    TimingLogger::ScopedTiming split("InitDataBimgRelRoLayout", timings_);
+    offset = InitDataBimgRelRoLayout(offset);
+  }
+  oat_size_ = offset;  // .bss does not count towards oat_size_.
   bss_start_ = (bss_size_ != 0u) ? RoundUp(oat_size_, kPageSize) : 0u;
 
   CHECK_EQ(dex_files_->size(), oat_dex_files_.size());
@@ -845,7 +855,10 @@ class OatWriter::InitBssLayoutMethodVisitor : public DexMethodVisitor {
         MethodReference(dex_file_, it.GetMemberIndex()));
     if (HasCompiledCode(compiled_method)) {
       for (const LinkerPatch& patch : compiled_method->GetPatches()) {
-        if (patch.GetType() == LinkerPatch::Type::kMethodBssEntry) {
+        if (patch.GetType() == LinkerPatch::Type::kDataBimgRelRo) {
+          writer_->data_bimg_rel_ro_entries_.Overwrite(patch.BootImageOffset(),
+                                                       /* placeholder */ 0u);
+        } else if (patch.GetType() == LinkerPatch::Type::kMethodBssEntry) {
           MethodReference target_method = patch.TargetMethod();
           AddBssReference(target_method,
                           target_method.dex_file->NumMethodIds(),
@@ -863,9 +876,6 @@ class OatWriter::InitBssLayoutMethodVisitor : public DexMethodVisitor {
                           target_string.dex_file->NumStringIds(),
                           &writer_->bss_string_entry_references_);
           writer_->bss_string_entries_.Overwrite(target_string, /* placeholder */ 0u);
-        } else if (patch.GetType() == LinkerPatch::Type::kStringInternTable ||
-                   patch.GetType() == LinkerPatch::Type::kTypeClassTable) {
-          writer_->map_boot_image_tables_to_bss_ = true;
         }
       }
     } else {
@@ -1776,6 +1786,16 @@ class OatWriter::WriteCodeMethodVisitor : public OrderedMethodVisitor {
         for (const LinkerPatch& patch : compiled_method->GetPatches()) {
           uint32_t literal_offset = patch.LiteralOffset();
           switch (patch.GetType()) {
+            case LinkerPatch::Type::kDataBimgRelRo: {
+              uint32_t target_offset =
+                  writer_->data_bimg_rel_ro_start_ +
+                  writer_->data_bimg_rel_ro_entries_.Get(patch.BootImageOffset());
+              writer_->relative_patcher_->PatchPcRelativeReference(&patched_code_,
+                                                                   patch,
+                                                                   offset_ + literal_offset,
+                                                                   target_offset);
+              break;
+            }
             case LinkerPatch::Type::kMethodBssEntry: {
               uint32_t target_offset =
                   writer_->bss_start_ + writer_->bss_method_entries_.Get(patch.TargetMethod());
@@ -1802,14 +1822,6 @@ class OatWriter::WriteCodeMethodVisitor : public OrderedMethodVisitor {
                                                                    target_offset);
               break;
             }
-            case LinkerPatch::Type::kStringInternTable: {
-              uint32_t target_offset = GetInternTableEntryOffset(patch);
-              writer_->relative_patcher_->PatchPcRelativeReference(&patched_code_,
-                                                                   patch,
-                                                                   offset_ + literal_offset,
-                                                                   target_offset);
-              break;
-            }
             case LinkerPatch::Type::kStringBssEntry: {
               StringReference ref(patch.TargetStringDexFile(), patch.TargetStringIndex());
               uint32_t target_offset =
@@ -1822,14 +1834,6 @@ class OatWriter::WriteCodeMethodVisitor : public OrderedMethodVisitor {
             }
             case LinkerPatch::Type::kTypeRelative: {
               uint32_t target_offset = GetTargetObjectOffset(GetTargetType(patch));
-              writer_->relative_patcher_->PatchPcRelativeReference(&patched_code_,
-                                                                   patch,
-                                                                   offset_ + literal_offset,
-                                                                   target_offset);
-              break;
-            }
-            case LinkerPatch::Type::kTypeClassTable: {
-              uint32_t target_offset = GetClassTableEntryOffset(patch);
               writer_->relative_patcher_->PatchPcRelativeReference(&patched_code_,
                                                                    patch,
                                                                    offset_ + literal_offset,
@@ -2036,42 +2040,6 @@ class OatWriter::WriteCodeMethodVisitor : public OrderedMethodVisitor {
     data[1] = (address >> 8) & 0xffu;
     data[2] = (address >> 16) & 0xffu;
     data[3] = (address >> 24) & 0xffu;
-  }
-
-  // Calculate the offset of the InternTable slot (GcRoot<String>) when mmapped to the .bss.
-  uint32_t GetInternTableEntryOffset(const LinkerPatch& patch)
-      REQUIRES_SHARED(Locks::mutator_lock_) {
-    DCHECK(!writer_->HasBootImage());
-    const uint8_t* string_root = writer_->LookupBootImageInternTableSlot(
-        *patch.TargetStringDexFile(), patch.TargetStringIndex());
-    DCHECK(string_root != nullptr);
-    return GetBootImageTableEntryOffset(string_root);
-  }
-
-  // Calculate the offset of the ClassTable::TableSlot when mmapped to the .bss.
-  uint32_t GetClassTableEntryOffset(const LinkerPatch& patch)
-      REQUIRES_SHARED(Locks::mutator_lock_) {
-    DCHECK(!writer_->HasBootImage());
-    const uint8_t* table_slot =
-        writer_->LookupBootImageClassTableSlot(*patch.TargetTypeDexFile(), patch.TargetTypeIndex());
-    DCHECK(table_slot != nullptr);
-    return GetBootImageTableEntryOffset(table_slot);
-  }
-
-  uint32_t GetBootImageTableEntryOffset(const uint8_t* raw_root) {
-    uint32_t base_offset = writer_->bss_start_;
-    for (gc::space::ImageSpace* space : Runtime::Current()->GetHeap()->GetBootImageSpaces()) {
-      const uint8_t* const_tables_begin =
-          space->Begin() + space->GetImageHeader().GetBootImageConstantTablesOffset();
-      size_t offset = static_cast<size_t>(raw_root - const_tables_begin);
-      if (offset < space->GetImageHeader().GetBootImageConstantTablesSize()) {
-        DCHECK_LE(base_offset + offset, writer_->bss_start_ + writer_->bss_methods_offset_);
-        return base_offset + offset;
-      }
-      base_offset += space->GetImageHeader().GetBootImageConstantTablesSize();
-    }
-    LOG(FATAL) << "Didn't find boot image string in boot image intern tables!";
-    UNREACHABLE();
   }
 };
 
@@ -2510,6 +2478,25 @@ size_t OatWriter::InitOatCodeDexFiles(size_t offset) {
   return offset;
 }
 
+size_t OatWriter::InitDataBimgRelRoLayout(size_t offset) {
+  DCHECK_EQ(data_bimg_rel_ro_size_, 0u);
+  if (data_bimg_rel_ro_entries_.empty()) {
+    // Nothing to put to the .data.bimg.rel.ro section.
+    return offset;
+  }
+
+  data_bimg_rel_ro_start_ = RoundUp(offset, kPageSize);
+
+  for (auto& entry : data_bimg_rel_ro_entries_) {
+    size_t& entry_offset = entry.second;
+    entry_offset = data_bimg_rel_ro_size_;
+    data_bimg_rel_ro_size_ += sizeof(uint32_t);
+  }
+
+  offset = data_bimg_rel_ro_start_ + data_bimg_rel_ro_size_;
+  return offset;
+}
+
 void OatWriter::InitBssLayout(InstructionSet instruction_set) {
   {
     InitBssLayoutMethodVisitor visitor(this);
@@ -2519,25 +2506,16 @@ void OatWriter::InitBssLayout(InstructionSet instruction_set) {
 
   DCHECK_EQ(bss_size_, 0u);
   if (HasBootImage()) {
-    DCHECK(!map_boot_image_tables_to_bss_);
     DCHECK(bss_string_entries_.empty());
   }
-  if (!map_boot_image_tables_to_bss_ &&
-      bss_method_entries_.empty() &&
+  if (bss_method_entries_.empty() &&
       bss_type_entries_.empty() &&
       bss_string_entries_.empty()) {
     // Nothing to put to the .bss section.
     return;
   }
 
-  // Allocate space for boot image tables in the .bss section.
   PointerSize pointer_size = GetInstructionSetPointerSize(instruction_set);
-  if (map_boot_image_tables_to_bss_) {
-    for (gc::space::ImageSpace* space : Runtime::Current()->GetHeap()->GetBootImageSpaces()) {
-      bss_size_ += space->GetImageHeader().GetBootImageConstantTablesSize();
-    }
-  }
-
   bss_methods_offset_ = bss_size_;
 
   // Prepare offsets for .bss ArtMethod entries.
@@ -2905,6 +2883,49 @@ bool OatWriter::WriteCode(OutputStream* out) {
     return false;
   }
 
+  if (data_bimg_rel_ro_size_ != 0u) {
+    write_state_ = WriteState::kWriteDataBimgRelRo;
+  } else {
+    if (!CheckOatSize(out, file_offset, relative_offset)) {
+      return false;
+    }
+    write_state_ = WriteState::kWriteHeader;
+  }
+  return true;
+}
+
+bool OatWriter::WriteDataBimgRelRo(OutputStream* out) {
+  CHECK(write_state_ == WriteState::kWriteDataBimgRelRo);
+
+  // Wrap out to update checksum with each write.
+  ChecksumUpdatingOutputStream checksum_updating_out(out, oat_header_.get());
+  out = &checksum_updating_out;
+
+  const size_t file_offset = oat_data_offset_;
+  size_t relative_offset = data_bimg_rel_ro_start_;
+
+  // Record the padding before the .data.bimg.rel.ro section.
+  // Do not write anything, this zero-filled part was skipped (Seek()) when starting the section.
+  size_t code_end = GetOatHeader().GetExecutableOffset() + code_size_;
+  DCHECK_EQ(RoundUp(code_end, kPageSize), relative_offset);
+  size_t padding_size = relative_offset - code_end;
+  DCHECK_EQ(size_data_bimg_rel_ro_alignment_, 0u);
+  size_data_bimg_rel_ro_alignment_ = padding_size;
+
+  relative_offset = WriteDataBimgRelRo(out, file_offset, relative_offset);
+  if (relative_offset == 0) {
+    LOG(ERROR) << "Failed to write boot image relocations to " << out->GetLocation();
+    return false;
+  }
+
+  if (!CheckOatSize(out, file_offset, relative_offset)) {
+    return false;
+  }
+  write_state_ = WriteState::kWriteHeader;
+  return true;
+}
+
+bool OatWriter::CheckOatSize(OutputStream* out, size_t file_offset, size_t relative_offset) {
   const off_t oat_end_file_offset = out->Seek(0, kSeekCurrent);
   if (oat_end_file_offset == static_cast<off_t>(-1)) {
     LOG(ERROR) << "Failed to get oat end file offset in " << out->GetLocation();
@@ -2939,6 +2960,8 @@ bool OatWriter::WriteCode(OutputStream* out) {
     DO_STAT(size_method_header_);
     DO_STAT(size_code_);
     DO_STAT(size_code_alignment_);
+    DO_STAT(size_data_bimg_rel_ro_);
+    DO_STAT(size_data_bimg_rel_ro_alignment_);
     DO_STAT(size_relative_call_thunks_);
     DO_STAT(size_misc_thunks_);
     DO_STAT(size_vmap_table_);
@@ -3313,6 +3336,32 @@ size_t OatWriter::WriteCodeDexFiles(OutputStream* out,
   size_relative_call_thunks_ += relative_patcher_->RelativeCallThunksSize();
   size_misc_thunks_ += relative_patcher_->MiscThunksSize();
 
+  return relative_offset;
+}
+
+size_t OatWriter::WriteDataBimgRelRo(OutputStream* out,
+                                     size_t file_offset,
+                                     size_t relative_offset) {
+  if (data_bimg_rel_ro_entries_.empty()) {
+    return relative_offset;
+  }
+
+  // Write the entire .data.bimg.rel.ro with a single WriteFully().
+  std::vector<uint32_t> data;
+  data.reserve(data_bimg_rel_ro_entries_.size());
+  for (const auto& entry : data_bimg_rel_ro_entries_) {
+    uint32_t boot_image_offset = entry.first;
+    data.push_back(boot_image_offset);
+  }
+  DCHECK_EQ(data.size(), data_bimg_rel_ro_entries_.size());
+  DCHECK_OFFSET();
+  if (!out->WriteFully(data.data(), data.size() * sizeof(data[0]))) {
+    PLOG(ERROR) << "Failed to write .data.bimg.rel.ro in " << out->GetLocation();
+    return 0u;
+  }
+  DCHECK_EQ(size_data_bimg_rel_ro_, 0u);
+  size_data_bimg_rel_ro_ = data.size() * sizeof(data[0]);
+  relative_offset += size_data_bimg_rel_ro_;
   return relative_offset;
 }
 
@@ -4354,42 +4403,6 @@ bool OatWriter::OatClass::Write(OatWriter* oat_writer, OutputStream* out) const 
   }
   oat_writer->size_oat_class_method_offsets_ += GetMethodOffsetsRawSize();
   return true;
-}
-
-const uint8_t* OatWriter::LookupBootImageInternTableSlot(const DexFile& dex_file,
-                                                         dex::StringIndex string_idx)
-    NO_THREAD_SAFETY_ANALYSIS {  // Single-threaded OatWriter can avoid locking.
-  uint32_t utf16_length;
-  const char* utf8_data = dex_file.StringDataAndUtf16LengthByIdx(string_idx, &utf16_length);
-  DCHECK_EQ(utf16_length, CountModifiedUtf8Chars(utf8_data));
-  InternTable::Utf8String string(utf16_length,
-                                 utf8_data,
-                                 ComputeUtf16HashFromModifiedUtf8(utf8_data, utf16_length));
-  const InternTable* intern_table = Runtime::Current()->GetClassLinker()->intern_table_;
-  for (const InternTable::Table::UnorderedSet& table : intern_table->strong_interns_.tables_) {
-    auto it = table.Find(string);
-    if (it != table.end()) {
-      return reinterpret_cast<const uint8_t*>(std::addressof(*it));
-    }
-  }
-  LOG(FATAL) << "Did not find boot image string " << utf8_data;
-  UNREACHABLE();
-}
-
-const uint8_t* OatWriter::LookupBootImageClassTableSlot(const DexFile& dex_file,
-                                                        dex::TypeIndex type_idx)
-    NO_THREAD_SAFETY_ANALYSIS {  // Single-threaded OatWriter can avoid locking.
-  const char* descriptor = dex_file.StringByTypeIdx(type_idx);
-  ClassTable::DescriptorHashPair pair(descriptor, ComputeModifiedUtf8Hash(descriptor));
-  ClassTable* table = Runtime::Current()->GetClassLinker()->boot_class_table_.get();
-  for (const ClassTable::ClassSet& class_set : table->classes_) {
-    auto it = class_set.Find(pair);
-    if (it != class_set.end()) {
-      return reinterpret_cast<const uint8_t*>(std::addressof(*it));
-    }
-  }
-  LOG(FATAL) << "Did not find boot image class " << descriptor;
-  UNREACHABLE();
 }
 
 debug::DebugInfo OatWriter::GetDebugInfo() const {

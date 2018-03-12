@@ -1509,6 +1509,14 @@ inline void CodeGeneratorMIPS64::EmitPcRelativeLinkerPatches(
   }
 }
 
+linker::LinkerPatch DataBimgRelRoPatchAdapter(size_t literal_offset,
+                                              const DexFile* target_dex_file,
+                                              uint32_t pc_insn_offset,
+                                              uint32_t boot_image_offset) {
+  DCHECK(target_dex_file == nullptr);  // Unused for DataBimgRelRoPatch(), should be null.
+  return linker::LinkerPatch::DataBimgRelRoPatch(literal_offset, pc_insn_offset, boot_image_offset);
+}
+
 void CodeGeneratorMIPS64::EmitLinkerPatches(ArenaVector<linker::LinkerPatch>* linker_patches) {
   DCHECK(linker_patches->empty());
   size_t size =
@@ -1527,11 +1535,10 @@ void CodeGeneratorMIPS64::EmitLinkerPatches(ArenaVector<linker::LinkerPatch>* li
     EmitPcRelativeLinkerPatches<linker::LinkerPatch::RelativeStringPatch>(
         boot_image_string_patches_, linker_patches);
   } else {
-    DCHECK(boot_image_method_patches_.empty());
-    EmitPcRelativeLinkerPatches<linker::LinkerPatch::TypeClassTablePatch>(
-        boot_image_type_patches_, linker_patches);
-    EmitPcRelativeLinkerPatches<linker::LinkerPatch::StringInternTablePatch>(
-        boot_image_string_patches_, linker_patches);
+    EmitPcRelativeLinkerPatches<DataBimgRelRoPatchAdapter>(
+        boot_image_method_patches_, linker_patches);
+    DCHECK(boot_image_type_patches_.empty());
+    DCHECK(boot_image_string_patches_.empty());
   }
   EmitPcRelativeLinkerPatches<linker::LinkerPatch::MethodBssEntryPatch>(
       method_bss_entry_patches_, linker_patches);
@@ -1540,6 +1547,13 @@ void CodeGeneratorMIPS64::EmitLinkerPatches(ArenaVector<linker::LinkerPatch>* li
   EmitPcRelativeLinkerPatches<linker::LinkerPatch::StringBssEntryPatch>(
       string_bss_entry_patches_, linker_patches);
   DCHECK_EQ(size, linker_patches->size());
+}
+
+CodeGeneratorMIPS64::PcRelativePatchInfo* CodeGeneratorMIPS64::NewBootImageRelRoPatch(
+    uint32_t boot_image_offset,
+    const PcRelativePatchInfo* info_high) {
+  return NewPcRelativePatch(
+      /* dex_file */ nullptr, boot_image_offset, info_high, &boot_image_method_patches_);
 }
 
 CodeGeneratorMIPS64::PcRelativePatchInfo* CodeGeneratorMIPS64::NewBootImageMethodPatch(
@@ -5839,7 +5853,7 @@ HLoadString::LoadKind CodeGeneratorMIPS64::GetSupportedLoadStringKind(
   bool fallback_load = false;
   switch (desired_string_load_kind) {
     case HLoadString::LoadKind::kBootImageLinkTimePcRelative:
-    case HLoadString::LoadKind::kBootImageInternTable:
+    case HLoadString::LoadKind::kBootImageRelRo:
     case HLoadString::LoadKind::kBssEntry:
       DCHECK(!Runtime::Current()->UseJitCompilation());
       break;
@@ -5866,7 +5880,7 @@ HLoadClass::LoadKind CodeGeneratorMIPS64::GetSupportedLoadClassKind(
     case HLoadClass::LoadKind::kReferrersClass:
       break;
     case HLoadClass::LoadKind::kBootImageLinkTimePcRelative:
-    case HLoadClass::LoadKind::kBootImageClassTable:
+    case HLoadClass::LoadKind::kBootImageRelRo:
     case HLoadClass::LoadKind::kBssEntry:
       DCHECK(!Runtime::Current()->UseJitCompilation());
       break;
@@ -5926,6 +5940,15 @@ void CodeGeneratorMIPS64::GenerateStaticOrDirectCall(
                      kLoadDoubleword,
                      DeduplicateUint64Literal(invoke->GetMethodAddress()));
       break;
+    case HInvokeStaticOrDirect::MethodLoadKind::kBootImageRelRo: {
+      uint32_t boot_image_offset = GetBootImageOffset(invoke);
+      PcRelativePatchInfo* info_high = NewBootImageRelRoPatch(boot_image_offset);
+      PcRelativePatchInfo* info_low = NewBootImageRelRoPatch(boot_image_offset, info_high);
+      EmitPcRelativeAddressPlaceholderHigh(info_high, AT, info_low);
+      // Note: Boot image is in the low 4GiB and the entry is 32-bit, so emit a 32-bit load.
+      __ Lwu(temp.AsRegister<GpuRegister>(), AT, /* placeholder */ 0x5678);
+      break;
+    }
     case HInvokeStaticOrDirect::MethodLoadKind::kBssEntry: {
       PcRelativePatchInfo* info_high = NewMethodBssEntryPatch(
           MethodReference(&GetGraph()->GetDexFile(), invoke->GetDexMethodIndex()));
@@ -6113,20 +6136,15 @@ void InstructionCodeGeneratorMIPS64::VisitLoadClass(HLoadClass* cls) NO_THREAD_S
                      codegen_->DeduplicateBootImageAddressLiteral(address));
       break;
     }
-    case HLoadClass::LoadKind::kBootImageClassTable: {
+    case HLoadClass::LoadKind::kBootImageRelRo: {
       DCHECK(!codegen_->GetCompilerOptions().IsBootImage());
+      uint32_t boot_image_offset = codegen_->GetBootImageOffset(cls);
       CodeGeneratorMIPS64::PcRelativePatchInfo* info_high =
-          codegen_->NewBootImageTypePatch(cls->GetDexFile(), cls->GetTypeIndex());
+          codegen_->NewBootImageRelRoPatch(boot_image_offset);
       CodeGeneratorMIPS64::PcRelativePatchInfo* info_low =
-          codegen_->NewBootImageTypePatch(cls->GetDexFile(), cls->GetTypeIndex(), info_high);
+          codegen_->NewBootImageRelRoPatch(boot_image_offset, info_high);
       codegen_->EmitPcRelativeAddressPlaceholderHigh(info_high, AT, info_low);
       __ Lwu(out, AT, /* placeholder */ 0x5678);
-      // Extract the reference from the slot data, i.e. clear the hash bits.
-      int32_t masked_hash = ClassTable::TableSlot::MaskHash(
-          ComputeModifiedUtf8Hash(cls->GetDexFile().StringByTypeIdx(cls->GetTypeIndex())));
-      if (masked_hash != 0) {
-        __ Daddiu(out, out, -masked_hash);
-      }
       break;
     }
     case HLoadClass::LoadKind::kBssEntry: {
@@ -6248,12 +6266,13 @@ void InstructionCodeGeneratorMIPS64::VisitLoadString(HLoadString* load) NO_THREA
                      codegen_->DeduplicateBootImageAddressLiteral(address));
       return;
     }
-    case HLoadString::LoadKind::kBootImageInternTable: {
+    case HLoadString::LoadKind::kBootImageRelRo: {
       DCHECK(!codegen_->GetCompilerOptions().IsBootImage());
+      uint32_t boot_image_offset = codegen_->GetBootImageOffset(load);
       CodeGeneratorMIPS64::PcRelativePatchInfo* info_high =
-          codegen_->NewBootImageStringPatch(load->GetDexFile(), load->GetStringIndex());
+          codegen_->NewBootImageRelRoPatch(boot_image_offset);
       CodeGeneratorMIPS64::PcRelativePatchInfo* info_low =
-          codegen_->NewBootImageStringPatch(load->GetDexFile(), load->GetStringIndex(), info_high);
+          codegen_->NewBootImageRelRoPatch(boot_image_offset, info_high);
       codegen_->EmitPcRelativeAddressPlaceholderHigh(info_high, AT, info_low);
       __ Lwu(out, AT, /* placeholder */ 0x5678);
       return;
@@ -6685,7 +6704,7 @@ static void CreateMinMaxLocations(ArenaAllocator* allocator, HBinaryOperation* m
   }
 }
 
-void InstructionCodeGeneratorMIPS64::GenerateMinMax(LocationSummary* locations, bool is_min) {
+void InstructionCodeGeneratorMIPS64::GenerateMinMaxInt(LocationSummary* locations, bool is_min) {
   GpuRegister lhs = locations->InAt(0).AsRegister<GpuRegister>();
   GpuRegister rhs = locations->InAt(1).AsRegister<GpuRegister>();
   GpuRegister out = locations->Out().AsRegister<GpuRegister>();
@@ -6809,23 +6828,28 @@ void InstructionCodeGeneratorMIPS64::GenerateMinMaxFP(LocationSummary* locations
   __ Bind(&done);
 }
 
+void InstructionCodeGeneratorMIPS64::GenerateMinMax(HBinaryOperation* minmax, bool is_min) {
+  DataType::Type type = minmax->GetResultType();
+  switch (type) {
+    case DataType::Type::kInt32:
+    case DataType::Type::kInt64:
+      GenerateMinMaxInt(minmax->GetLocations(), is_min);
+      break;
+    case DataType::Type::kFloat32:
+    case DataType::Type::kFloat64:
+      GenerateMinMaxFP(minmax->GetLocations(), is_min, type);
+      break;
+    default:
+      LOG(FATAL) << "Unexpected type for HMinMax " << type;
+  }
+}
+
 void LocationsBuilderMIPS64::VisitMin(HMin* min) {
   CreateMinMaxLocations(GetGraph()->GetAllocator(), min);
 }
 
 void InstructionCodeGeneratorMIPS64::VisitMin(HMin* min) {
-  switch (min->GetResultType()) {
-    case DataType::Type::kInt32:
-    case DataType::Type::kInt64:
-      GenerateMinMax(min->GetLocations(), /*is_min*/ true);
-      break;
-    case DataType::Type::kFloat32:
-    case DataType::Type::kFloat64:
-      GenerateMinMaxFP(min->GetLocations(), /*is_min*/ true, min->GetResultType());
-      break;
-    default:
-      LOG(FATAL) << "Unexpected type for HMin " << min->GetResultType();
-  }
+  GenerateMinMax(min, /*is_min*/ true);
 }
 
 void LocationsBuilderMIPS64::VisitMax(HMax* max) {
@@ -6833,18 +6857,7 @@ void LocationsBuilderMIPS64::VisitMax(HMax* max) {
 }
 
 void InstructionCodeGeneratorMIPS64::VisitMax(HMax* max) {
-  switch (max->GetResultType()) {
-    case DataType::Type::kInt32:
-    case DataType::Type::kInt64:
-      GenerateMinMax(max->GetLocations(), /*is_min*/ false);
-      break;
-    case DataType::Type::kFloat32:
-    case DataType::Type::kFloat64:
-      GenerateMinMaxFP(max->GetLocations(), /*is_min*/ false, max->GetResultType());
-      break;
-    default:
-      LOG(FATAL) << "Unexpected type for HMax " << max->GetResultType();
-  }
+  GenerateMinMax(max, /*is_min*/ false);
 }
 
 void LocationsBuilderMIPS64::VisitAbs(HAbs* abs) {

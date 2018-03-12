@@ -343,6 +343,19 @@ bool OatFileBase::ComputeFields(uint8_t* requested_base,
   // Readjust to be non-inclusive upper bound.
   end_ += sizeof(uint32_t);
 
+  data_bimg_rel_ro_begin_ = FindDynamicSymbolAddress("oatdatabimgrelro", &symbol_error_msg);
+  if (data_bimg_rel_ro_begin_ != nullptr) {
+    data_bimg_rel_ro_end_ =
+        FindDynamicSymbolAddress("oatdatabimgrelrolastword", &symbol_error_msg);
+    if (data_bimg_rel_ro_end_ == nullptr) {
+      *error_msg =
+          StringPrintf("Failed to find oatdatabimgrelrolastword symbol in '%s'", file_path.c_str());
+      return false;
+    }
+    // Readjust to be non-inclusive upper bound.
+    data_bimg_rel_ro_end_ += sizeof(uint32_t);
+  }
+
   bss_begin_ = const_cast<uint8_t*>(FindDynamicSymbolAddress("oatbss", &symbol_error_msg));
   if (bss_begin_ == nullptr) {
     // No .bss section.
@@ -396,37 +409,6 @@ inline static bool ReadOatDexFileData(const OatFile& oat_file,
   typedef __attribute__((__aligned__(1))) T unaligned_type;
   *value = *reinterpret_cast<const unaligned_type*>(*oat);
   *oat += sizeof(T);
-  return true;
-}
-
-static inline bool MapConstantTables(const gc::space::ImageSpace* space,
-                                     uint8_t* address) {
-  // If MREMAP_DUP is ever merged to Linux kernel, use it to avoid the unnecessary open()/close().
-  // Note: The current approach relies on the filename still referencing the same inode.
-
-  File file(space->GetImageFilename(), O_RDONLY, /* checkUsage */ false);
-  if (!file.IsOpened()) {
-    LOG(ERROR) << "Failed to open boot image file " << space->GetImageFilename();
-    return false;
-  }
-
-  uint32_t offset = space->GetImageHeader().GetBootImageConstantTablesOffset();
-  uint32_t size = space->GetImageHeader().GetBootImageConstantTablesSize();
-  std::string error_msg;
-  std::unique_ptr<MemMap> mem_map(MemMap::MapFileAtAddress(address,
-                                                           size,
-                                                           PROT_READ,
-                                                           MAP_PRIVATE,
-                                                           file.Fd(),
-                                                           offset,
-                                                           /* low_4gb */ false,
-                                                           /* reuse */ true,
-                                                           file.GetPath().c_str(),
-                                                           &error_msg));
-  if (mem_map == nullptr) {
-    LOG(ERROR) << "Failed to mmap boot image tables from file " << space->GetImageFilename();
-    return false;
-  }
   return true;
 }
 
@@ -536,6 +518,17 @@ bool OatFileBase::Setup(const char* abs_dex_location, std::string* error_msg) {
   }
   const uint8_t* oat = Begin() + oat_dex_files_offset;  // Jump to the OatDexFile records.
 
+  if (!IsAligned<sizeof(uint32_t)>(data_bimg_rel_ro_begin_) ||
+      !IsAligned<sizeof(uint32_t)>(data_bimg_rel_ro_end_) ||
+      data_bimg_rel_ro_begin_ > data_bimg_rel_ro_end_) {
+    *error_msg = StringPrintf("In oat file '%s' found unaligned or unordered databimgrelro "
+                                  "symbol(s): begin = %p, end = %p",
+                              GetLocation().c_str(),
+                              data_bimg_rel_ro_begin_,
+                              data_bimg_rel_ro_end_);
+    return false;
+  }
+
   DCHECK_GE(static_cast<size_t>(pointer_size), alignof(GcRoot<mirror::Object>));
   if (!IsAligned<kPageSize>(bss_begin_) ||
       !IsAlignedParam(bss_methods_, static_cast<size_t>(pointer_size)) ||
@@ -564,12 +557,15 @@ bool OatFileBase::Setup(const char* abs_dex_location, std::string* error_msg) {
     return false;
   }
 
-  uint8_t* after_tables =
-      (bss_methods_ != nullptr) ? bss_methods_ : bss_roots_;  // May be null.
-  uint8_t* boot_image_tables = (bss_begin_ == after_tables) ? nullptr : bss_begin_;
-  uint8_t* boot_image_tables_end =
-      (bss_begin_ == after_tables) ? nullptr : (after_tables != nullptr) ? after_tables : bss_end_;
-  DCHECK_EQ(boot_image_tables != nullptr, boot_image_tables_end != nullptr);
+  if (bss_methods_ != nullptr && bss_methods_ != bss_begin_) {
+    *error_msg = StringPrintf("In oat file '%s' found unexpected .bss gap before 'oatbssmethods': "
+                                  "begin = %p, methods = %p",
+                              GetLocation().c_str(),
+                              bss_begin_,
+                              bss_methods_);
+    return false;
+  }
+
   uint32_t dex_file_count = GetOatHeader().GetDexFileCount();
   oat_dex_files_storage_.reserve(dex_file_count);
   for (size_t i = 0; i < dex_file_count; i++) {
@@ -849,39 +845,28 @@ bool OatFileBase::Setup(const char* abs_dex_location, std::string* error_msg) {
     }
   }
 
-  if (boot_image_tables != nullptr) {
-    Runtime* runtime = Runtime::Current();
+  Runtime* runtime = Runtime::Current();
+
+  if (DataBimgRelRoBegin() != nullptr) {
+    // Make .data.bimg.rel.ro read only. ClassLinker shall make it writable for relocation.
+    uint8_t* reloc_begin = const_cast<uint8_t*>(DataBimgRelRoBegin());
+    CheckedCall(mprotect, "protect relocations", reloc_begin, DataBimgRelRoSize(), PROT_READ);
     if (UNLIKELY(runtime == nullptr)) {
-      // This must be oatdump without boot image. Make sure the .bss is inaccessible.
-      CheckedCall(mprotect, "protect bss", const_cast<uint8_t*>(BssBegin()), BssSize(), PROT_NONE);
+      // This must be oatdump without boot image.
     } else if (!IsExecutable()) {
-      // Do not try to mmap boot image tables into .bss if the oat file is not executable.
+      // Do not check whether we have a boot image if the oat file is not executable.
+    } else if (UNLIKELY(runtime->GetHeap()->GetBootImageSpaces().empty())) {
+      *error_msg = StringPrintf("Cannot load oat file '%s' with .data.bimg.rel.ro as executable "
+                                    "without boot image.",
+                                GetLocation().c_str());
+      return false;
     } else {
-      // Map boot image tables into the .bss. The reserved size must match size of the tables.
-      size_t reserved_size = static_cast<size_t>(boot_image_tables_end - boot_image_tables);
-      size_t tables_size = 0u;
-      for (gc::space::ImageSpace* space : runtime->GetHeap()->GetBootImageSpaces()) {
-        tables_size += space->GetImageHeader().GetBootImageConstantTablesSize();
-        DCHECK_ALIGNED(tables_size, kPageSize);
-      }
-      if (tables_size != reserved_size) {
-        *error_msg = StringPrintf("In oat file '%s' found unexpected boot image table sizes, "
-                                      " %zu bytes, should be %zu.",
-                                  GetLocation().c_str(),
-                                  reserved_size,
-                                  tables_size);
-        return false;
-      }
-      for (gc::space::ImageSpace* space : Runtime::Current()->GetHeap()->GetBootImageSpaces()) {
-        uint32_t current_tables_size = space->GetImageHeader().GetBootImageConstantTablesSize();
-        if (current_tables_size != 0u && !MapConstantTables(space, boot_image_tables)) {
-          return false;
-        }
-        boot_image_tables += current_tables_size;
-      }
-      DCHECK(boot_image_tables == boot_image_tables_end);
+      // ClassLinker shall perform the relocation when we register a dex file from
+      // this oat file. We do not do the relocation here to avoid dirtying the pages
+      // if the code is never actually ready to be executed.
     }
   }
+
   return true;
 }
 
@@ -1513,6 +1498,8 @@ OatFile::OatFile(const std::string& location, bool is_executable)
       vdex_(nullptr),
       begin_(nullptr),
       end_(nullptr),
+      data_bimg_rel_ro_begin_(nullptr),
+      data_bimg_rel_ro_end_(nullptr),
       bss_begin_(nullptr),
       bss_end_(nullptr),
       bss_methods_(nullptr),
@@ -1542,28 +1529,22 @@ const uint8_t* OatFile::End() const {
   return end_;
 }
 
-const uint8_t* OatFile::BssBegin() const {
-  return bss_begin_;
-}
-
-const uint8_t* OatFile::BssEnd() const {
-  return bss_end_;
-}
-
-const uint8_t* OatFile::VdexBegin() const {
-  return vdex_begin_;
-}
-
-const uint8_t* OatFile::VdexEnd() const {
-  return vdex_end_;
-}
-
 const uint8_t* OatFile::DexBegin() const {
   return vdex_->Begin();
 }
 
 const uint8_t* OatFile::DexEnd() const {
   return vdex_->End();
+}
+
+ArrayRef<const uint32_t> OatFile::GetBootImageRelocations() const {
+  if (data_bimg_rel_ro_begin_ != nullptr) {
+    const uint32_t* relocations = reinterpret_cast<const uint32_t*>(data_bimg_rel_ro_begin_);
+    const uint32_t* relocations_end = reinterpret_cast<const uint32_t*>(data_bimg_rel_ro_end_);
+    return ArrayRef<const uint32_t>(relocations, relocations_end - relocations);
+  } else {
+    return ArrayRef<const uint32_t>();
+  }
 }
 
 ArrayRef<ArtMethod*> OatFile::GetBssMethods() const {

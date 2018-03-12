@@ -4719,7 +4719,7 @@ static void CreateMinMaxLocations(ArenaAllocator* allocator, HBinaryOperation* m
   }
 }
 
-void InstructionCodeGeneratorARMVIXL::GenerateMinMax(LocationSummary* locations, bool is_min) {
+void InstructionCodeGeneratorARMVIXL::GenerateMinMaxInt(LocationSummary* locations, bool is_min) {
   Location op1_loc = locations->InAt(0);
   Location op2_loc = locations->InAt(1);
   Location out_loc = locations->Out();
@@ -4780,8 +4780,8 @@ void InstructionCodeGeneratorARMVIXL::GenerateMinMaxLong(LocationSummary* locati
   }
 }
 
-void InstructionCodeGeneratorARMVIXL::GenerateMinMaxFloat(HInstruction* min_max, bool is_min) {
-  LocationSummary* locations = min_max->GetLocations();
+void InstructionCodeGeneratorARMVIXL::GenerateMinMaxFloat(HInstruction* minmax, bool is_min) {
+  LocationSummary* locations = minmax->GetLocations();
   Location op1_loc = locations->InAt(0);
   Location op2_loc = locations->InAt(1);
   Location out_loc = locations->Out();
@@ -4800,7 +4800,7 @@ void InstructionCodeGeneratorARMVIXL::GenerateMinMaxFloat(HInstruction* min_max,
   const vixl32::Register temp1 = temps.Acquire();
   vixl32::Register temp2 = RegisterFrom(locations->GetTemp(0));
   vixl32::Label nan, done;
-  vixl32::Label* final_label = codegen_->GetFinalLabel(min_max, &done);
+  vixl32::Label* final_label = codegen_->GetFinalLabel(minmax, &done);
 
   DCHECK(op1.Is(out));
 
@@ -4841,8 +4841,8 @@ void InstructionCodeGeneratorARMVIXL::GenerateMinMaxFloat(HInstruction* min_max,
   }
 }
 
-void InstructionCodeGeneratorARMVIXL::GenerateMinMaxDouble(HInstruction* min_max, bool is_min) {
-  LocationSummary* locations = min_max->GetLocations();
+void InstructionCodeGeneratorARMVIXL::GenerateMinMaxDouble(HInstruction* minmax, bool is_min) {
+  LocationSummary* locations = minmax->GetLocations();
   Location op1_loc = locations->InAt(0);
   Location op2_loc = locations->InAt(1);
   Location out_loc = locations->Out();
@@ -4857,7 +4857,7 @@ void InstructionCodeGeneratorARMVIXL::GenerateMinMaxDouble(HInstruction* min_max
   vixl32::DRegister op2 = DRegisterFrom(op2_loc);
   vixl32::DRegister out = DRegisterFrom(out_loc);
   vixl32::Label handle_nan_eq, done;
-  vixl32::Label* final_label = codegen_->GetFinalLabel(min_max, &done);
+  vixl32::Label* final_label = codegen_->GetFinalLabel(minmax, &done);
 
   DCHECK(op1.Is(out));
 
@@ -4892,27 +4892,32 @@ void InstructionCodeGeneratorARMVIXL::GenerateMinMaxDouble(HInstruction* min_max
   }
 }
 
+void InstructionCodeGeneratorARMVIXL::GenerateMinMax(HBinaryOperation* minmax, bool is_min) {
+  DataType::Type type = minmax->GetResultType();
+  switch (type) {
+    case DataType::Type::kInt32:
+      GenerateMinMaxInt(minmax->GetLocations(), is_min);
+      break;
+    case DataType::Type::kInt64:
+      GenerateMinMaxLong(minmax->GetLocations(), is_min);
+      break;
+    case DataType::Type::kFloat32:
+      GenerateMinMaxFloat(minmax, is_min);
+      break;
+    case DataType::Type::kFloat64:
+      GenerateMinMaxDouble(minmax, is_min);
+      break;
+    default:
+      LOG(FATAL) << "Unexpected type for HMinMax " << type;
+  }
+}
+
 void LocationsBuilderARMVIXL::VisitMin(HMin* min) {
   CreateMinMaxLocations(GetGraph()->GetAllocator(), min);
 }
 
 void InstructionCodeGeneratorARMVIXL::VisitMin(HMin* min) {
-  switch (min->GetResultType()) {
-    case DataType::Type::kInt32:
-      GenerateMinMax(min->GetLocations(), /*is_min*/ true);
-      break;
-    case DataType::Type::kInt64:
-      GenerateMinMaxLong(min->GetLocations(), /*is_min*/ true);
-      break;
-    case DataType::Type::kFloat32:
-      GenerateMinMaxFloat(min, /*is_min*/ true);
-      break;
-    case DataType::Type::kFloat64:
-      GenerateMinMaxDouble(min, /*is_min*/ true);
-      break;
-    default:
-      LOG(FATAL) << "Unexpected type for HMin " << min->GetResultType();
-  }
+  GenerateMinMax(min, /*is_min*/ true);
 }
 
 void LocationsBuilderARMVIXL::VisitMax(HMax* max) {
@@ -4920,22 +4925,7 @@ void LocationsBuilderARMVIXL::VisitMax(HMax* max) {
 }
 
 void InstructionCodeGeneratorARMVIXL::VisitMax(HMax* max) {
-  switch (max->GetResultType()) {
-    case DataType::Type::kInt32:
-      GenerateMinMax(max->GetLocations(), /*is_min*/ false);
-      break;
-    case DataType::Type::kInt64:
-      GenerateMinMaxLong(max->GetLocations(), /*is_min*/ false);
-      break;
-    case DataType::Type::kFloat32:
-      GenerateMinMaxFloat(max, /*is_min*/ false);
-      break;
-    case DataType::Type::kFloat64:
-      GenerateMinMaxDouble(max, /*is_min*/ false);
-      break;
-    default:
-      LOG(FATAL) << "Unexpected type for HMax " << max->GetResultType();
-  }
+  GenerateMinMax(max, /*is_min*/ false);
 }
 
 void LocationsBuilderARMVIXL::VisitAbs(HAbs* abs) {
@@ -7336,7 +7326,7 @@ HLoadClass::LoadKind CodeGeneratorARMVIXL::GetSupportedLoadClassKind(
     case HLoadClass::LoadKind::kReferrersClass:
       break;
     case HLoadClass::LoadKind::kBootImageLinkTimePcRelative:
-    case HLoadClass::LoadKind::kBootImageClassTable:
+    case HLoadClass::LoadKind::kBootImageRelRo:
     case HLoadClass::LoadKind::kBssEntry:
       DCHECK(!Runtime::Current()->UseJitCompilation());
       break;
@@ -7446,18 +7436,12 @@ void InstructionCodeGeneratorARMVIXL::VisitLoadClass(HLoadClass* cls) NO_THREAD_
       __ Ldr(out, codegen_->DeduplicateBootImageAddressLiteral(address));
       break;
     }
-    case HLoadClass::LoadKind::kBootImageClassTable: {
+    case HLoadClass::LoadKind::kBootImageRelRo: {
       DCHECK(!codegen_->GetCompilerOptions().IsBootImage());
       CodeGeneratorARMVIXL::PcRelativePatchInfo* labels =
-          codegen_->NewBootImageTypePatch(cls->GetDexFile(), cls->GetTypeIndex());
+          codegen_->NewBootImageRelRoPatch(codegen_->GetBootImageOffset(cls));
       codegen_->EmitMovwMovtPlaceholder(labels, out);
       __ Ldr(out, MemOperand(out, /* offset */ 0));
-      // Extract the reference from the slot data, i.e. clear the hash bits.
-      int32_t masked_hash = ClassTable::TableSlot::MaskHash(
-          ComputeModifiedUtf8Hash(cls->GetDexFile().StringByTypeIdx(cls->GetTypeIndex())));
-      if (masked_hash != 0) {
-        __ Sub(out, out, Operand(masked_hash));
-      }
       break;
     }
     case HLoadClass::LoadKind::kBssEntry: {
@@ -7543,7 +7527,7 @@ HLoadString::LoadKind CodeGeneratorARMVIXL::GetSupportedLoadStringKind(
     HLoadString::LoadKind desired_string_load_kind) {
   switch (desired_string_load_kind) {
     case HLoadString::LoadKind::kBootImageLinkTimePcRelative:
-    case HLoadString::LoadKind::kBootImageInternTable:
+    case HLoadString::LoadKind::kBootImageRelRo:
     case HLoadString::LoadKind::kBssEntry:
       DCHECK(!Runtime::Current()->UseJitCompilation());
       break;
@@ -7607,10 +7591,10 @@ void InstructionCodeGeneratorARMVIXL::VisitLoadString(HLoadString* load) NO_THRE
       __ Ldr(out, codegen_->DeduplicateBootImageAddressLiteral(address));
       return;
     }
-    case HLoadString::LoadKind::kBootImageInternTable: {
+    case HLoadString::LoadKind::kBootImageRelRo: {
       DCHECK(!codegen_->GetCompilerOptions().IsBootImage());
       CodeGeneratorARMVIXL::PcRelativePatchInfo* labels =
-          codegen_->NewBootImageStringPatch(load->GetDexFile(), load->GetStringIndex());
+          codegen_->NewBootImageRelRoPatch(codegen_->GetBootImageOffset(load));
       codegen_->EmitMovwMovtPlaceholder(labels, out);
       __ Ldr(out, MemOperand(out, /* offset */ 0));
       return;
@@ -9204,6 +9188,14 @@ void CodeGeneratorARMVIXL::GenerateStaticOrDirectCall(
     case HInvokeStaticOrDirect::MethodLoadKind::kDirectAddress:
       __ Mov(RegisterFrom(temp), Operand::From(invoke->GetMethodAddress()));
       break;
+    case HInvokeStaticOrDirect::MethodLoadKind::kBootImageRelRo: {
+      uint32_t boot_image_offset = GetBootImageOffset(invoke);
+      PcRelativePatchInfo* labels = NewBootImageRelRoPatch(boot_image_offset);
+      vixl32::Register temp_reg = RegisterFrom(temp);
+      EmitMovwMovtPlaceholder(labels, temp_reg);
+      GetAssembler()->LoadFromOffset(kLoadWord, temp_reg, temp_reg, /* offset*/ 0);
+      break;
+    }
     case HInvokeStaticOrDirect::MethodLoadKind::kBssEntry: {
       PcRelativePatchInfo* labels = NewMethodBssEntryPatch(
           MethodReference(&GetGraph()->GetDexFile(), invoke->GetDexMethodIndex()));
@@ -9301,6 +9293,13 @@ void CodeGeneratorARMVIXL::GenerateVirtualCall(
   }
 }
 
+CodeGeneratorARMVIXL::PcRelativePatchInfo* CodeGeneratorARMVIXL::NewBootImageRelRoPatch(
+    uint32_t boot_image_offset) {
+  return NewPcRelativePatch(/* dex_file */ nullptr,
+                            boot_image_offset,
+                            &boot_image_method_patches_);
+}
+
 CodeGeneratorARMVIXL::PcRelativePatchInfo* CodeGeneratorARMVIXL::NewBootImageMethodPatch(
     MethodReference target_method) {
   return NewPcRelativePatch(
@@ -9391,6 +9390,14 @@ inline void CodeGeneratorARMVIXL::EmitPcRelativeLinkerPatches(
   }
 }
 
+linker::LinkerPatch DataBimgRelRoPatchAdapter(size_t literal_offset,
+                                              const DexFile* target_dex_file,
+                                              uint32_t pc_insn_offset,
+                                              uint32_t boot_image_offset) {
+  DCHECK(target_dex_file == nullptr);  // Unused for DataBimgRelRoPatch(), should be null.
+  return linker::LinkerPatch::DataBimgRelRoPatch(literal_offset, pc_insn_offset, boot_image_offset);
+}
+
 void CodeGeneratorARMVIXL::EmitLinkerPatches(ArenaVector<linker::LinkerPatch>* linker_patches) {
   DCHECK(linker_patches->empty());
   size_t size =
@@ -9410,11 +9417,10 @@ void CodeGeneratorARMVIXL::EmitLinkerPatches(ArenaVector<linker::LinkerPatch>* l
     EmitPcRelativeLinkerPatches<linker::LinkerPatch::RelativeStringPatch>(
         boot_image_string_patches_, linker_patches);
   } else {
-    DCHECK(boot_image_method_patches_.empty());
-    EmitPcRelativeLinkerPatches<linker::LinkerPatch::TypeClassTablePatch>(
-        boot_image_type_patches_, linker_patches);
-    EmitPcRelativeLinkerPatches<linker::LinkerPatch::StringInternTablePatch>(
-        boot_image_string_patches_, linker_patches);
+    EmitPcRelativeLinkerPatches<DataBimgRelRoPatchAdapter>(
+        boot_image_method_patches_, linker_patches);
+    DCHECK(boot_image_type_patches_.empty());
+    DCHECK(boot_image_string_patches_.empty());
   }
   EmitPcRelativeLinkerPatches<linker::LinkerPatch::MethodBssEntryPatch>(
       method_bss_entry_patches_, linker_patches);

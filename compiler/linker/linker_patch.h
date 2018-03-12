@@ -41,18 +41,26 @@ class LinkerPatch {
   // choose to squeeze the Type into fewer than 8 bits, we'll have to declare
   // patch_type_ as an uintN_t and do explicit static_cast<>s.
   enum class Type : uint8_t {
+    kDataBimgRelRo,           // NOTE: Actual patching is instruction_set-dependent.
     kMethodRelative,          // NOTE: Actual patching is instruction_set-dependent.
     kMethodBssEntry,          // NOTE: Actual patching is instruction_set-dependent.
     kCall,
     kCallRelative,            // NOTE: Actual patching is instruction_set-dependent.
     kTypeRelative,            // NOTE: Actual patching is instruction_set-dependent.
-    kTypeClassTable,          // NOTE: Actual patching is instruction_set-dependent.
     kTypeBssEntry,            // NOTE: Actual patching is instruction_set-dependent.
     kStringRelative,          // NOTE: Actual patching is instruction_set-dependent.
-    kStringInternTable,       // NOTE: Actual patching is instruction_set-dependent.
     kStringBssEntry,          // NOTE: Actual patching is instruction_set-dependent.
     kBakerReadBarrierBranch,  // NOTE: Actual patching is instruction_set-dependent.
   };
+
+  static LinkerPatch DataBimgRelRoPatch(size_t literal_offset,
+                                        uint32_t pc_insn_offset,
+                                        uint32_t boot_image_offset) {
+    LinkerPatch patch(literal_offset, Type::kDataBimgRelRo, /* target_dex_file */ nullptr);
+    patch.boot_image_offset_ = boot_image_offset;
+    patch.pc_insn_offset_ = pc_insn_offset;
+    return patch;
+  }
 
   static LinkerPatch RelativeMethodPatch(size_t literal_offset,
                                          const DexFile* target_dex_file,
@@ -100,16 +108,6 @@ class LinkerPatch {
     return patch;
   }
 
-  static LinkerPatch TypeClassTablePatch(size_t literal_offset,
-                                         const DexFile* target_dex_file,
-                                         uint32_t pc_insn_offset,
-                                         uint32_t target_type_idx) {
-    LinkerPatch patch(literal_offset, Type::kTypeClassTable, target_dex_file);
-    patch.type_idx_ = target_type_idx;
-    patch.pc_insn_offset_ = pc_insn_offset;
-    return patch;
-  }
-
   static LinkerPatch TypeBssEntryPatch(size_t literal_offset,
                                        const DexFile* target_dex_file,
                                        uint32_t pc_insn_offset,
@@ -125,16 +123,6 @@ class LinkerPatch {
                                          uint32_t pc_insn_offset,
                                          uint32_t target_string_idx) {
     LinkerPatch patch(literal_offset, Type::kStringRelative, target_dex_file);
-    patch.string_idx_ = target_string_idx;
-    patch.pc_insn_offset_ = pc_insn_offset;
-    return patch;
-  }
-
-  static LinkerPatch StringInternTablePatch(size_t literal_offset,
-                                            const DexFile* target_dex_file,
-                                            uint32_t pc_insn_offset,
-                                            uint32_t target_string_idx) {
-    LinkerPatch patch(literal_offset, Type::kStringInternTable, target_dex_file);
     patch.string_idx_ = target_string_idx;
     patch.pc_insn_offset_ = pc_insn_offset;
     return patch;
@@ -172,20 +160,24 @@ class LinkerPatch {
 
   bool IsPcRelative() const {
     switch (GetType()) {
+      case Type::kDataBimgRelRo:
       case Type::kMethodRelative:
       case Type::kMethodBssEntry:
       case Type::kCallRelative:
       case Type::kTypeRelative:
-      case Type::kTypeClassTable:
       case Type::kTypeBssEntry:
       case Type::kStringRelative:
-      case Type::kStringInternTable:
       case Type::kStringBssEntry:
       case Type::kBakerReadBarrierBranch:
         return true;
       default:
         return false;
     }
+  }
+
+  uint32_t BootImageOffset() const {
+    DCHECK(patch_type_ == Type::kDataBimgRelRo);
+    return boot_image_offset_;
   }
 
   MethodReference TargetMethod() const {
@@ -198,40 +190,35 @@ class LinkerPatch {
 
   const DexFile* TargetTypeDexFile() const {
     DCHECK(patch_type_ == Type::kTypeRelative ||
-           patch_type_ == Type::kTypeClassTable ||
            patch_type_ == Type::kTypeBssEntry);
     return target_dex_file_;
   }
 
   dex::TypeIndex TargetTypeIndex() const {
     DCHECK(patch_type_ == Type::kTypeRelative ||
-           patch_type_ == Type::kTypeClassTable ||
            patch_type_ == Type::kTypeBssEntry);
     return dex::TypeIndex(type_idx_);
   }
 
   const DexFile* TargetStringDexFile() const {
     DCHECK(patch_type_ == Type::kStringRelative ||
-           patch_type_ == Type::kStringInternTable ||
            patch_type_ == Type::kStringBssEntry);
     return target_dex_file_;
   }
 
   dex::StringIndex TargetStringIndex() const {
     DCHECK(patch_type_ == Type::kStringRelative ||
-           patch_type_ == Type::kStringInternTable ||
            patch_type_ == Type::kStringBssEntry);
     return dex::StringIndex(string_idx_);
   }
 
   uint32_t PcInsnOffset() const {
-    DCHECK(patch_type_ == Type::kMethodRelative ||
+    DCHECK(patch_type_ == Type::kDataBimgRelRo ||
+           patch_type_ == Type::kMethodRelative ||
            patch_type_ == Type::kMethodBssEntry ||
            patch_type_ == Type::kTypeRelative ||
-           patch_type_ == Type::kTypeClassTable ||
            patch_type_ == Type::kTypeBssEntry ||
            patch_type_ == Type::kStringRelative ||
-           patch_type_ == Type::kStringInternTable ||
            patch_type_ == Type::kStringBssEntry);
     return pc_insn_offset_;
   }
@@ -263,10 +250,11 @@ class LinkerPatch {
   uint32_t literal_offset_ : 24;  // Method code size up to 16MiB.
   Type patch_type_ : 8;
   union {
-    uint32_t cmp1_;             // Used for relational operators.
-    uint32_t method_idx_;       // Method index for Call/Method patches.
-    uint32_t type_idx_;         // Type index for Type patches.
-    uint32_t string_idx_;       // String index for String patches.
+    uint32_t cmp1_;               // Used for relational operators.
+    uint32_t boot_image_offset_;  // Data to write to the .data.bimg.rel.ro entry.
+    uint32_t method_idx_;         // Method index for Call/Method patches.
+    uint32_t type_idx_;           // Type index for Type patches.
+    uint32_t string_idx_;         // String index for String patches.
     uint32_t baker_custom_value1_;
     static_assert(sizeof(method_idx_) == sizeof(cmp1_), "needed by relational operators");
     static_assert(sizeof(type_idx_) == sizeof(cmp1_), "needed by relational operators");
