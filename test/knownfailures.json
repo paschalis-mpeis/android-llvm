@@ -286,11 +286,6 @@
         "variant": "npictest"
     },
     {
-        "tests": "639-checker-code-sinking",
-        "variant": "pictest",
-        "bug": "http://b/65366606"
-    },
-    {
         "tests": "055-enum-performance",
         "variant": "optimizing | regalloc_gc",
         "description": ["055: Exceeds run time limits due to heap poisoning ",
@@ -668,12 +663,6 @@
         "variant": "speed-profile & debug & gcstress & target",
         "bug": "b/73275005",
         "description": ["Time out"]
-    },
-    {
-        "tests": ["130-hprof"],
-        "env_vars": {"SANITIZE_HOST": "address"},
-        "bug": "b/73060923",
-        "description": ["ASAN issue"]
     },
     {
         "tests": ["1941-dispose-stress", "522-checker-regression-monitor-exit"],
