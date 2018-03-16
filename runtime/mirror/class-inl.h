@@ -304,20 +304,25 @@ inline bool Class::HasVTable() {
   return GetVTable() != nullptr || ShouldHaveEmbeddedVTable();
 }
 
+  template<VerifyObjectFlags kVerifyFlags,
+           ReadBarrierOption kReadBarrierOption>
 inline int32_t Class::GetVTableLength() {
-  if (ShouldHaveEmbeddedVTable()) {
+  if (ShouldHaveEmbeddedVTable<kVerifyFlags, kReadBarrierOption>()) {
     return GetEmbeddedVTableLength();
   }
-  return GetVTable() != nullptr ? GetVTable()->GetLength() : 0;
+  return GetVTable<kVerifyFlags, kReadBarrierOption>() != nullptr ?
+      GetVTable<kVerifyFlags, kReadBarrierOption>()->GetLength() : 0;
 }
 
+  template<VerifyObjectFlags kVerifyFlags,
+           ReadBarrierOption kReadBarrierOption>
 inline ArtMethod* Class::GetVTableEntry(uint32_t i, PointerSize pointer_size) {
-  if (ShouldHaveEmbeddedVTable()) {
+  if (ShouldHaveEmbeddedVTable<kVerifyFlags, kReadBarrierOption>()) {
     return GetEmbeddedVTableEntry(i, pointer_size);
   }
-  auto* vtable = GetVTable();
+  auto* vtable = GetVTable<kVerifyFlags, kReadBarrierOption>();
   DCHECK(vtable != nullptr);
-  return vtable->GetElementPtrSize<ArtMethod*>(i, pointer_size);
+  return vtable->template GetElementPtrSize<ArtMethod*, kVerifyFlags, kReadBarrierOption>(i, pointer_size);
 }
 
 inline int32_t Class::GetEmbeddedVTableLength() {
@@ -627,8 +632,10 @@ inline IfTable* Class::GetIfTable() {
   return ret.Ptr();
 }
 
+template<VerifyObjectFlags kVerifyFlags,
+         ReadBarrierOption kReadBarrierOption>
 inline int32_t Class::GetIfTableCount() {
-  return GetIfTable()->Count();
+  return GetIfTable<kVerifyFlags, kReadBarrierOption>()->Count();
 }
 
 inline void Class::SetIfTable(ObjPtr<IfTable> new_iftable) {
@@ -1143,10 +1150,6 @@ inline bool Class::CanAccessMember(ObjPtr<Class> access_to, uint32_t member_flag
   // Classes can access all of their own members
   if (this == access_to) {
     return true;
-  }
-  // Do not allow non-boot class path classes access hidden APIs.
-  if (hiddenapi::ShouldBlockAccessToMember(member_flags, this)) {
-    return false;
   }
   // Public members are trivially accessible
   if (member_flags & kAccPublic) {

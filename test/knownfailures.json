@@ -75,13 +75,6 @@
                         "--relocate"]
     },
     {
-        "tests": "137-cfi",
-        "variant": "interp-ac",
-        "description": ["Temporarily disable some broken tests when forcing",
-                        "access checks in interpreter"],
-        "bug": "http://b/22414682"
-    },
-    {
         "tests" : "629-vdex-speed",
         "variant": "interp-ac | no-dex2oat | interpreter | jit | relocate-npatchoat",
         "description": "629 requires compilation."
@@ -344,10 +337,8 @@
         "variant": "optimizing | regalloc_gc"
     },
     {
-        "tests": ["537-checker-arraycopy",
-                  "641-checker-arraycopy"],
-        "env_vars": {"ART_USE_READ_BARRIER": "true"},
-        "variant": "interpreter | optimizing | regalloc_gc | jit"
+        "tests": ["537-checker-arraycopy"],
+        "env_vars": {"ART_READ_BARRIER_TYPE": "TABLELOOKUP"}
     },
     {
         "tests": ["476-clinit-inline-static-invoke",
@@ -958,7 +949,17 @@
         ],
         "variant": "jvm",
         "bug": "b/73888836",
-        "description": ["Failing on JVM. Needs further investigating."]
+        "description": ["Failing on RI. Needs further investigating."]
+    },
+    {
+        "tests": ["616-cha-unloading"],
+        "variant": "jvm",
+        "description": ["Doesn't run on RI."]
+    },
+    {
+        "tests": ["616-cha-unloading"],
+        "variant": "trace",
+        "description": ["Trace prevents class unloading."]
     },
     {
         "tests": "677-fsi",

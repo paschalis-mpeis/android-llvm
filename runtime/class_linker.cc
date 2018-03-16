@@ -1166,6 +1166,25 @@ static bool FlattenPathClassLoader(ObjPtr<mirror::ClassLoader> class_loader,
   return true;
 }
 
+class CHAOnDeleteUpdateClassVisitor {
+ public:
+  explicit CHAOnDeleteUpdateClassVisitor(LinearAlloc* alloc)
+      : allocator_(alloc), cha_(Runtime::Current()->GetClassLinker()->GetClassHierarchyAnalysis()),
+        pointer_size_(Runtime::Current()->GetClassLinker()->GetImagePointerSize()),
+        self_(Thread::Current()) {}
+
+  bool operator()(ObjPtr<mirror::Class> klass) REQUIRES_SHARED(Locks::mutator_lock_) {
+    // This class is going to be unloaded. Tell CHA about it.
+    cha_->ResetSingleImplementationInHierarchy(klass, allocator_, pointer_size_);
+    return true;
+  }
+ private:
+  const LinearAlloc* allocator_;
+  const ClassHierarchyAnalysis* cha_;
+  const PointerSize pointer_size_;
+  const Thread* self_;
+};
+
 class VerifyDeclaringClassVisitor : public ArtMethodVisitor {
  public:
   VerifyDeclaringClassVisitor() REQUIRES_SHARED(Locks::mutator_lock_, Locks::heap_bitmap_lock_)
@@ -2150,12 +2169,14 @@ ClassLinker::~ClassLinker() {
   mirror::EmulatedStackFrame::ResetClass();
   Thread* const self = Thread::Current();
   for (const ClassLoaderData& data : class_loaders_) {
-    DeleteClassLoader(self, data);
+    // CHA unloading analysis is not needed. No negative consequences are expected because
+    // all the classloaders are deleted at the same time.
+    DeleteClassLoader(self, data, false /*cleanup_cha*/);
   }
   class_loaders_.clear();
 }
 
-void ClassLinker::DeleteClassLoader(Thread* self, const ClassLoaderData& data) {
+void ClassLinker::DeleteClassLoader(Thread* self, const ClassLoaderData& data, bool cleanup_cha) {
   Runtime* const runtime = Runtime::Current();
   JavaVMExt* const vm = runtime->GetJavaVM();
   vm->DeleteWeakGlobalRef(self, data.weak_root);
@@ -2170,6 +2191,12 @@ void ClassLinker::DeleteClassLoader(Thread* self, const ClassLoaderData& data) {
     // If we don't have a JIT, we need to manually remove the CHA dependencies manually.
     cha_->RemoveDependenciesForLinearAlloc(data.allocator);
   }
+  // Cleanup references to single implementation ArtMethods that will be deleted.
+  if (cleanup_cha) {
+    CHAOnDeleteUpdateClassVisitor visitor(data.allocator);
+    data.class_table->Visit<CHAOnDeleteUpdateClassVisitor, kWithoutReadBarrier>(visitor);
+  }
+
   delete data.allocator;
   delete data.class_table;
 }
@@ -5836,6 +5863,14 @@ bool ClassLinker::LinkVirtualMethods(
       // smaller as we go on.
       uint32_t hash_index = hash_table.FindAndRemove(&super_method_name_comparator);
       if (hash_index != hash_table.GetNotFoundIndex()) {
+        // Run a check whether we are going to override a method which is hidden
+        // to `klass`, but ignore the result as we only warn at the moment.
+        // We cannot do this test earlier because we need to establish that
+        // a method is being overridden first. ShouldBlockAccessToMember would
+        // print bogus warnings otherwise.
+        hiddenapi::ShouldBlockAccessToMember(
+            super_method, klass->GetClassLoader(), hiddenapi::kOverride);
+
         ArtMethod* virtual_method = klass->GetVirtualMethodDuringLinking(
             hash_index, image_pointer_size_);
         if (super_method->IsFinal()) {
@@ -7907,6 +7942,10 @@ ArtMethod* ClassLinker::FindResolvedMethod(ObjPtr<mirror::Class> klass,
     resolved = klass->FindClassMethod(dex_cache, method_idx, image_pointer_size_);
   }
   DCHECK(resolved == nullptr || resolved->GetDeclaringClassUnchecked() != nullptr);
+  if (resolved != nullptr &&
+      hiddenapi::ShouldBlockAccessToMember(resolved, class_loader, hiddenapi::kLinking)) {
+    resolved = nullptr;
+  }
   if (resolved != nullptr) {
     // In case of jmvti, the dex file gets verified before being registered, so first
     // check if it's registered before checking class tables.
@@ -8045,7 +8084,10 @@ ArtMethod* ClassLinker::ResolveMethodWithoutInvokeType(uint32_t method_idx,
   } else {
     resolved = klass->FindClassMethod(dex_cache.Get(), method_idx, image_pointer_size_);
   }
-
+  if (resolved != nullptr &&
+      hiddenapi::ShouldBlockAccessToMember(resolved, class_loader.Get(), hiddenapi::kLinking)) {
+    resolved = nullptr;
+  }
   return resolved;
 }
 
@@ -8119,11 +8161,16 @@ ArtField* ClassLinker::ResolveField(uint32_t field_idx,
     } else {
       resolved = klass->FindInstanceField(name, type);
     }
-    if (resolved == nullptr) {
-      ThrowNoSuchFieldError(is_static ? "static " : "instance ", klass, type, name);
-      return nullptr;
-    }
   }
+
+  if (resolved == nullptr ||
+      hiddenapi::ShouldBlockAccessToMember(resolved, class_loader.Get(), hiddenapi::kLinking)) {
+    const char* name = dex_file.GetFieldName(field_id);
+    const char* type = dex_file.GetFieldTypeDescriptor(field_id);
+    ThrowNoSuchFieldError(is_static ? "static " : "instance ", klass, type, name);
+    return nullptr;
+  }
+
   dex_cache->SetResolvedField(field_idx, resolved, image_pointer_size_);
   return resolved;
 }
@@ -8149,6 +8196,10 @@ ArtField* ClassLinker::ResolveFieldJLS(uint32_t field_idx,
   StringPiece name(dex_file.GetFieldName(field_id));
   StringPiece type(dex_file.GetFieldTypeDescriptor(field_id));
   resolved = mirror::Class::FindField(self, klass, name, type);
+  if (resolved != nullptr &&
+      hiddenapi::ShouldBlockAccessToMember(resolved, class_loader.Get(), hiddenapi::kLinking)) {
+    resolved = nullptr;
+  }
   if (resolved != nullptr) {
     dex_cache->SetResolvedField(field_idx, resolved, image_pointer_size_);
   } else {
@@ -8895,7 +8946,8 @@ void ClassLinker::CleanupClassLoaders() {
     }
   }
   for (ClassLoaderData& data : to_delete) {
-    DeleteClassLoader(self, data);
+    // CHA unloading analysis and SingleImplementaion cleanups are required.
+    DeleteClassLoader(self, data, true /*cleanup_cha*/);
   }
 }
 
