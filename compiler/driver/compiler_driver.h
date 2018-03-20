@@ -33,14 +33,14 @@
 #include "base/quasi_atomic.h"
 #include "base/safe_map.h"
 #include "base/timing_logger.h"
-#include "class_reference.h"
 #include "class_status.h"
 #include "compiler.h"
+#include "dex/class_reference.h"
 #include "dex/dex_file.h"
 #include "dex/dex_file_types.h"
 #include "dex/dex_to_dex_compiler.h"
+#include "dex/method_reference.h"
 #include "driver/compiled_method_storage.h"
-#include "method_reference.h"
 #include "thread_pool.h"
 #include "utils/atomic_dex_ref_map.h"
 #include "utils/dex_cache_arrays_layout.h"
@@ -371,9 +371,18 @@ class CompilerDriver {
   // Is `boot_image_filename` the name of a core image (small boot
   // image used for ART testing only)?
   static bool IsCoreImageFilename(const std::string& boot_image_filename) {
-    // TODO: This is under-approximating...
-    return android::base::EndsWith(boot_image_filename, "core.art")
-        || android::base::EndsWith(boot_image_filename, "core-optimizing.art");
+    // Look for "core.art" or "core-*.art".
+    if (android::base::EndsWith(boot_image_filename, "core.art")) {
+      return true;
+    }
+    if (!android::base::EndsWith(boot_image_filename, ".art")) {
+      return false;
+    }
+    size_t dash_pos = boot_image_filename.find_last_of("-/");
+    if (dash_pos == std::string::npos || boot_image_filename[dash_pos] != '-') {
+      return false;
+    }
+    return (dash_pos >= 4u) && (boot_image_filename.compare(dash_pos - 4u, 4u, "core") == 0);
   }
 
   optimizer::DexToDexCompiler& GetDexToDexCompiler() {

@@ -48,6 +48,7 @@
 #include "dex/descriptors_names.h"
 #include "dex/dex_file-inl.h"
 #include "dex/dex_instruction-inl.h"
+#include "dex/string_reference.h"
 #include "disassembler.h"
 #include "gc/accounting/space_bitmap-inl.h"
 #include "gc/space/image_space.h"
@@ -73,7 +74,6 @@
 #include "scoped_thread_state_change-inl.h"
 #include "stack.h"
 #include "stack_map.h"
-#include "string_reference.h"
 #include "thread_list.h"
 #include "type_lookup_table.h"
 #include "vdex_file.h"
@@ -1695,9 +1695,12 @@ class OatDumper {
       Handle<mirror::DexCache> dex_cache = hs->NewHandle(
           runtime->GetClassLinker()->RegisterDexFile(*dex_file, options_.class_loader_->Get()));
       CHECK(dex_cache != nullptr);
+      ArtMethod* method = runtime->GetClassLinker()->ResolveMethodWithoutInvokeType(
+          dex_method_idx, dex_cache, *options_.class_loader_);
+      CHECK(method != nullptr);
       return verifier::MethodVerifier::VerifyMethodAndDump(
           soa.Self(), vios, dex_method_idx, dex_file, dex_cache, *options_.class_loader_,
-          class_def, code_item, nullptr, method_access_flags);
+          class_def, code_item, method, method_access_flags);
     }
 
     return nullptr;
