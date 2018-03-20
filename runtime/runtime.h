@@ -49,10 +49,6 @@ class AbstractSystemWeakHolder;
 class Heap;
 }  // namespace gc
 
-namespace hiddenapi {
-enum class EnforcementPolicy;
-}  // namespace hiddenapi
-
 namespace jit {
 class Jit;
 class JitOptions;
@@ -524,12 +520,12 @@ class Runtime {
   bool IsVerificationEnabled() const;
   bool IsVerificationSoftFail() const;
 
-  void SetHiddenApiEnforcementPolicy(hiddenapi::EnforcementPolicy policy) {
-    hidden_api_policy_ = policy;
+  void SetHiddenApiChecksEnabled(bool value) {
+    do_hidden_api_checks_ = value;
   }
 
-  hiddenapi::EnforcementPolicy GetHiddenApiEnforcementPolicy() const {
-    return hidden_api_policy_;
+  bool AreHiddenApiChecksEnabled() const {
+    return do_hidden_api_checks_;
   }
 
   void SetPendingHiddenApiWarning(bool value) {
@@ -994,7 +990,7 @@ class Runtime {
   bool safe_mode_;
 
   // Whether access checks on hidden API should be performed.
-  hiddenapi::EnforcementPolicy hidden_api_policy_;
+  bool do_hidden_api_checks_;
 
   // Whether the application has used an API which is not restricted but we
   // should issue a warning about it.
