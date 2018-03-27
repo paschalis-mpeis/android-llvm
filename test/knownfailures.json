@@ -276,7 +276,8 @@
     },
     {
         "tests": "596-app-images",
-        "variant": "npictest"
+        "description": "Code being tested has been disabled",
+        "bug": "b/70734839"
     },
     {
         "tests": "055-enum-performance",
@@ -958,6 +959,13 @@
                   "679-locks"],
         "variant": "jvm",
         "description": ["Doesn't run on RI."]
+    },
+    {
+        "tests": ["121-modifiers",
+                  "1929-exception-catch-exception"],
+        "variant": "jvm",
+        "bug": "b/76399183",
+        "description": ["New failures to be investigated."]
     },
     {
         "tests": ["616-cha-unloading"],
