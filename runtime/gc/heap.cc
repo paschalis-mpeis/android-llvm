@@ -2753,12 +2753,10 @@ class ScanVisitor {
 // Verify a reference from an object.
 class VerifyReferenceVisitor : public SingleRootVisitor {
  public:
-  VerifyReferenceVisitor(Heap* heap, Atomic<size_t>* fail_count, bool verify_referent)
+  VerifyReferenceVisitor(Thread* self, Heap* heap, size_t* fail_count, bool verify_referent)
       REQUIRES_SHARED(Locks::mutator_lock_)
-      : heap_(heap), fail_count_(fail_count), verify_referent_(verify_referent) {}
-
-  size_t GetFailureCount() const {
-    return fail_count_->load(std::memory_order_seq_cst);
+      : self_(self), heap_(heap), fail_count_(fail_count), verify_referent_(verify_referent) {
+    CHECK_EQ(self_, Thread::Current());
   }
 
   void operator()(ObjPtr<mirror::Class> klass ATTRIBUTE_UNUSED, ObjPtr<mirror::Reference> ref) const
@@ -2810,8 +2808,10 @@ class VerifyReferenceVisitor : public SingleRootVisitor {
       // Verify that the reference is live.
       return true;
     }
-    if (fail_count_->fetch_add(1, std::memory_order_seq_cst) == 0) {
-      // Print message on only on first failure to prevent spam.
+    CHECK_EQ(self_, Thread::Current());  // fail_count_ is private to the calling thread.
+    *fail_count_ += 1;
+    if (*fail_count_ == 1) {
+      // Only print message for the first failure to prevent spam.
       LOG(ERROR) << "!!!!!!!!!!!!!!Heap corruption detected!!!!!!!!!!!!!!!!!!!";
     }
     if (obj != nullptr) {
@@ -2897,38 +2897,41 @@ class VerifyReferenceVisitor : public SingleRootVisitor {
     return false;
   }
 
+  Thread* const self_;
   Heap* const heap_;
-  Atomic<size_t>* const fail_count_;
+  size_t* const fail_count_;
   const bool verify_referent_;
 };
 
 // Verify all references within an object, for use with HeapBitmap::Visit.
 class VerifyObjectVisitor {
  public:
-  VerifyObjectVisitor(Heap* heap, Atomic<size_t>* fail_count, bool verify_referent)
-      : heap_(heap), fail_count_(fail_count), verify_referent_(verify_referent) {}
+  VerifyObjectVisitor(Thread* self, Heap* heap, size_t* fail_count, bool verify_referent)
+      : self_(self), heap_(heap), fail_count_(fail_count), verify_referent_(verify_referent) {}
 
   void operator()(mirror::Object* obj) REQUIRES_SHARED(Locks::mutator_lock_) {
     // Note: we are verifying the references in obj but not obj itself, this is because obj must
     // be live or else how did we find it in the live bitmap?
-    VerifyReferenceVisitor visitor(heap_, fail_count_, verify_referent_);
+    VerifyReferenceVisitor visitor(self_, heap_, fail_count_, verify_referent_);
     // The class doesn't count as a reference but we should verify it anyways.
     obj->VisitReferences(visitor, visitor);
   }
 
   void VerifyRoots() REQUIRES_SHARED(Locks::mutator_lock_) REQUIRES(!Locks::heap_bitmap_lock_) {
     ReaderMutexLock mu(Thread::Current(), *Locks::heap_bitmap_lock_);
-    VerifyReferenceVisitor visitor(heap_, fail_count_, verify_referent_);
+    VerifyReferenceVisitor visitor(self_, heap_, fail_count_, verify_referent_);
     Runtime::Current()->VisitRoots(&visitor);
   }
 
-  size_t GetFailureCount() const {
-    return fail_count_->load(std::memory_order_seq_cst);
+  uint32_t GetFailureCount() const REQUIRES(Locks::mutator_lock_) {
+    CHECK_EQ(self_, Thread::Current());
+    return *fail_count_;
   }
 
  private:
+  Thread* const self_;
   Heap* const heap_;
-  Atomic<size_t>* const fail_count_;
+  size_t* const fail_count_;
   const bool verify_referent_;
 };
 
@@ -2980,8 +2983,8 @@ size_t Heap::VerifyHeapReferences(bool verify_referents) {
   // Since we sorted the allocation stack content, need to revoke all
   // thread-local allocation stacks.
   RevokeAllThreadLocalAllocationStacks(self);
-  Atomic<size_t> fail_count_(0);
-  VerifyObjectVisitor visitor(this, &fail_count_, verify_referents);
+  size_t fail_count = 0;
+  VerifyObjectVisitor visitor(self, this, &fail_count, verify_referents);
   // Verify objects in the allocation stack since these will be objects which were:
   // 1. Allocated prior to the GC (pre GC verification).
   // 2. Allocated during the GC (pre sweep GC verification).
@@ -3727,13 +3730,21 @@ void Heap::RequestTrim(Thread* self) {
   task_processor_->AddTask(self, added_task);
 }
 
+void Heap::IncrementNumberOfBytesFreedRevoke(size_t freed_bytes_revoke) {
+  size_t previous_num_bytes_freed_revoke =
+      num_bytes_freed_revoke_.fetch_add(freed_bytes_revoke, std::memory_order_seq_cst);
+  // Check the updated value is less than the number of bytes allocated. There is a risk of
+  // execution being suspended between the increment above and the CHECK below, leading to
+  // the use of previous_num_bytes_freed_revoke in the comparison.
+  CHECK_GE(num_bytes_allocated_.load(std::memory_order_relaxed),
+           previous_num_bytes_freed_revoke + freed_bytes_revoke);
+}
+
 void Heap::RevokeThreadLocalBuffers(Thread* thread) {
   if (rosalloc_space_ != nullptr) {
     size_t freed_bytes_revoke = rosalloc_space_->RevokeThreadLocalBuffers(thread);
     if (freed_bytes_revoke > 0U) {
-      num_bytes_freed_revoke_.fetch_add(freed_bytes_revoke, std::memory_order_seq_cst);
-      CHECK_GE(num_bytes_allocated_.load(std::memory_order_relaxed),
-               num_bytes_freed_revoke_.load(std::memory_order_relaxed));
+      IncrementNumberOfBytesFreedRevoke(freed_bytes_revoke);
     }
   }
   if (bump_pointer_space_ != nullptr) {
@@ -3748,9 +3759,7 @@ void Heap::RevokeRosAllocThreadLocalBuffers(Thread* thread) {
   if (rosalloc_space_ != nullptr) {
     size_t freed_bytes_revoke = rosalloc_space_->RevokeThreadLocalBuffers(thread);
     if (freed_bytes_revoke > 0U) {
-      num_bytes_freed_revoke_.fetch_add(freed_bytes_revoke, std::memory_order_seq_cst);
-      CHECK_GE(num_bytes_allocated_.load(std::memory_order_relaxed),
-               num_bytes_freed_revoke_.load(std::memory_order_relaxed));
+      IncrementNumberOfBytesFreedRevoke(freed_bytes_revoke);
     }
   }
 }
@@ -3759,9 +3768,7 @@ void Heap::RevokeAllThreadLocalBuffers() {
   if (rosalloc_space_ != nullptr) {
     size_t freed_bytes_revoke = rosalloc_space_->RevokeAllThreadLocalBuffers();
     if (freed_bytes_revoke > 0U) {
-      num_bytes_freed_revoke_.fetch_add(freed_bytes_revoke, std::memory_order_seq_cst);
-      CHECK_GE(num_bytes_allocated_.load(std::memory_order_relaxed),
-               num_bytes_freed_revoke_.load(std::memory_order_relaxed));
+      IncrementNumberOfBytesFreedRevoke(freed_bytes_revoke);
     }
   }
   if (bump_pointer_space_ != nullptr) {

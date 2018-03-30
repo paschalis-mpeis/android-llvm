@@ -22,6 +22,7 @@
 
 namespace art {
 
+class HiddenApi;
 class VeridexResolver;
 
 /**
@@ -67,6 +68,11 @@ class VeridexResolver {
 
   // Resolve all type_id/method_id/field_id.
   void ResolveAll();
+
+  // The dex file this resolver is associated to.
+  const DexFile& GetDexFile() const {
+    return dex_file_;
+  }
 
  private:
   // Return the resolver where `kls` is from.

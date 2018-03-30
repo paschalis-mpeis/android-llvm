@@ -72,6 +72,7 @@
 #include "gc/space/space-inl.h"
 #include "gc_root-inl.h"
 #include "handle_scope-inl.h"
+#include "hidden_api.h"
 #include "image-inl.h"
 #include "imt_conflict_table.h"
 #include "imtable-inl.h"
@@ -6178,7 +6179,7 @@ ArtMethod* ClassLinker::AddMethodToConflictTable(ObjPtr<mirror::Class> klass,
   // Note that there is a race in the presence of multiple threads and we may leak
   // memory from the LinearAlloc, but that's a tradeoff compared to using
   // atomic operations.
-  QuasiAtomic::ThreadFenceRelease();
+  std::atomic_thread_fence(std::memory_order_release);
   new_conflict_method->SetImtConflictTable(new_table, image_pointer_size_);
   return new_conflict_method;
 }
@@ -7935,7 +7936,8 @@ ArtMethod* ClassLinker::FindResolvedMethod(ObjPtr<mirror::Class> klass,
   }
   DCHECK(resolved == nullptr || resolved->GetDeclaringClassUnchecked() != nullptr);
   if (resolved != nullptr &&
-      hiddenapi::ShouldBlockAccessToMember(resolved, class_loader, hiddenapi::kLinking)) {
+      hiddenapi::ShouldBlockAccessToMember(
+          resolved, class_loader, dex_cache, hiddenapi::kLinking)) {
     resolved = nullptr;
   }
   if (resolved != nullptr) {
@@ -8077,7 +8079,8 @@ ArtMethod* ClassLinker::ResolveMethodWithoutInvokeType(uint32_t method_idx,
     resolved = klass->FindClassMethod(dex_cache.Get(), method_idx, image_pointer_size_);
   }
   if (resolved != nullptr &&
-      hiddenapi::ShouldBlockAccessToMember(resolved, class_loader.Get(), hiddenapi::kLinking)) {
+      hiddenapi::ShouldBlockAccessToMember(
+          resolved, class_loader.Get(), dex_cache.Get(), hiddenapi::kLinking)) {
     resolved = nullptr;
   }
   return resolved;
@@ -8156,7 +8159,8 @@ ArtField* ClassLinker::ResolveField(uint32_t field_idx,
   }
 
   if (resolved == nullptr ||
-      hiddenapi::ShouldBlockAccessToMember(resolved, class_loader.Get(), hiddenapi::kLinking)) {
+      hiddenapi::ShouldBlockAccessToMember(
+          resolved, class_loader.Get(), dex_cache.Get(), hiddenapi::kLinking)) {
     const char* name = dex_file.GetFieldName(field_id);
     const char* type = dex_file.GetFieldTypeDescriptor(field_id);
     ThrowNoSuchFieldError(is_static ? "static " : "instance ", klass, type, name);
@@ -8189,7 +8193,8 @@ ArtField* ClassLinker::ResolveFieldJLS(uint32_t field_idx,
   StringPiece type(dex_file.GetFieldTypeDescriptor(field_id));
   resolved = mirror::Class::FindField(self, klass, name, type);
   if (resolved != nullptr &&
-      hiddenapi::ShouldBlockAccessToMember(resolved, class_loader.Get(), hiddenapi::kLinking)) {
+      hiddenapi::ShouldBlockAccessToMember(
+          resolved, class_loader.Get(), dex_cache.Get(), hiddenapi::kLinking)) {
     resolved = nullptr;
   }
   if (resolved != nullptr) {

@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-art_cc_binary {
+cc_binary {
     name: "veridex",
     host_supported: true,
     srcs: [
+        "hidden_api.cc",
+        "hidden_api_finder.cc",
         "resolver.cc",
         "veridex.cc",
     ],

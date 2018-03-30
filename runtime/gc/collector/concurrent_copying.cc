@@ -2357,14 +2357,13 @@ mirror::Object* ConcurrentCopying::Copy(mirror::Object* from_ref,
   size_t non_moving_space_bytes_allocated = 0U;
   size_t bytes_allocated = 0U;
   size_t dummy;
+  bool fall_back_to_non_moving = false;
   mirror::Object* to_ref = region_space_->AllocNonvirtual</*kForEvac*/ true>(
       region_space_alloc_size, &region_space_bytes_allocated, nullptr, &dummy);
   bytes_allocated = region_space_bytes_allocated;
-  if (to_ref != nullptr) {
+  if (LIKELY(to_ref != nullptr)) {
     DCHECK_EQ(region_space_alloc_size, region_space_bytes_allocated);
-  }
-  bool fall_back_to_non_moving = false;
-  if (UNLIKELY(to_ref == nullptr)) {
+  } else {
     // Failed to allocate in the region space. Try the skipped blocks.
     to_ref = AllocateInSkippedBlock(region_space_alloc_size);
     if (to_ref != nullptr) {
@@ -2374,6 +2373,9 @@ mirror::Object* ConcurrentCopying::Copy(mirror::Object* from_ref,
         region_space_->RecordAlloc(to_ref);
       }
       bytes_allocated = region_space_alloc_size;
+      heap_->num_bytes_allocated_.fetch_sub(bytes_allocated, std::memory_order_seq_cst);
+      to_space_bytes_skipped_.fetch_sub(bytes_allocated, std::memory_order_seq_cst);
+      to_space_objects_skipped_.fetch_sub(1, std::memory_order_seq_cst);
     } else {
       // Fall back to the non-moving space.
       fall_back_to_non_moving = true;
@@ -2383,7 +2385,6 @@ mirror::Object* ConcurrentCopying::Copy(mirror::Object* from_ref,
                   << " skipped_objects="
                   << to_space_objects_skipped_.load(std::memory_order_seq_cst);
       }
-      fall_back_to_non_moving = true;
       to_ref = heap_->non_moving_space_->Alloc(Thread::Current(), obj_size,
                                                &non_moving_space_bytes_allocated, nullptr, &dummy);
       if (UNLIKELY(to_ref == nullptr)) {
@@ -2471,7 +2472,7 @@ mirror::Object* ConcurrentCopying::Copy(mirror::Object* from_ref,
 
     // Do a fence to prevent the field CAS in ConcurrentCopying::Process from possibly reordering
     // before the object copy.
-    QuasiAtomic::ThreadFenceRelease();
+    std::atomic_thread_fence(std::memory_order_release);
 
     LockWord new_lock_word = LockWord::FromForwardingAddress(reinterpret_cast<size_t>(to_ref));
 
@@ -2566,7 +2567,7 @@ mirror::Object* ConcurrentCopying::IsMarked(mirror::Object* from_ref) {
 
 bool ConcurrentCopying::IsOnAllocStack(mirror::Object* ref) {
   // TODO: Explain why this is here. What release operation does it pair with?
-  QuasiAtomic::ThreadFenceAcquire();
+  std::atomic_thread_fence(std::memory_order_acquire);
   accounting::ObjectStack* alloc_stack = GetAllocationStack();
   return alloc_stack->Contains(ref);
 }

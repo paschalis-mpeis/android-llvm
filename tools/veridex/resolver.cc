@@ -18,6 +18,7 @@
 
 #include "dex/dex_file-inl.h"
 #include "dex/primitive.h"
+#include "hidden_api.h"
 #include "veridex.h"
 
 namespace art {
