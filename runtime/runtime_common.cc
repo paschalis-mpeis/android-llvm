@@ -41,6 +41,7 @@ namespace art {
 using android::base::StringPrintf;
 
 static constexpr bool kUseSigRTTimeout = true;
+static constexpr bool kDumpNativeStackOnTimeout = true;
 
 const char* GetSignalName(int signal_number) {
   switch (signal_number) {
@@ -370,30 +371,11 @@ static bool IsTimeoutSignal(int signal_number) {
 #pragma GCC diagnostic ignored "-Wframe-larger-than="
 #endif
 
-void HandleUnexpectedSignalCommon(int signal_number,
-                                  siginfo_t* info,
-                                  void* raw_context,
-                                  bool handle_timeout_signal,
-                                  bool dump_on_stderr) {
-  static bool handling_unexpected_signal = false;
-  if (handling_unexpected_signal) {
-    LogHelper::LogLineLowStack(__FILE__,
-                               __LINE__,
-                               ::android::base::FATAL_WITHOUT_ABORT,
-                               "HandleUnexpectedSignal reentered\n");
-    if (handle_timeout_signal) {
-      if (IsTimeoutSignal(signal_number)) {
-        // Ignore a recursive timeout.
-        return;
-      }
-    }
-    _exit(1);
-  }
-  handling_unexpected_signal = true;
-
-  gAborting++;  // set before taking any locks
-  MutexLock mu(Thread::Current(), *Locks::unexpected_signal_lock_);
-
+static void HandleUnexpectedSignalCommonDump(int signal_number,
+                                             siginfo_t* info,
+                                             void* raw_context,
+                                             bool handle_timeout_signal,
+                                             bool dump_on_stderr) {
   auto logger = [&](auto& stream) {
     bool has_address = (signal_number == SIGILL || signal_number == SIGBUS ||
                         signal_number == SIGFPE || signal_number == SIGSEGV);
@@ -440,7 +422,7 @@ void HandleUnexpectedSignalCommon(int signal_number,
       // Special timeout signal. Try to dump all threads.
       // Note: Do not use DumpForSigQuit, as that might disable native unwind, but the native parts
       //       are of value here.
-      runtime->GetThreadList()->Dump(std::cerr);
+      runtime->GetThreadList()->Dump(std::cerr, kDumpNativeStackOnTimeout);
       std::cerr << std::endl;
     }
 
@@ -449,6 +431,71 @@ void HandleUnexpectedSignalCommon(int signal_number,
     } else {
       LOG(FATAL_WITHOUT_ABORT) << "Fault message: " << runtime->GetFaultMessage();
     }
+  }
+}
+
+void HandleUnexpectedSignalCommon(int signal_number,
+                                  siginfo_t* info,
+                                  void* raw_context,
+                                  bool handle_timeout_signal,
+                                  bool dump_on_stderr) {
+  // Local _static_ storing the currently handled signal (or -1).
+  static int handling_unexpected_signal = -1;
+
+  // Whether the dump code should be run under the unexpected-signal lock. For diagnostics we
+  // allow recursive unexpected-signals in certain cases - avoid a deadlock.
+  bool grab_lock = true;
+
+  if (handling_unexpected_signal != -1) {
+    LogHelper::LogLineLowStack(__FILE__,
+                               __LINE__,
+                               ::android::base::FATAL_WITHOUT_ABORT,
+                               "HandleUnexpectedSignal reentered\n");
+    // Print the signal number. Don't use any standard functions, just some arithmetic. Just best
+    // effort, with a minimal buffer.
+    if (0 < signal_number && signal_number < 100) {
+      char buf[] = { ' ',
+                     'S',
+                     static_cast<char>('0' + (signal_number / 10)),
+                     static_cast<char>('0' + (signal_number % 10)),
+                     '\n',
+                     0 };
+      LogHelper::LogLineLowStack(__FILE__,
+                                 __LINE__,
+                                 ::android::base::FATAL_WITHOUT_ABORT,
+                                 buf);
+    }
+    if (handle_timeout_signal) {
+      if (IsTimeoutSignal(signal_number)) {
+        // Ignore a recursive timeout.
+        return;
+      }
+    }
+    // If we were handling a timeout signal, try to go on. Otherwise hard-exit.
+    // This relies on the expectation that we'll only ever get one timeout signal.
+    if (!handle_timeout_signal || handling_unexpected_signal != GetTimeoutSignal()) {
+      _exit(1);
+    }
+    grab_lock = false;  // The "outer" handling instance already holds the lock.
+  }
+  handling_unexpected_signal = signal_number;
+
+  gAborting++;  // set before taking any locks
+
+  if (grab_lock) {
+    MutexLock mu(Thread::Current(), *Locks::unexpected_signal_lock_);
+
+    HandleUnexpectedSignalCommonDump(signal_number,
+                                     info,
+                                     raw_context,
+                                     handle_timeout_signal,
+                                     dump_on_stderr);
+  } else {
+    HandleUnexpectedSignalCommonDump(signal_number,
+                                     info,
+                                     raw_context,
+                                     handle_timeout_signal,
+                                     dump_on_stderr);
   }
 }
 
