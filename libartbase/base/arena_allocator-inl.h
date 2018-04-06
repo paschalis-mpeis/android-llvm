@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 The Android Open Source Project
+ * Copyright (C) 2013 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,21 @@
  * limitations under the License.
  */
 
-#ifndef ART_RUNTIME_BASE_DUMPABLE_INL_H_
-#define ART_RUNTIME_BASE_DUMPABLE_INL_H_
+#ifndef ART_LIBARTBASE_BASE_ARENA_ALLOCATOR_INL_H_
+#define ART_LIBARTBASE_BASE_ARENA_ALLOCATOR_INL_H_
 
-#include "base/dumpable.h"
-#include "base/mutex.h"
-#include "thread-current-inl.h"
+#include "arena_allocator.h"
 
 namespace art {
+namespace arena_allocator {
 
-template<typename T>
-inline std::ostream& operator<<(std::ostream& os, const MutatorLockedDumpable<T>& rhs) {
-  Locks::mutator_lock_->AssertSharedHeld(Thread::Current());
-  rhs.Dump(os);
-  return os;
-}
+static constexpr bool kArenaAllocatorPreciseTracking = kArenaAllocatorCountAllocations;
 
+static constexpr size_t kArenaDefaultSize = kArenaAllocatorPreciseTracking
+                                                ? 32
+                                                : 128 * KB;
+
+}  // namespace arena_allocator
 }  // namespace art
 
-#endif  // ART_RUNTIME_BASE_DUMPABLE_INL_H_
+#endif  // ART_LIBARTBASE_BASE_ARENA_ALLOCATOR_INL_H_

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 The Android Open Source Project
+ * Copyright (C) 2018 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,21 +14,21 @@
  * limitations under the License.
  */
 
-#ifndef ART_RUNTIME_BASE_ARENA_ALLOCATOR_INL_H_
-#define ART_RUNTIME_BASE_ARENA_ALLOCATOR_INL_H_
+#ifndef ART_RUNTIME_DEBUG_PRINT_H_
+#define ART_RUNTIME_DEBUG_PRINT_H_
 
-#include "arena_allocator.h"
+#include "base/mutex.h"
+#include "mirror/object.h"
+
+// Helper functions for printing extra information for certain hard to diagnose bugs.
 
 namespace art {
-namespace arena_allocator {
 
-static constexpr bool kArenaAllocatorPreciseTracking = kArenaAllocatorCountAllocations;
+std::string DescribeSpace(ObjPtr<mirror::Class> klass)
+    REQUIRES_SHARED(Locks::mutator_lock_) COLD_ATTR;
+std::string DescribeLoaders(ObjPtr<mirror::ClassLoader> loader, const char* class_descriptor)
+    REQUIRES_SHARED(Locks::mutator_lock_) COLD_ATTR;
 
-static constexpr size_t kArenaDefaultSize = kArenaAllocatorPreciseTracking
-                                                ? 32
-                                                : 128 * KB;
-
-}  // namespace arena_allocator
 }  // namespace art
 
-#endif  // ART_RUNTIME_BASE_ARENA_ALLOCATOR_INL_H_
+#endif  // ART_RUNTIME_DEBUG_PRINT_H_

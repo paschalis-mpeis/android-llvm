@@ -404,6 +404,7 @@ NO_RETURN static void Usage(const char* fmt, ...) {
   UsageError("      Example: --very-large-app-threshold=100000000");
   UsageError("");
   UsageError("  --app-image-fd=<file-descriptor>: specify output file descriptor for app image.");
+  UsageError("      The image is non-empty only if a profile is passed in.");
   UsageError("      Example: --app-image-fd=10");
   UsageError("");
   UsageError("  --app-image-file=<file-name>: specify a file name for app image.");
@@ -453,7 +454,9 @@ NO_RETURN static void Usage(const char* fmt, ...) {
   UsageError("      The image writer will group them together.");
   UsageError("");
   UsageError("  --compact-dex-level=none|fast: None avoids generating compact dex, fast");
-  UsageError("      generates compact dex with low compile time.");
+  UsageError("      generates compact dex with low compile time. If speed-profile is specified as");
+  UsageError("      the compiler filter and the profile is not empty, the default compact dex");
+  UsageError("      level is always used.");
   UsageError("");
   UsageError("  --deduplicate-code=true|false: enable|disable code deduplication. Deduplicated");
   UsageError("      code will have an arbitrary symbol tagged with [DEDUPED].");
@@ -1479,9 +1482,15 @@ class Dex2Oat FINAL {
   }
 
   void LoadClassProfileDescriptors() {
-    if (profile_compilation_info_ != nullptr && IsImage()) {
-      Runtime* runtime = Runtime::Current();
-      CHECK(runtime != nullptr);
+    if (!IsImage()) {
+      return;
+    }
+    // If we don't have a profile, treat it as an empty set of classes. b/77340429
+    if (image_classes_ == nullptr) {
+      // May be non-null when --image-classes is passed in, in that case avoid clearing the list.
+      image_classes_.reset(new std::unordered_set<std::string>());
+    }
+    if (profile_compilation_info_ != nullptr) {
       // Filter out class path classes since we don't want to include these in the image.
       image_classes_.reset(
           new std::unordered_set<std::string>(
