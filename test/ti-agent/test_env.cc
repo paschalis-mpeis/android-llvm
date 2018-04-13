@@ -19,6 +19,7 @@
 namespace art {
 
 jvmtiEnv* jvmti_env = nullptr;
+jvmtiEventCallbacks current_callbacks = {};
 
 static bool gRuntimeIsJVM = false;
 
