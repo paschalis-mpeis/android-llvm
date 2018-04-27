@@ -33,7 +33,6 @@
 #include "driver/compiler_driver.h"
 #include "driver/compiler_options.h"
 #include "entrypoints/quick/quick_entrypoints.h"
-#include "jit/profile_compilation_info.h"
 #include "linker/buffered_output_stream.h"
 #include "linker/elf_writer.h"
 #include "linker/elf_writer_quick.h"
@@ -45,6 +44,7 @@
 #include "mirror/object_array-inl.h"
 #include "oat_file-inl.h"
 #include "oat_writer.h"
+#include "profile/profile_compilation_info.h"
 #include "scoped_thread_state_change-inl.h"
 #include "vdex_file.h"
 
@@ -426,7 +426,8 @@ TEST_F(OatTest, WriteRead) {
   if (kCompile) {  // OatWriter strips the code, regenerate to compare
     compiler_driver_->CompileAll(class_loader, class_linker->GetBootClassPath(), &timings);
   }
-  std::unique_ptr<OatFile> oat_file(OatFile::Open(tmp_oat.GetFilename(),
+  std::unique_ptr<OatFile> oat_file(OatFile::Open(/* zip_fd */ -1,
+                                                  tmp_oat.GetFilename(),
                                                   tmp_oat.GetFilename(),
                                                   nullptr,
                                                   nullptr,
@@ -560,7 +561,8 @@ TEST_F(OatTest, EmptyTextSection) {
                           /* verify */ false);
   ASSERT_TRUE(success);
 
-  std::unique_ptr<OatFile> oat_file(OatFile::Open(tmp_oat.GetFilename(),
+  std::unique_ptr<OatFile> oat_file(OatFile::Open(/* zip_fd */ -1,
+                                                  tmp_oat.GetFilename(),
                                                   tmp_oat.GetFilename(),
                                                   nullptr,
                                                   nullptr,
@@ -637,7 +639,8 @@ void OatTest::TestDexFileInput(bool verify, bool low_4gb, bool use_profile) {
   ASSERT_TRUE(success);
 
   std::string error_msg;
-  std::unique_ptr<OatFile> opened_oat_file(OatFile::Open(tmp_oat.GetFilename(),
+  std::unique_ptr<OatFile> opened_oat_file(OatFile::Open(/* zip_fd */ -1,
+                                                         tmp_oat.GetFilename(),
                                                          tmp_oat.GetFilename(),
                                                          nullptr,
                                                          nullptr,
@@ -767,7 +770,8 @@ void OatTest::TestZipFileInput(bool verify) {
       ASSERT_TRUE(success);
 
       std::string error_msg;
-      std::unique_ptr<OatFile> opened_oat_file(OatFile::Open(tmp_oat.GetFilename(),
+      std::unique_ptr<OatFile> opened_oat_file(OatFile::Open(/* zip_fd */ -1,
+                                                             tmp_oat.GetFilename(),
                                                              tmp_oat.GetFilename(),
                                                              nullptr,
                                                              nullptr,
@@ -816,7 +820,8 @@ void OatTest::TestZipFileInput(bool verify) {
       ASSERT_TRUE(success);
 
       std::string error_msg;
-      std::unique_ptr<OatFile> opened_oat_file(OatFile::Open(tmp_oat.GetFilename(),
+      std::unique_ptr<OatFile> opened_oat_file(OatFile::Open(/* zip_fd */ -1,
+                                                             tmp_oat.GetFilename(),
                                                              tmp_oat.GetFilename(),
                                                              nullptr,
                                                              nullptr,
