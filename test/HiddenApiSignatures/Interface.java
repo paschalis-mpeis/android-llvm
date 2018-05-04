@@ -14,14 +14,8 @@
  * limitations under the License.
  */
 
-public class Main {
-  public static void main(String[] args) {
-    ByteSimdMinMax.main();
-    CharSimdMinMax.main();
-    ShortSimdMinMax.main();
-    IntSimdMinMax.main();
-    LongSimdMinMax.main();
-    DoubleSimdMinMax.main();
-    FloatSimdMinMax.main();
-  }
+package mypackage.packagea;
+
+public interface Interface {
+    public void method();
 }

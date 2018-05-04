@@ -83,6 +83,10 @@ MemberSignature::MemberSignature(ArtField* field) {
 }
 
 MemberSignature::MemberSignature(ArtMethod* method) {
+  // If this is a proxy method, print the signature of the interface method.
+  method = method->GetInterfaceMethodIfProxy(
+      Runtime::Current()->GetClassLinker()->GetImagePointerSize());
+
   class_name_ = method->GetDeclaringClass()->GetDescriptor(&tmp_);
   member_name_ = method->GetName();
   type_signature_ = method->GetSignature().ToString();
@@ -154,16 +158,21 @@ inline static int32_t GetEnumValueForLog(AccessMethod access_method) {
 }
 
 void MemberSignature::LogAccessToEventLog(AccessMethod access_method, Action action_taken) {
-  if (access_method == kLinking) {
+  if (access_method == kLinking || access_method == kNone) {
     // Linking warnings come from static analysis/compilation of the bytecode
     // and can contain false positives (i.e. code that is never run). We choose
     // not to log these in the event log.
+    // None does not correspond to actual access, so should also be ignored.
     return;
   }
   ComplexEventLogger log_maker(ACTION_HIDDEN_API_ACCESSED);
   log_maker.AddTaggedData(FIELD_HIDDEN_API_ACCESS_METHOD, GetEnumValueForLog(access_method));
   if (action_taken == kDeny) {
     log_maker.AddTaggedData(FIELD_HIDDEN_API_ACCESS_DENIED, 1);
+  }
+  const std::string& package_name = Runtime::Current()->GetProcessPackageName();
+  if (!package_name.empty()) {
+    log_maker.SetPackageName(package_name);
   }
   std::ostringstream signature_str;
   Dump(signature_str);
