@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012 The Android Open Source Project
+ * Copyright (C) 2018 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +14,5 @@
  * limitations under the License.
  */
 
-#ifndef ART_RUNTIME_JOBJECT_COMPARATOR_H_
-#define ART_RUNTIME_JOBJECT_COMPARATOR_H_
-
-#include <jni.h>
-
-namespace art {
-
-struct JobjectComparator {
-  bool operator()(jobject jobj1, jobject jobj2) const;
-};
-
-}  // namespace art
-
-#endif  // ART_RUNTIME_JOBJECT_COMPARATOR_H_
+public class TestClass {
+}

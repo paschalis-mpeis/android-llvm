@@ -27,8 +27,8 @@
 #include "debugger.h"
 #include "entrypoints/runtime_asm_entrypoints.h"
 #include "interpreter/interpreter.h"
-#include "java_vm_ext.h"
 #include "jit_code_cache.h"
+#include "jni/java_vm_ext.h"
 #include "mirror/method_handle_impl.h"
 #include "mirror/var_handle.h"
 #include "oat_file_manager.h"
@@ -185,10 +185,12 @@ Jit* Jit::Create(JitOptions* options, std::string* error_msg) {
   if (jit_compiler_handle_ == nullptr && !LoadCompiler(error_msg)) {
     return nullptr;
   }
+  bool code_cache_only_for_profile_data = !options->UseJitCompilation();
   jit->code_cache_.reset(JitCodeCache::Create(
       options->GetCodeCacheInitialCapacity(),
       options->GetCodeCacheMaxCapacity(),
       jit->generate_debug_info_,
+      code_cache_only_for_profile_data,
       error_msg));
   if (jit->GetCodeCache() == nullptr) {
     return nullptr;

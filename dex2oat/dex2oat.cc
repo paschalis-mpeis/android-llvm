@@ -78,7 +78,7 @@
 #include "gc/space/space-inl.h"
 #include "gc/verification.h"
 #include "interpreter/unstarted_runtime.h"
-#include "java_vm_ext.h"
+#include "jni/java_vm_ext.h"
 #include "linker/buffered_output_stream.h"
 #include "linker/elf_writer.h"
 #include "linker/elf_writer_quick.h"
@@ -349,6 +349,9 @@ NO_RETURN static void Usage(const char* fmt, ...) {
   UsageError("      Default: %d", CompilerOptions::kDefaultInlineMaxCodeUnits);
   UsageError("");
   UsageError("  --dump-timings: display a breakdown of where time was spent");
+  UsageError("");
+  UsageError("  --dump-pass-timings: display a breakdown of time spent in optimization");
+  UsageError("      passes for each compiled method.");
   UsageError("");
   UsageError("  -g");
   UsageError("  --generate-debug-info: Generate debug information for native debugging,");
@@ -1254,10 +1257,10 @@ class Dex2Oat FINAL {
         if (stored_class_loader_context_ == nullptr) {
           Usage("Option --stored-class-loader-context has an incorrect format: %s",
                 stored_context_arg.c_str());
-        } else if (!class_loader_context_->VerifyClassLoaderContextMatch(
+        } else if (class_loader_context_->VerifyClassLoaderContextMatch(
             stored_context_arg,
             /*verify_names*/ false,
-            /*verify_checksums*/ false)) {
+            /*verify_checksums*/ false) != ClassLoaderContext::VerificationResult::kVerifies) {
           Usage(
               "Option --stored-class-loader-context '%s' mismatches --class-loader-context '%s'",
               stored_context_arg.c_str(),
