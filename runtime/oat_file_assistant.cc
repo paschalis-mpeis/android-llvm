@@ -1218,8 +1218,8 @@ bool OatFileAssistant::OatFileInfo::ClassLoaderContextIsOkay(ClassLoaderContext*
   }
 
 
-  bool result = context->VerifyClassLoaderContextMatch(file->GetClassLoaderContext()) ==
-      ClassLoaderContext::VerificationResult::kVerifies;
+  const bool result = context->VerifyClassLoaderContextMatch(file->GetClassLoaderContext()) !=
+      ClassLoaderContext::VerificationResult::kMismatch;
   if (!result) {
     VLOG(oat) << "ClassLoaderContext check failed. Context was "
               << file->GetClassLoaderContext()
