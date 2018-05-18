@@ -63,6 +63,8 @@ class DexAnalyze {
           run_all_experiments_ = true;
         } else if (arg == "-count-indices") {
           exp_count_indices_ = true;
+        } else if (arg == "-analyze-strings") {
+          exp_analyze_strings_ = true;
         } else if (arg == "-d") {
           dump_per_input_dex_ = true;
         } else if (!arg.empty() && arg[0] == '-') {
@@ -82,6 +84,7 @@ class DexAnalyze {
     bool run_dex_file_verifier_ = true;
     bool dump_per_input_dex_ = false;
     bool exp_count_indices_ = false;
+    bool exp_analyze_strings_ = false;
     bool run_all_experiments_ = false;
     std::vector<std::string> filenames_;
   };
@@ -92,25 +95,30 @@ class DexAnalyze {
       if (options->run_all_experiments_ || options->exp_count_indices_) {
         experiments_.emplace_back(new CountDexIndices);
       }
+      if (options->run_all_experiments_ || options->exp_analyze_strings_) {
+        experiments_.emplace_back(new AnalyzeStrings);
+      }
     }
 
     bool ProcessDexFile(const DexFile& dex_file) {
       for (std::unique_ptr<Experiment>& experiment : experiments_) {
         experiment->ProcessDexFile(dex_file);
       }
+      total_size_ += dex_file.Size();
       ++dex_count_;
       return true;
     }
 
     void Dump(std::ostream& os) {
       for (std::unique_ptr<Experiment>& experiment : experiments_) {
-        experiment->Dump(os);
+        experiment->Dump(os, total_size_);
       }
     }
 
     const Options* const options_;
     std::vector<std::unique_ptr<Experiment>> experiments_;
     size_t dex_count_ = 0;
+    uint64_t total_size_ = 0u;
   };
 
  public:
@@ -130,7 +138,7 @@ class DexAnalyze {
       // TODO: once added, use an api to android::base to read a std::vector<uint8_t>.
       if (!android::base::ReadFileToString(filename.c_str(), &content)) {
         LOG(ERROR) << "ReadFileToString failed for " + filename << std::endl;
-        continue;
+        return 2;
       }
       std::vector<std::unique_ptr<const DexFile>> dex_files;
       const DexFileLoader dex_file_loader;
@@ -142,14 +150,14 @@ class DexAnalyze {
                                    &error_msg,
                                    &dex_files)) {
         LOG(ERROR) << "OpenAll failed for " + filename << " with " << error_msg << std::endl;
-        continue;
+        return 3;
       }
       for (std::unique_ptr<const DexFile>& dex_file : dex_files) {
         if (options.dump_per_input_dex_) {
           Analysis current(&options);
           if (!current.ProcessDexFile(*dex_file)) {
             LOG(ERROR) << "Failed to process " << filename << " with error " << error_msg;
-            continue;
+            return 4;
           }
           LOG(INFO) << "Analysis for " << dex_file->GetLocation() << std::endl;
           current.Dump(LOG_STREAM(INFO));

@@ -1055,7 +1055,7 @@ bool HInstructionBuilder::BuildInvoke(const Instruction& instruction,
 bool HInstructionBuilder::BuildInvokePolymorphic(const Instruction& instruction ATTRIBUTE_UNUSED,
                                                  uint32_t dex_pc,
                                                  uint32_t method_idx,
-                                                 uint32_t proto_idx,
+                                                 dex::ProtoIndex proto_idx,
                                                  uint32_t number_of_vreg_arguments,
                                                  bool is_range,
                                                  uint32_t* args,
@@ -1360,9 +1360,15 @@ bool HInstructionBuilder::HandleStringInit(HInvoke* invoke,
   if (arg_this->IsNewInstance()) {
     ssa_builder_->AddUninitializedString(arg_this->AsNewInstance());
   } else {
+    // The only reason a HPhi can flow in a String.<init> is when there is an
+    // irreducible loop, which will create HPhi for all dex registers at loop entry.
     DCHECK(arg_this->IsPhi());
-    // NewInstance is not the direct input of the StringFactory call. It might
-    // be redundant but optimizing this case is not worth the effort.
+    DCHECK(graph_->HasIrreducibleLoops());
+    // Don't bother compiling a method in that situation. While we could look at all
+    // phis related to the HNewInstance, it's not worth the trouble.
+    MaybeRecordStat(compilation_stats_,
+                    MethodCompilationStat::kNotCompiledIrreducibleAndStringInit);
+    return false;
   }
 
   // Walk over all vregs and replace any occurrence of `arg_this` with `invoke`.
@@ -1896,17 +1902,17 @@ bool HInstructionBuilder::LoadClassNeedsAccessCheck(Handle<mirror::Class> klass)
   }
 }
 
-void HInstructionBuilder::BuildLoadMethodHandle(uint16_t proto_idx, uint32_t dex_pc) {
+void HInstructionBuilder::BuildLoadMethodHandle(uint16_t method_handle_index, uint32_t dex_pc) {
   const DexFile& dex_file = *dex_compilation_unit_->GetDexFile();
-  HLoadMethodHandle* load_method_handle =
-      new (allocator_) HLoadMethodHandle(graph_->GetCurrentMethod(), proto_idx, dex_file, dex_pc);
+  HLoadMethodHandle* load_method_handle = new (allocator_) HLoadMethodHandle(
+      graph_->GetCurrentMethod(), method_handle_index, dex_file, dex_pc);
   AppendInstruction(load_method_handle);
 }
 
-void HInstructionBuilder::BuildLoadMethodType(uint16_t proto_idx, uint32_t dex_pc) {
+void HInstructionBuilder::BuildLoadMethodType(dex::ProtoIndex proto_index, uint32_t dex_pc) {
   const DexFile& dex_file = *dex_compilation_unit_->GetDexFile();
   HLoadMethodType* load_method_type =
-      new (allocator_) HLoadMethodType(graph_->GetCurrentMethod(), proto_idx, dex_file, dex_pc);
+      new (allocator_) HLoadMethodType(graph_->GetCurrentMethod(), proto_index, dex_file, dex_pc);
   AppendInstruction(load_method_type);
 }
 
@@ -2189,7 +2195,7 @@ bool HInstructionBuilder::ProcessDexInstruction(const Instruction& instruction,
 
     case Instruction::INVOKE_POLYMORPHIC: {
       uint16_t method_idx = instruction.VRegB_45cc();
-      uint16_t proto_idx = instruction.VRegH_45cc();
+      dex::ProtoIndex proto_idx(instruction.VRegH_45cc());
       uint32_t number_of_vreg_arguments = instruction.VRegA_45cc();
       uint32_t args[5];
       instruction.GetVarArgs(args);
@@ -2205,7 +2211,7 @@ bool HInstructionBuilder::ProcessDexInstruction(const Instruction& instruction,
 
     case Instruction::INVOKE_POLYMORPHIC_RANGE: {
       uint16_t method_idx = instruction.VRegB_4rcc();
-      uint16_t proto_idx = instruction.VRegH_4rcc();
+      dex::ProtoIndex proto_idx(instruction.VRegH_4rcc());
       uint32_t number_of_vreg_arguments = instruction.VRegA_4rcc();
       uint32_t register_index = instruction.VRegC_4rcc();
       return BuildInvokePolymorphic(instruction,
@@ -2949,7 +2955,7 @@ bool HInstructionBuilder::ProcessDexInstruction(const Instruction& instruction,
     }
 
     case Instruction::CONST_METHOD_TYPE: {
-      uint16_t proto_idx = instruction.VRegB_21c();
+      dex::ProtoIndex proto_idx(instruction.VRegB_21c());
       BuildLoadMethodType(proto_idx, dex_pc);
       UpdateLocal(instruction.VRegA_21c(), current_block_->GetLastInstruction());
       break;

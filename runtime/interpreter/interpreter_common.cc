@@ -24,7 +24,7 @@
 #include "entrypoints/runtime_asm_entrypoints.h"
 #include "intrinsics_enum.h"
 #include "jit/jit.h"
-#include "jvalue.h"
+#include "jvalue-inl.h"
 #include "method_handles-inl.h"
 #include "method_handles.h"
 #include "mirror/array-inl.h"
@@ -37,6 +37,7 @@
 #include "stack.h"
 #include "thread-inl.h"
 #include "transaction.h"
+#include "var_handles.h"
 #include "well_known_classes.h"
 
 namespace art {
@@ -626,7 +627,8 @@ static bool DoMethodHandleInvokeCommon(Thread* self,
 
   // The vRegH value gives the index of the proto_id associated with this
   // signature polymorphic call site.
-  const uint32_t callsite_proto_id = (is_range) ? inst->VRegH_4rcc() : inst->VRegH_45cc();
+  const uint16_t vRegH = (is_range) ? inst->VRegH_4rcc() : inst->VRegH_45cc();
+  const dex::ProtoIndex callsite_proto_id(vRegH);
 
   // Call through to the classlinker and ask it to resolve the static type associated
   // with the callsite. This information is stored in the dex cache so it's
@@ -724,38 +726,6 @@ bool DoMethodHandleInvoke(Thread* self,
   }
 }
 
-static bool DoVarHandleInvokeChecked(Thread* self,
-                                     Handle<mirror::VarHandle> var_handle,
-                                     Handle<mirror::MethodType> callsite_type,
-                                     mirror::VarHandle::AccessMode access_mode,
-                                     ShadowFrame& shadow_frame,
-                                     InstructionOperands* operands,
-                                     JValue* result)
-    REQUIRES_SHARED(Locks::mutator_lock_) {
-  // TODO(oth): GetMethodTypeForAccessMode() allocates a MethodType()
-  // which is only required if we need to convert argument and/or
-  // return types.
-  StackHandleScope<1> hs(self);
-  Handle<mirror::MethodType> accessor_type(hs.NewHandle(
-      var_handle->GetMethodTypeForAccessMode(self, access_mode)));
-  const size_t num_vregs = accessor_type->NumberOfVRegs();
-  const int num_params = accessor_type->GetPTypes()->GetLength();
-  ShadowFrameAllocaUniquePtr accessor_frame =
-      CREATE_SHADOW_FRAME(num_vregs, nullptr, shadow_frame.GetMethod(), shadow_frame.GetDexPC());
-  ShadowFrameGetter getter(shadow_frame, operands);
-  static const uint32_t kFirstDestinationReg = 0;
-  ShadowFrameSetter setter(accessor_frame.get(), kFirstDestinationReg);
-  if (!PerformConversions(self, callsite_type, accessor_type, &getter, &setter, num_params)) {
-    return false;
-  }
-  RangeInstructionOperands accessor_operands(kFirstDestinationReg,
-                                             kFirstDestinationReg + num_vregs);
-  if (!var_handle->Access(access_mode, accessor_frame.get(), &accessor_operands, result)) {
-    return false;
-  }
-  return ConvertReturnValue(callsite_type, accessor_type, result);
-}
-
 static bool DoVarHandleInvokeCommon(Thread* self,
                                     ShadowFrame& shadow_frame,
                                     const Instruction* inst,
@@ -768,59 +738,43 @@ static bool DoVarHandleInvokeCommon(Thread* self,
     return false;
   }
 
-  bool is_var_args = inst->HasVarArgs();
-  const uint32_t vRegC = is_var_args ? inst->VRegC_45cc() : inst->VRegC_4rcc();
-  ObjPtr<mirror::Object> receiver(shadow_frame.GetVRegReference(vRegC));
-  if (receiver.IsNull()) {
-    ThrowNullPointerExceptionFromDexPC();
-    return false;
-  }
-
   StackHandleScope<2> hs(self);
-  Handle<mirror::VarHandle> var_handle(hs.NewHandle(down_cast<mirror::VarHandle*>(receiver.Ptr())));
-  if (!var_handle->IsAccessModeSupported(access_mode)) {
-    ThrowUnsupportedOperationException();
-    return false;
-  }
-
-  const uint32_t vRegH = is_var_args ? inst->VRegH_45cc() : inst->VRegH_4rcc();
+  bool is_var_args = inst->HasVarArgs();
+  const uint16_t vRegH = is_var_args ? inst->VRegH_45cc() : inst->VRegH_4rcc();
   ClassLinker* const class_linker = Runtime::Current()->GetClassLinker();
   Handle<mirror::MethodType> callsite_type(hs.NewHandle(
-      class_linker->ResolveMethodType(self, vRegH, shadow_frame.GetMethod())));
+      class_linker->ResolveMethodType(self, dex::ProtoIndex(vRegH), shadow_frame.GetMethod())));
   // This implies we couldn't resolve one or more types in this VarHandle.
   if (UNLIKELY(callsite_type == nullptr)) {
     CHECK(self->IsExceptionPending());
     return false;
   }
 
-  if (!var_handle->IsMethodTypeCompatible(access_mode, callsite_type.Get())) {
-    ThrowWrongMethodTypeException(var_handle->GetMethodTypeForAccessMode(self, access_mode),
-                                  callsite_type.Get());
-    return false;
-  }
-
+  const uint32_t vRegC = is_var_args ? inst->VRegC_45cc() : inst->VRegC_4rcc();
+  ObjPtr<mirror::Object> receiver(shadow_frame.GetVRegReference(vRegC));
+  Handle<mirror::VarHandle> var_handle(hs.NewHandle(down_cast<mirror::VarHandle*>(receiver.Ptr())));
   if (is_var_args) {
     uint32_t args[Instruction::kMaxVarArgRegs];
     inst->GetVarArgs(args, inst_data);
     VarArgsInstructionOperands all_operands(args, inst->VRegA_45cc());
     NoReceiverInstructionOperands operands(&all_operands);
-    return DoVarHandleInvokeChecked(self,
-                                    var_handle,
-                                    callsite_type,
-                                    access_mode,
-                                    shadow_frame,
-                                    &operands,
-                                    result);
+    return VarHandleInvokeAccessor(self,
+                                   shadow_frame,
+                                   var_handle,
+                                   callsite_type,
+                                   access_mode,
+                                   &operands,
+                                   result);
   } else {
     RangeInstructionOperands all_operands(inst->VRegC_4rcc(), inst->VRegA_4rcc());
     NoReceiverInstructionOperands operands(&all_operands);
-    return DoVarHandleInvokeChecked(self,
-                                    var_handle,
-                                    callsite_type,
-                                    access_mode,
-                                    shadow_frame,
-                                    &operands,
-                                    result);
+    return VarHandleInvokeAccessor(self,
+                                   shadow_frame,
+                                   var_handle,
+                                   callsite_type,
+                                   access_mode,
+                                   &operands,
+                                   result);
   }
 }
 
@@ -965,9 +919,10 @@ static bool GetArgumentForBootstrapMethod(Thread* self,
       StackHandleScope<2> hs(self);
       Handle<mirror::ClassLoader> class_loader(hs.NewHandle(referrer->GetClassLoader()));
       Handle<mirror::DexCache> dex_cache(hs.NewHandle(referrer->GetDexCache()));
-      uint32_t index = static_cast<uint32_t>(encoded_value->GetI());
+      dex::ProtoIndex proto_idx(encoded_value->GetC());
       ClassLinker* cl = Runtime::Current()->GetClassLinker();
-      ObjPtr<mirror::MethodType> o = cl->ResolveMethodType(self, index, dex_cache, class_loader);
+      ObjPtr<mirror::MethodType> o =
+          cl->ResolveMethodType(self, proto_idx, dex_cache, class_loader);
       if (UNLIKELY(o.IsNull())) {
         DCHECK(self->IsExceptionPending());
         return false;
