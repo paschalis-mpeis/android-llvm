@@ -180,10 +180,10 @@ static inline std::pair<ArtMethod*, uintptr_t> DoGetCalleeSaveMethodOuterCallerA
     ArtMethod** sp, CalleeSaveType type) REQUIRES_SHARED(Locks::mutator_lock_) {
   DCHECK_EQ(*sp, Runtime::Current()->GetCalleeSaveMethod(type));
 
-  const size_t callee_frame_size = GetCalleeSaveFrameSize(kRuntimeISA, type);
+  const size_t callee_frame_size = RuntimeCalleeSaveFrame::GetFrameSize(type);
   auto** caller_sp = reinterpret_cast<ArtMethod**>(
       reinterpret_cast<uintptr_t>(sp) + callee_frame_size);
-  const size_t callee_return_pc_offset = GetCalleeSaveReturnPcOffset(kRuntimeISA, type);
+  const size_t callee_return_pc_offset = RuntimeCalleeSaveFrame::GetReturnPcOffset(type);
   uintptr_t caller_pc = *reinterpret_cast<uintptr_t*>(
       (reinterpret_cast<uint8_t*>(sp) + callee_return_pc_offset));
   ArtMethod* outer_method = *caller_sp;
@@ -201,18 +201,16 @@ static inline ArtMethod* DoGetCalleeSaveMethodCaller(ArtMethod* outer_method,
       DCHECK(current_code != nullptr);
       DCHECK(current_code->IsOptimized());
       uintptr_t native_pc_offset = current_code->NativeQuickPcOffset(caller_pc);
-      CodeInfo code_info = current_code->GetOptimizedCodeInfo();
+      CodeInfo code_info(current_code);
       MethodInfo method_info = current_code->GetOptimizedMethodInfo();
-      CodeInfoEncoding encoding = code_info.ExtractEncoding();
-      StackMap stack_map = code_info.GetStackMapForNativePcOffset(native_pc_offset, encoding);
+      StackMap stack_map = code_info.GetStackMapForNativePcOffset(native_pc_offset);
       DCHECK(stack_map.IsValid());
-      if (stack_map.HasInlineInfo(encoding.stack_map.encoding)) {
-        InlineInfo inline_info = code_info.GetInlineInfoOf(stack_map, encoding);
+      if (stack_map.HasInlineInfo()) {
+        InlineInfo inline_info = code_info.GetInlineInfoOf(stack_map);
         caller = GetResolvedMethod(outer_method,
                                    method_info,
                                    inline_info,
-                                   encoding.inline_info.encoding,
-                                   inline_info.GetDepth(encoding.inline_info.encoding) - 1);
+                                   inline_info.GetDepth() - 1);
       }
     }
     if (kIsDebugBuild && do_caller_check) {
