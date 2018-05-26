@@ -22,6 +22,7 @@
 #include "base/bit_vector-inl.h"
 #include "base/stl_util.h"
 #include "class_linker-inl.h"
+#include "class_root.h"
 #include "code_generator.h"
 #include "common_dominator.h"
 #include "intrinsics.h"
@@ -40,9 +41,8 @@ static constexpr bool kEnableFloatingPointStaticEvaluation = (FLT_EVAL_METHOD ==
 void HGraph::InitializeInexactObjectRTI(VariableSizedHandleScope* handles) {
   ScopedObjectAccess soa(Thread::Current());
   // Create the inexact Object reference type and store it in the HGraph.
-  ClassLinker* linker = Runtime::Current()->GetClassLinker();
   inexact_object_rti_ = ReferenceTypeInfo::Create(
-      handles->NewHandle(linker->GetClassRoot(ClassLinker::kJavaLangObject)),
+      handles->NewHandle(GetClassRoot<mirror::Object>()),
       /* is_exact */ false);
 }
 
@@ -1119,6 +1119,23 @@ void HEnvironment::RemoveAsUserOfInput(size_t index) const {
   auto before_env_use_node = env_use.GetBeforeUseNode();
   user->env_uses_.erase_after(before_env_use_node);
   user->FixUpUserRecordsAfterEnvUseRemoval(before_env_use_node);
+}
+
+void HEnvironment::ReplaceInput(HInstruction* replacement, size_t index) {
+  const HUserRecord<HEnvironment*>& env_use_record = vregs_[index];
+  HInstruction* orig_instr = env_use_record.GetInstruction();
+
+  DCHECK(orig_instr != replacement);
+
+  HUseList<HEnvironment*>::iterator before_use_node = env_use_record.GetBeforeUseNode();
+  // Note: fixup_end remains valid across splice_after().
+  auto fixup_end = replacement->env_uses_.empty() ? replacement->env_uses_.begin()
+                                                  : ++replacement->env_uses_.begin();
+  replacement->env_uses_.splice_after(replacement->env_uses_.before_begin(),
+                                      env_use_record.GetInstruction()->env_uses_,
+                                      before_use_node);
+  replacement->FixUpUserRecordsAfterEnvUseInsertion(fixup_end);
+  orig_instr->FixUpUserRecordsAfterEnvUseRemoval(before_use_node);
 }
 
 HInstruction* HInstruction::GetNextDisregardingMoves() const {

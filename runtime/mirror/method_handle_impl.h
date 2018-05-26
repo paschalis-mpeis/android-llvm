@@ -20,7 +20,6 @@
 #include "art_field.h"
 #include "art_method.h"
 #include "class.h"
-#include "gc_root.h"
 #include "method_type.h"
 #include "object.h"
 
@@ -87,8 +86,6 @@ class MANAGED MethodHandle : public Object {
   // supported.
   static const char* GetReturnTypeDescriptor(const char* invoke_method_name);
 
-  static mirror::Class* StaticClass() REQUIRES_SHARED(Locks::mutator_lock_);
-
  protected:
   void Initialize(uintptr_t art_field_or_method, Kind kind, Handle<MethodType> method_type)
       REQUIRES_SHARED(Locks::mutator_lock_);
@@ -130,19 +127,12 @@ class MANAGED MethodHandleImpl : public MethodHandle {
                                           Handle<MethodType> method_type)
       REQUIRES_SHARED(Locks::mutator_lock_) REQUIRES(!Roles::uninterruptible_);
 
-  static mirror::Class* StaticClass() REQUIRES_SHARED(Locks::mutator_lock_);
-
-  static void SetClass(Class* klass) REQUIRES_SHARED(Locks::mutator_lock_);
-  static void ResetClass() REQUIRES_SHARED(Locks::mutator_lock_);
-  static void VisitRoots(RootVisitor* visitor) REQUIRES_SHARED(Locks::mutator_lock_);
-
  private:
   static MemberOffset InfoOffset() {
     return MemberOffset(OFFSETOF_MEMBER(MethodHandleImpl, info_));
   }
 
   HeapReference<mirror::Object> info_;  // Unused by the runtime.
-  static GcRoot<mirror::Class> static_class_;  // java.lang.invoke.MethodHandleImpl.class
 
   friend struct art::MethodHandleImplOffsets;  // for verifying offset information
   DISALLOW_IMPLICIT_CONSTRUCTORS(MethodHandleImpl);
