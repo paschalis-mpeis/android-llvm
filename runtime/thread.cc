@@ -2461,7 +2461,7 @@ class FetchStackTraceVisitor : public StackVisitor {
     // save frame)
     ArtMethod* m = GetMethod();
     if (skipping_ && !m->IsRuntimeMethod() &&
-        !mirror::Throwable::GetJavaLangThrowable()->IsAssignableFrom(m->GetDeclaringClass())) {
+        !GetClassRoot<mirror::Throwable>()->IsAssignableFrom(m->GetDeclaringClass())) {
       skipping_ = false;
     }
     if (!skipping_) {
@@ -2862,27 +2862,18 @@ jobjectArray Thread::CreateAnnotatedStackTrace(const ScopedObjectAccessAlreadyRu
   ClassLinker* class_linker = Runtime::Current()->GetClassLinker();
 
   StackHandleScope<6> hs(soa.Self());
-  mirror::Class* aste_array_class = class_linker->FindClass(
+  Handle<mirror::Class> h_aste_array_class = hs.NewHandle(class_linker->FindSystemClass(
       soa.Self(),
-      "[Ldalvik/system/AnnotatedStackTraceElement;",
-      ScopedNullHandle<mirror::ClassLoader>());
-  if (aste_array_class == nullptr) {
+      "[Ldalvik/system/AnnotatedStackTraceElement;"));
+  if (h_aste_array_class == nullptr) {
     return nullptr;
   }
-  Handle<mirror::Class> h_aste_array_class(hs.NewHandle<mirror::Class>(aste_array_class));
+  Handle<mirror::Class> h_aste_class = hs.NewHandle(h_aste_array_class->GetComponentType());
 
-  mirror::Class* o_array_class = class_linker->FindClass(soa.Self(),
-                                                         "[Ljava/lang/Object;",
-                                                         ScopedNullHandle<mirror::ClassLoader>());
-  if (o_array_class == nullptr) {
-    // This should not fail in a healthy runtime.
-    soa.Self()->AssertPendingException();
-    return nullptr;
-  }
-  Handle<mirror::Class> h_o_array_class(hs.NewHandle<mirror::Class>(o_array_class));
+  Handle<mirror::Class> h_o_array_class =
+      hs.NewHandle(GetClassRoot<mirror::ObjectArray<mirror::Object>>(class_linker));
+  DCHECK(h_o_array_class != nullptr);  // Class roots must be already initialized.
 
-  Handle<mirror::Class> h_aste_class(hs.NewHandle<mirror::Class>(
-      h_aste_array_class->GetComponentType()));
 
   // Make sure the AnnotatedStackTraceElement.class is initialized, b/76208924 .
   class_linker->EnsureInitialized(soa.Self(),
@@ -2906,7 +2897,7 @@ jobjectArray Thread::CreateAnnotatedStackTrace(const ScopedObjectAccessAlreadyRu
 
   size_t length = dumper.stack_trace_elements_.size();
   ObjPtr<mirror::ObjectArray<mirror::Object>> array =
-      mirror::ObjectArray<mirror::Object>::Alloc(soa.Self(), aste_array_class, length);
+      mirror::ObjectArray<mirror::Object>::Alloc(soa.Self(), h_aste_array_class.Get(), length);
   if (array == nullptr) {
     soa.Self()->AssertPendingOOMException();
     return nullptr;
@@ -3568,9 +3559,8 @@ class ReferenceMapVisitor : public StackVisitor {
       T vreg_info(m, code_info, map, visitor_);
 
       // Visit stack entries that hold pointers.
-      const size_t number_of_bits = code_info.GetNumberOfStackMaskBits();
       BitMemoryRegion stack_mask = code_info.GetStackMaskOf(map);
-      for (size_t i = 0; i < number_of_bits; ++i) {
+      for (size_t i = 0; i < stack_mask.size_in_bits(); ++i) {
         if (stack_mask.LoadBit(i)) {
           StackReference<mirror::Object>* ref_addr = vreg_base + i;
           mirror::Object* ref = ref_addr->AsMirrorPtr();
@@ -3680,8 +3670,7 @@ class ReferenceMapVisitor : public StackVisitor {
           REQUIRES_SHARED(Locks::mutator_lock_) {
         bool found = false;
         for (size_t dex_reg = 0; dex_reg != number_of_dex_registers; ++dex_reg) {
-          DexRegisterLocation location = dex_register_map.GetDexRegisterLocation(
-              dex_reg, number_of_dex_registers, code_info);
+          DexRegisterLocation location = dex_register_map.GetDexRegisterLocation(dex_reg);
           if (location.GetKind() == kind && static_cast<size_t>(location.GetValue()) == index) {
             visitor(ref, dex_reg, stack_visitor);
             found = true;

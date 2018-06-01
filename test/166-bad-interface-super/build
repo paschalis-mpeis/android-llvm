@@ -14,7 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# See b/65168732
-export USE_D8=false
+# Use the jasmin sources for JVM, otherwise the smali sources.
+extra_arg="--no-jasmin"
 
-./default-build "$@"
+for arg in "$@"; do
+  if [[ "$arg" == "--jvm" ]]; then
+    extra_arg="--no-smali"
+    break
+  fi
+done
+
+./default-build "$@" "$extra_arg"

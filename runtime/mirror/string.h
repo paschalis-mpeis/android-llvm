@@ -17,6 +17,8 @@
 #ifndef ART_RUNTIME_MIRROR_STRING_H_
 #define ART_RUNTIME_MIRROR_STRING_H_
 
+#include "base/bit_utils.h"
+#include "base/globals.h"
 #include "gc/allocator_type.h"
 #include "gc_root-inl.h"
 #include "class.h"
@@ -66,7 +68,19 @@ class MANAGED String FINAL : public Object {
   }
 
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags>
-  size_t SizeOf() REQUIRES_SHARED(Locks::mutator_lock_);
+  size_t SizeOf() REQUIRES_SHARED(Locks::mutator_lock_) {
+    size_t size = sizeof(String);
+    if (IsCompressed()) {
+      size += (sizeof(uint8_t) * GetLength<kVerifyFlags>());
+    } else {
+      size += (sizeof(uint16_t) * GetLength<kVerifyFlags>());
+    }
+    // String.equals() intrinsics assume zero-padding up to kObjectAlignment,
+    // so make sure the zero-padding is actually copied around if GC compaction
+    // chooses to copy only SizeOf() bytes.
+    // http://b/23528461
+    return RoundUp(size, kObjectAlignment);
+  }
 
   // Taking out the first/uppermost bit because it is not part of actual length value
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags>
@@ -214,15 +228,6 @@ class MANAGED String FINAL : public Object {
         : length;
   }
 
-  static Class* GetJavaLangString() REQUIRES_SHARED(Locks::mutator_lock_) {
-    DCHECK(!java_lang_String_.IsNull());
-    return java_lang_String_.Read();
-  }
-
-  static void SetClass(ObjPtr<Class> java_lang_String) REQUIRES_SHARED(Locks::mutator_lock_);
-  static void ResetClass() REQUIRES_SHARED(Locks::mutator_lock_);
-  static void VisitRoots(RootVisitor* visitor) REQUIRES_SHARED(Locks::mutator_lock_);
-
   // Returns a human-readable equivalent of 'descriptor'. So "I" would be "int",
   // "[[I" would be "int[][]", "[Ljava/lang/String;" would be
   // "java.lang.String[]", and so forth.
@@ -267,10 +272,7 @@ class MANAGED String FINAL : public Object {
     uint8_t value_compressed_[0];
   };
 
-  static GcRoot<Class> java_lang_String_;
-
   friend struct art::StringOffsets;  // for verifying offset information
-  ART_FRIEND_TEST(art::StubTest, ReadBarrierForRoot);  // For java_lang_String_.
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(String);
 };

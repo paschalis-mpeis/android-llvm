@@ -1,6 +1,4 @@
-#!/bin/bash
-#
-# Copyright 2017 The Android Open Source Project
+# Copyright (C) 2018 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# See b/65168732
-export USE_D8=false
-
-./default-build "$@"
+.class public interface LBadSuper2;
+.super LBaseClass;
+.source "BadSuper2.j"

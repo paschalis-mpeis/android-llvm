@@ -39,6 +39,7 @@
 #include "object-refvisitor-inl.h"
 #include "object_array-inl.h"
 #include "object_lock.h"
+#include "string-inl.h"
 #include "runtime.h"
 #include "thread.h"
 #include "throwable.h"
@@ -1250,7 +1251,7 @@ ArtMethod* Class::GetDeclaredConstructor(
 
 uint32_t Class::Depth() {
   uint32_t depth = 0;
-  for (ObjPtr<Class> klass = this; klass->GetSuperClass() != nullptr; klass = klass->GetSuperClass()) {
+  for (ObjPtr<Class> cls = this; cls->GetSuperClass() != nullptr; cls = cls->GetSuperClass()) {
     depth++;
   }
   return depth;
@@ -1460,12 +1461,12 @@ template<VerifyObjectFlags kVerifyFlags> void Class::GetAccessFlagsDCheck() {
   // circularity issue during loading the names of its members
   DCHECK(IsIdxLoaded<kVerifyFlags>() || IsRetired<kVerifyFlags>() ||
          IsErroneous<static_cast<VerifyObjectFlags>(kVerifyFlags & ~kVerifyThis)>() ||
-         this == String::GetJavaLangString())
+         this == GetClassRoot<String>())
               << "IsIdxLoaded=" << IsIdxLoaded<kVerifyFlags>()
               << " IsRetired=" << IsRetired<kVerifyFlags>()
               << " IsErroneous=" <<
               IsErroneous<static_cast<VerifyObjectFlags>(kVerifyFlags & ~kVerifyThis)>()
-              << " IsString=" << (this == String::GetJavaLangString())
+              << " IsString=" << (this == GetClassRoot<String>())
               << " status= " << GetStatus<kVerifyFlags>()
               << " descriptor=" << PrettyDescriptor();
 }

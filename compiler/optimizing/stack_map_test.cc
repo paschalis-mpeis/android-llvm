@@ -32,10 +32,10 @@ static bool CheckStackMask(
     const StackMap& stack_map,
     const BitVector& bit_vector) {
   BitMemoryRegion stack_mask = code_info.GetStackMaskOf(stack_map);
-  if (bit_vector.GetNumberOfBits() > code_info.GetNumberOfStackMaskBits()) {
+  if (bit_vector.GetNumberOfBits() > stack_mask.size_in_bits()) {
     return false;
   }
-  for (size_t i = 0; i < code_info.GetNumberOfStackMaskBits(); ++i) {
+  for (size_t i = 0; i < stack_mask.size_in_bits(); ++i) {
     if (stack_mask.LoadBit(i) != bit_vector.IsBitSet(i)) {
       return false;
     }
@@ -45,6 +45,8 @@ static bool CheckStackMask(
 
 using Kind = DexRegisterLocation::Kind;
 
+constexpr static uint32_t kPcAlign = GetInstructionSetInstructionAlignment(kRuntimeISA);
+
 TEST(StackMapTest, Test1) {
   MallocArenaPool pool;
   ArenaStack arena_stack(&pool);
@@ -53,7 +55,7 @@ TEST(StackMapTest, Test1) {
 
   ArenaBitVector sp_mask(&allocator, 0, false);
   size_t number_of_dex_registers = 2;
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask, number_of_dex_registers, 0);
   stream.AddDexRegisterEntry(Kind::kInStack, 0);         // Short location.
   stream.AddDexRegisterEntry(Kind::kConstant, -2);       // Short location.
   stream.EndStackMapEntry();
@@ -77,9 +79,9 @@ TEST(StackMapTest, Test1) {
 
   StackMap stack_map = code_info.GetStackMapAt(0);
   ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForDexPc(0)));
-  ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(64)));
+  ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(64 * kPcAlign)));
   ASSERT_EQ(0u, stack_map.GetDexPc());
-  ASSERT_EQ(64u, stack_map.GetNativePcOffset(kRuntimeISA));
+  ASSERT_EQ(64u * kPcAlign, stack_map.GetNativePcOffset(kRuntimeISA));
   ASSERT_EQ(0x3u, code_info.GetRegisterMaskOf(stack_map));
 
   ASSERT_TRUE(CheckStackMask(code_info, stack_map, sp_mask));
@@ -96,22 +98,15 @@ TEST(StackMapTest, Test1) {
   size_t expected_dex_register_map_size = 1u + 1u;
   ASSERT_EQ(expected_dex_register_map_size, dex_register_map.Size());
 
-  ASSERT_EQ(Kind::kInStack, dex_register_map.GetLocationKind(
-                0, number_of_dex_registers, code_info));
-  ASSERT_EQ(Kind::kConstant, dex_register_map.GetLocationKind(
-                1, number_of_dex_registers, code_info));
-  ASSERT_EQ(Kind::kInStack, dex_register_map.GetLocationInternalKind(
-                0, number_of_dex_registers, code_info));
-  ASSERT_EQ(Kind::kConstantLargeValue, dex_register_map.GetLocationInternalKind(
-                1, number_of_dex_registers, code_info));
-  ASSERT_EQ(0, dex_register_map.GetStackOffsetInBytes(
-                0, number_of_dex_registers, code_info));
-  ASSERT_EQ(-2, dex_register_map.GetConstant(1, number_of_dex_registers, code_info));
+  ASSERT_EQ(Kind::kInStack, dex_register_map.GetLocationKind(0));
+  ASSERT_EQ(Kind::kConstant, dex_register_map.GetLocationKind(1));
+  ASSERT_EQ(Kind::kInStack, dex_register_map.GetLocationInternalKind(0));
+  ASSERT_EQ(Kind::kConstantLargeValue, dex_register_map.GetLocationInternalKind(1));
+  ASSERT_EQ(0, dex_register_map.GetStackOffsetInBytes(0));
+  ASSERT_EQ(-2, dex_register_map.GetConstant(1));
 
-  size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(
-      0, number_of_dex_registers, number_of_catalog_entries);
-  size_t index1 = dex_register_map.GetLocationCatalogEntryIndex(
-      1, number_of_dex_registers, number_of_catalog_entries);
+  size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(0, number_of_catalog_entries);
+  size_t index1 = dex_register_map.GetLocationCatalogEntryIndex(1, number_of_catalog_entries);
   ASSERT_EQ(0u, index0);
   ASSERT_EQ(1u, index1);
   DexRegisterLocation location0 = location_catalog.GetDexRegisterLocation(index0);
@@ -138,7 +133,7 @@ TEST(StackMapTest, Test2) {
   sp_mask1.SetBit(4);
   size_t number_of_dex_registers = 2;
   size_t number_of_dex_registers_in_inline_info = 0;
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask1, number_of_dex_registers, 2);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask1, number_of_dex_registers, 2);
   stream.AddDexRegisterEntry(Kind::kInStack, 0);         // Short location.
   stream.AddDexRegisterEntry(Kind::kConstant, -2);       // Large location.
   stream.BeginInlineInfoEntry(&art_method, 3, number_of_dex_registers_in_inline_info);
@@ -150,7 +145,7 @@ TEST(StackMapTest, Test2) {
   ArenaBitVector sp_mask2(&allocator, 0, true);
   sp_mask2.SetBit(3);
   sp_mask2.SetBit(8);
-  stream.BeginStackMapEntry(1, 128, 0xFF, &sp_mask2, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(1, 128 * kPcAlign, 0xFF, &sp_mask2, number_of_dex_registers, 0);
   stream.AddDexRegisterEntry(Kind::kInRegister, 18);     // Short location.
   stream.AddDexRegisterEntry(Kind::kInFpuRegister, 3);   // Short location.
   stream.EndStackMapEntry();
@@ -158,7 +153,7 @@ TEST(StackMapTest, Test2) {
   ArenaBitVector sp_mask3(&allocator, 0, true);
   sp_mask3.SetBit(1);
   sp_mask3.SetBit(5);
-  stream.BeginStackMapEntry(2, 192, 0xAB, &sp_mask3, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(2, 192 * kPcAlign, 0xAB, &sp_mask3, number_of_dex_registers, 0);
   stream.AddDexRegisterEntry(Kind::kInRegister, 6);       // Short location.
   stream.AddDexRegisterEntry(Kind::kInRegisterHigh, 8);   // Short location.
   stream.EndStackMapEntry();
@@ -166,7 +161,7 @@ TEST(StackMapTest, Test2) {
   ArenaBitVector sp_mask4(&allocator, 0, true);
   sp_mask4.SetBit(6);
   sp_mask4.SetBit(7);
-  stream.BeginStackMapEntry(3, 256, 0xCD, &sp_mask4, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(3, 256 * kPcAlign, 0xCD, &sp_mask4, number_of_dex_registers, 0);
   stream.AddDexRegisterEntry(Kind::kInFpuRegister, 3);      // Short location, same in stack map 2.
   stream.AddDexRegisterEntry(Kind::kInFpuRegisterHigh, 1);  // Short location.
   stream.EndStackMapEntry();
@@ -192,9 +187,9 @@ TEST(StackMapTest, Test2) {
   {
     StackMap stack_map = code_info.GetStackMapAt(0);
     ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForDexPc(0)));
-    ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(64)));
+    ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(64 * kPcAlign)));
     ASSERT_EQ(0u, stack_map.GetDexPc());
-    ASSERT_EQ(64u, stack_map.GetNativePcOffset(kRuntimeISA));
+    ASSERT_EQ(64u * kPcAlign, stack_map.GetNativePcOffset(kRuntimeISA));
     ASSERT_EQ(0x3u, code_info.GetRegisterMaskOf(stack_map));
 
     ASSERT_TRUE(CheckStackMask(code_info, stack_map, sp_mask1));
@@ -211,22 +206,15 @@ TEST(StackMapTest, Test2) {
     size_t expected_dex_register_map_size = 1u + 1u;
     ASSERT_EQ(expected_dex_register_map_size, dex_register_map.Size());
 
-    ASSERT_EQ(Kind::kInStack, dex_register_map.GetLocationKind(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kConstant, dex_register_map.GetLocationKind(
-                  1, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInStack, dex_register_map.GetLocationInternalKind(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kConstantLargeValue, dex_register_map.GetLocationInternalKind(
-                  1, number_of_dex_registers, code_info));
-    ASSERT_EQ(0, dex_register_map.GetStackOffsetInBytes(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(-2, dex_register_map.GetConstant(1, number_of_dex_registers, code_info));
+    ASSERT_EQ(Kind::kInStack, dex_register_map.GetLocationKind(0));
+    ASSERT_EQ(Kind::kConstant, dex_register_map.GetLocationKind(1));
+    ASSERT_EQ(Kind::kInStack, dex_register_map.GetLocationInternalKind(0));
+    ASSERT_EQ(Kind::kConstantLargeValue, dex_register_map.GetLocationInternalKind(1));
+    ASSERT_EQ(0, dex_register_map.GetStackOffsetInBytes(0));
+    ASSERT_EQ(-2, dex_register_map.GetConstant(1));
 
-    size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(
-        0, number_of_dex_registers, number_of_catalog_entries);
-    size_t index1 = dex_register_map.GetLocationCatalogEntryIndex(
-        1, number_of_dex_registers, number_of_catalog_entries);
+    size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(0, number_of_catalog_entries);
+    size_t index1 = dex_register_map.GetLocationCatalogEntryIndex(1, number_of_catalog_entries);
     ASSERT_EQ(0u, index0);
     ASSERT_EQ(1u, index1);
     DexRegisterLocation location0 = location_catalog.GetDexRegisterLocation(index0);
@@ -251,9 +239,9 @@ TEST(StackMapTest, Test2) {
   {
     StackMap stack_map = code_info.GetStackMapAt(1);
     ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForDexPc(1u)));
-    ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(128u)));
+    ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(128u * kPcAlign)));
     ASSERT_EQ(1u, stack_map.GetDexPc());
-    ASSERT_EQ(128u, stack_map.GetNativePcOffset(kRuntimeISA));
+    ASSERT_EQ(128u * kPcAlign, stack_map.GetNativePcOffset(kRuntimeISA));
     ASSERT_EQ(0xFFu, code_info.GetRegisterMaskOf(stack_map));
 
     ASSERT_TRUE(CheckStackMask(code_info, stack_map, sp_mask2));
@@ -270,23 +258,15 @@ TEST(StackMapTest, Test2) {
     size_t expected_dex_register_map_size = 1u + 1u;
     ASSERT_EQ(expected_dex_register_map_size, dex_register_map.Size());
 
-    ASSERT_EQ(Kind::kInRegister, dex_register_map.GetLocationKind(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInFpuRegister, dex_register_map.GetLocationKind(
-                  1, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInRegister, dex_register_map.GetLocationInternalKind(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInFpuRegister, dex_register_map.GetLocationInternalKind(
-                  1, number_of_dex_registers, code_info));
-    ASSERT_EQ(18, dex_register_map.GetMachineRegister(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(3, dex_register_map.GetMachineRegister(
-                  1, number_of_dex_registers, code_info));
+    ASSERT_EQ(Kind::kInRegister, dex_register_map.GetLocationKind(0));
+    ASSERT_EQ(Kind::kInFpuRegister, dex_register_map.GetLocationKind(1));
+    ASSERT_EQ(Kind::kInRegister, dex_register_map.GetLocationInternalKind(0));
+    ASSERT_EQ(Kind::kInFpuRegister, dex_register_map.GetLocationInternalKind(1));
+    ASSERT_EQ(18, dex_register_map.GetMachineRegister(0));
+    ASSERT_EQ(3, dex_register_map.GetMachineRegister(1));
 
-    size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(
-        0, number_of_dex_registers, number_of_catalog_entries);
-    size_t index1 = dex_register_map.GetLocationCatalogEntryIndex(
-        1, number_of_dex_registers, number_of_catalog_entries);
+    size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(0, number_of_catalog_entries);
+    size_t index1 = dex_register_map.GetLocationCatalogEntryIndex(1, number_of_catalog_entries);
     ASSERT_EQ(2u, index0);
     ASSERT_EQ(3u, index1);
     DexRegisterLocation location0 = location_catalog.GetDexRegisterLocation(index0);
@@ -305,9 +285,9 @@ TEST(StackMapTest, Test2) {
   {
     StackMap stack_map = code_info.GetStackMapAt(2);
     ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForDexPc(2u)));
-    ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(192u)));
+    ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(192u * kPcAlign)));
     ASSERT_EQ(2u, stack_map.GetDexPc());
-    ASSERT_EQ(192u, stack_map.GetNativePcOffset(kRuntimeISA));
+    ASSERT_EQ(192u * kPcAlign, stack_map.GetNativePcOffset(kRuntimeISA));
     ASSERT_EQ(0xABu, code_info.GetRegisterMaskOf(stack_map));
 
     ASSERT_TRUE(CheckStackMask(code_info, stack_map, sp_mask3));
@@ -324,23 +304,15 @@ TEST(StackMapTest, Test2) {
     size_t expected_dex_register_map_size = 1u + 1u;
     ASSERT_EQ(expected_dex_register_map_size, dex_register_map.Size());
 
-    ASSERT_EQ(Kind::kInRegister, dex_register_map.GetLocationKind(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInRegisterHigh, dex_register_map.GetLocationKind(
-                  1, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInRegister, dex_register_map.GetLocationInternalKind(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInRegisterHigh, dex_register_map.GetLocationInternalKind(
-                  1, number_of_dex_registers, code_info));
-    ASSERT_EQ(6, dex_register_map.GetMachineRegister(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(8, dex_register_map.GetMachineRegister(
-                  1, number_of_dex_registers, code_info));
+    ASSERT_EQ(Kind::kInRegister, dex_register_map.GetLocationKind(0));
+    ASSERT_EQ(Kind::kInRegisterHigh, dex_register_map.GetLocationKind(1));
+    ASSERT_EQ(Kind::kInRegister, dex_register_map.GetLocationInternalKind(0));
+    ASSERT_EQ(Kind::kInRegisterHigh, dex_register_map.GetLocationInternalKind(1));
+    ASSERT_EQ(6, dex_register_map.GetMachineRegister(0));
+    ASSERT_EQ(8, dex_register_map.GetMachineRegister(1));
 
-    size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(
-        0, number_of_dex_registers, number_of_catalog_entries);
-    size_t index1 = dex_register_map.GetLocationCatalogEntryIndex(
-        1, number_of_dex_registers, number_of_catalog_entries);
+    size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(0, number_of_catalog_entries);
+    size_t index1 = dex_register_map.GetLocationCatalogEntryIndex(1, number_of_catalog_entries);
     ASSERT_EQ(4u, index0);
     ASSERT_EQ(5u, index1);
     DexRegisterLocation location0 = location_catalog.GetDexRegisterLocation(index0);
@@ -359,9 +331,9 @@ TEST(StackMapTest, Test2) {
   {
     StackMap stack_map = code_info.GetStackMapAt(3);
     ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForDexPc(3u)));
-    ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(256u)));
+    ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(256u * kPcAlign)));
     ASSERT_EQ(3u, stack_map.GetDexPc());
-    ASSERT_EQ(256u, stack_map.GetNativePcOffset(kRuntimeISA));
+    ASSERT_EQ(256u * kPcAlign, stack_map.GetNativePcOffset(kRuntimeISA));
     ASSERT_EQ(0xCDu, code_info.GetRegisterMaskOf(stack_map));
 
     ASSERT_TRUE(CheckStackMask(code_info, stack_map, sp_mask4));
@@ -378,23 +350,15 @@ TEST(StackMapTest, Test2) {
     size_t expected_dex_register_map_size = 1u + 1u;
     ASSERT_EQ(expected_dex_register_map_size, dex_register_map.Size());
 
-    ASSERT_EQ(Kind::kInFpuRegister, dex_register_map.GetLocationKind(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInFpuRegisterHigh, dex_register_map.GetLocationKind(
-                  1, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInFpuRegister, dex_register_map.GetLocationInternalKind(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInFpuRegisterHigh, dex_register_map.GetLocationInternalKind(
-                  1, number_of_dex_registers, code_info));
-    ASSERT_EQ(3, dex_register_map.GetMachineRegister(
-                  0, number_of_dex_registers, code_info));
-    ASSERT_EQ(1, dex_register_map.GetMachineRegister(
-                  1, number_of_dex_registers, code_info));
+    ASSERT_EQ(Kind::kInFpuRegister, dex_register_map.GetLocationKind(0));
+    ASSERT_EQ(Kind::kInFpuRegisterHigh, dex_register_map.GetLocationKind(1));
+    ASSERT_EQ(Kind::kInFpuRegister, dex_register_map.GetLocationInternalKind(0));
+    ASSERT_EQ(Kind::kInFpuRegisterHigh, dex_register_map.GetLocationInternalKind(1));
+    ASSERT_EQ(3, dex_register_map.GetMachineRegister(0));
+    ASSERT_EQ(1, dex_register_map.GetMachineRegister(1));
 
-    size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(
-        0, number_of_dex_registers, number_of_catalog_entries);
-    size_t index1 = dex_register_map.GetLocationCatalogEntryIndex(
-        1, number_of_dex_registers, number_of_catalog_entries);
+    size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(0, number_of_catalog_entries);
+    size_t index1 = dex_register_map.GetLocationCatalogEntryIndex(1, number_of_catalog_entries);
     ASSERT_EQ(3u, index0);  // Shared with second stack map.
     ASSERT_EQ(6u, index1);
     DexRegisterLocation location0 = location_catalog.GetDexRegisterLocation(index0);
@@ -422,7 +386,7 @@ TEST(StackMapTest, TestDeduplicateInlineInfoDexRegisterMap) {
   sp_mask1.SetBit(4);
   const size_t number_of_dex_registers = 2;
   const size_t number_of_dex_registers_in_inline_info = 2;
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask1, number_of_dex_registers, 1);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask1, number_of_dex_registers, 1);
   stream.AddDexRegisterEntry(Kind::kInStack, 0);         // Short location.
   stream.AddDexRegisterEntry(Kind::kConstant, -2);       // Large location.
   stream.BeginInlineInfoEntry(&art_method, 3, number_of_dex_registers_in_inline_info);
@@ -452,9 +416,9 @@ TEST(StackMapTest, TestDeduplicateInlineInfoDexRegisterMap) {
   {
     StackMap stack_map = code_info.GetStackMapAt(0);
     ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForDexPc(0)));
-    ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(64)));
+    ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(64 * kPcAlign)));
     ASSERT_EQ(0u, stack_map.GetDexPc());
-    ASSERT_EQ(64u, stack_map.GetNativePcOffset(kRuntimeISA));
+    ASSERT_EQ(64u * kPcAlign, stack_map.GetNativePcOffset(kRuntimeISA));
     ASSERT_EQ(0x3u, code_info.GetRegisterMaskOf(stack_map));
 
     ASSERT_TRUE(CheckStackMask(code_info, stack_map, sp_mask1));
@@ -470,20 +434,15 @@ TEST(StackMapTest, TestDeduplicateInlineInfoDexRegisterMap) {
     size_t expected_map_size = 1u + 1u;
     ASSERT_EQ(expected_map_size, map.Size());
 
-    ASSERT_EQ(Kind::kInStack, map.GetLocationKind(0, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kConstant,
-              map.GetLocationKind(1, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kInStack,
-              map.GetLocationInternalKind(0, number_of_dex_registers, code_info));
-    ASSERT_EQ(Kind::kConstantLargeValue,
-              map.GetLocationInternalKind(1, number_of_dex_registers, code_info));
-    ASSERT_EQ(0, map.GetStackOffsetInBytes(0, number_of_dex_registers, code_info));
-    ASSERT_EQ(-2, map.GetConstant(1, number_of_dex_registers, code_info));
+    ASSERT_EQ(Kind::kInStack, map.GetLocationKind(0));
+    ASSERT_EQ(Kind::kConstant, map.GetLocationKind(1));
+    ASSERT_EQ(Kind::kInStack, map.GetLocationInternalKind(0));
+    ASSERT_EQ(Kind::kConstantLargeValue, map.GetLocationInternalKind(1));
+    ASSERT_EQ(0, map.GetStackOffsetInBytes(0));
+    ASSERT_EQ(-2, map.GetConstant(1));
 
-    const size_t index0 =
-        map.GetLocationCatalogEntryIndex(0, number_of_dex_registers, number_of_catalog_entries);
-    const size_t index1 =
-        map.GetLocationCatalogEntryIndex(1, number_of_dex_registers, number_of_catalog_entries);
+    const size_t index0 = map.GetLocationCatalogEntryIndex(0, number_of_catalog_entries);
+    const size_t index1 = map.GetLocationCatalogEntryIndex(1, number_of_catalog_entries);
     ASSERT_EQ(0u, index0);
     ASSERT_EQ(1u, index1);
     DexRegisterLocation location0 = location_catalog.GetDexRegisterLocation(index0);
@@ -512,7 +471,7 @@ TEST(StackMapTest, TestNonLiveDexRegisters) {
 
   ArenaBitVector sp_mask(&allocator, 0, false);
   uint32_t number_of_dex_registers = 2;
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask, number_of_dex_registers, 0);
   stream.AddDexRegisterEntry(Kind::kNone, 0);            // No location.
   stream.AddDexRegisterEntry(Kind::kConstant, -2);       // Large location.
   stream.EndStackMapEntry();
@@ -535,9 +494,9 @@ TEST(StackMapTest, TestNonLiveDexRegisters) {
 
   StackMap stack_map = code_info.GetStackMapAt(0);
   ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForDexPc(0)));
-  ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(64)));
+  ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(64 * kPcAlign)));
   ASSERT_EQ(0u, stack_map.GetDexPc());
-  ASSERT_EQ(64u, stack_map.GetNativePcOffset(kRuntimeISA));
+  ASSERT_EQ(64u * kPcAlign, stack_map.GetNativePcOffset(kRuntimeISA));
   ASSERT_EQ(0x3u, code_info.GetRegisterMaskOf(stack_map));
 
   ASSERT_TRUE(stack_map.HasDexRegisterMap());
@@ -552,20 +511,14 @@ TEST(StackMapTest, TestNonLiveDexRegisters) {
   size_t expected_dex_register_map_size = 1u + 0u;
   ASSERT_EQ(expected_dex_register_map_size, dex_register_map.Size());
 
-  ASSERT_EQ(Kind::kNone, dex_register_map.GetLocationKind(
-                0, number_of_dex_registers, code_info));
-  ASSERT_EQ(Kind::kConstant, dex_register_map.GetLocationKind(
-                1, number_of_dex_registers, code_info));
-  ASSERT_EQ(Kind::kNone, dex_register_map.GetLocationInternalKind(
-                0, number_of_dex_registers, code_info));
-  ASSERT_EQ(Kind::kConstantLargeValue, dex_register_map.GetLocationInternalKind(
-                1, number_of_dex_registers, code_info));
-  ASSERT_EQ(-2, dex_register_map.GetConstant(1, number_of_dex_registers, code_info));
+  ASSERT_EQ(Kind::kNone, dex_register_map.GetLocationKind(0));
+  ASSERT_EQ(Kind::kConstant, dex_register_map.GetLocationKind(1));
+  ASSERT_EQ(Kind::kNone, dex_register_map.GetLocationInternalKind(0));
+  ASSERT_EQ(Kind::kConstantLargeValue, dex_register_map.GetLocationInternalKind(1));
+  ASSERT_EQ(-2, dex_register_map.GetConstant(1));
 
-  size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(
-      0, number_of_dex_registers, number_of_catalog_entries);
-  size_t index1 =  dex_register_map.GetLocationCatalogEntryIndex(
-      1, number_of_dex_registers, number_of_catalog_entries);
+  size_t index0 = dex_register_map.GetLocationCatalogEntryIndex(0, number_of_catalog_entries);
+  size_t index1 =  dex_register_map.GetLocationCatalogEntryIndex(1, number_of_catalog_entries);
   ASSERT_EQ(DexRegisterLocationCatalog::kNoLocationEntryIndex, index0);
   ASSERT_EQ(0u, index1);
   DexRegisterLocation location0 = location_catalog.GetDexRegisterLocation(index0);
@@ -592,7 +545,7 @@ TEST(StackMapTest, DexRegisterMapOffsetOverflow) {
   ArenaBitVector sp_mask(&allocator, 0, false);
   uint32_t number_of_dex_registers = 1024;
   // Create the first stack map (and its Dex register map).
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask, number_of_dex_registers, 0);
   uint32_t number_of_dex_live_registers_in_dex_register_map_0 = number_of_dex_registers - 8;
   for (uint32_t i = 0; i < number_of_dex_live_registers_in_dex_register_map_0; ++i) {
     // Use two different Dex register locations to populate this map,
@@ -603,7 +556,7 @@ TEST(StackMapTest, DexRegisterMapOffsetOverflow) {
   }
   stream.EndStackMapEntry();
   // Create the second stack map (and its Dex register map).
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask, number_of_dex_registers, 0);
   for (uint32_t i = 0; i < number_of_dex_registers; ++i) {
     stream.AddDexRegisterEntry(Kind::kConstant, 0);  // Short location.
   }
@@ -632,8 +585,7 @@ TEST(StackMapTest, DexRegisterMapOffsetOverflow) {
   StackMap stack_map0 = code_info.GetStackMapAt(0);
   DexRegisterMap dex_register_map0 =
       code_info.GetDexRegisterMapOf(stack_map0, number_of_dex_registers);
-  ASSERT_EQ(127u, dex_register_map0.GetLocationMappingDataSize(number_of_dex_registers,
-                                                               number_of_catalog_entries));
+  ASSERT_EQ(127u, dex_register_map0.GetLocationMappingDataSize(number_of_catalog_entries));
   ASSERT_EQ(255u, dex_register_map0.Size());
 
   StackMap stack_map1 = code_info.GetStackMapAt(1);
@@ -655,17 +607,17 @@ TEST(StackMapTest, TestShareDexRegisterMap) {
   ArenaBitVector sp_mask(&allocator, 0, false);
   uint32_t number_of_dex_registers = 2;
   // First stack map.
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask, number_of_dex_registers, 0);
   stream.AddDexRegisterEntry(Kind::kInRegister, 0);  // Short location.
   stream.AddDexRegisterEntry(Kind::kConstant, -2);   // Large location.
   stream.EndStackMapEntry();
   // Second stack map, which should share the same dex register map.
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask, number_of_dex_registers, 0);
   stream.AddDexRegisterEntry(Kind::kInRegister, 0);  // Short location.
   stream.AddDexRegisterEntry(Kind::kConstant, -2);   // Large location.
   stream.EndStackMapEntry();
   // Third stack map (doesn't share the dex register map).
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask, number_of_dex_registers, 0);
   stream.AddDexRegisterEntry(Kind::kInRegister, 2);  // Short location.
   stream.AddDexRegisterEntry(Kind::kConstant, -2);   // Large location.
   stream.EndStackMapEntry();
@@ -680,20 +632,20 @@ TEST(StackMapTest, TestShareDexRegisterMap) {
   // Verify first stack map.
   StackMap sm0 = ci.GetStackMapAt(0);
   DexRegisterMap dex_registers0 = ci.GetDexRegisterMapOf(sm0, number_of_dex_registers);
-  ASSERT_EQ(0, dex_registers0.GetMachineRegister(0, number_of_dex_registers, ci));
-  ASSERT_EQ(-2, dex_registers0.GetConstant(1, number_of_dex_registers, ci));
+  ASSERT_EQ(0, dex_registers0.GetMachineRegister(0));
+  ASSERT_EQ(-2, dex_registers0.GetConstant(1));
 
   // Verify second stack map.
   StackMap sm1 = ci.GetStackMapAt(1);
   DexRegisterMap dex_registers1 = ci.GetDexRegisterMapOf(sm1, number_of_dex_registers);
-  ASSERT_EQ(0, dex_registers1.GetMachineRegister(0, number_of_dex_registers, ci));
-  ASSERT_EQ(-2, dex_registers1.GetConstant(1, number_of_dex_registers, ci));
+  ASSERT_EQ(0, dex_registers1.GetMachineRegister(0));
+  ASSERT_EQ(-2, dex_registers1.GetConstant(1));
 
   // Verify third stack map.
   StackMap sm2 = ci.GetStackMapAt(2);
   DexRegisterMap dex_registers2 = ci.GetDexRegisterMapOf(sm2, number_of_dex_registers);
-  ASSERT_EQ(2, dex_registers2.GetMachineRegister(0, number_of_dex_registers, ci));
-  ASSERT_EQ(-2, dex_registers2.GetConstant(1, number_of_dex_registers, ci));
+  ASSERT_EQ(2, dex_registers2.GetMachineRegister(0));
+  ASSERT_EQ(-2, dex_registers2.GetConstant(1));
 
   // Verify dex register map offsets.
   ASSERT_EQ(sm0.GetDexRegisterMapOffset(),
@@ -712,11 +664,11 @@ TEST(StackMapTest, TestNoDexRegisterMap) {
 
   ArenaBitVector sp_mask(&allocator, 0, false);
   uint32_t number_of_dex_registers = 0;
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask, number_of_dex_registers, 0);
   stream.EndStackMapEntry();
 
   number_of_dex_registers = 1;
-  stream.BeginStackMapEntry(1, 68, 0x4, &sp_mask, number_of_dex_registers, 0);
+  stream.BeginStackMapEntry(1, 68 * kPcAlign, 0x4, &sp_mask, number_of_dex_registers, 0);
   stream.EndStackMapEntry();
 
   size_t size = stream.PrepareForFillIn();
@@ -734,9 +686,9 @@ TEST(StackMapTest, TestNoDexRegisterMap) {
 
   StackMap stack_map = code_info.GetStackMapAt(0);
   ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForDexPc(0)));
-  ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(64)));
+  ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(64 * kPcAlign)));
   ASSERT_EQ(0u, stack_map.GetDexPc());
-  ASSERT_EQ(64u, stack_map.GetNativePcOffset(kRuntimeISA));
+  ASSERT_EQ(64u * kPcAlign, stack_map.GetNativePcOffset(kRuntimeISA));
   ASSERT_EQ(0x3u, code_info.GetRegisterMaskOf(stack_map));
 
   ASSERT_FALSE(stack_map.HasDexRegisterMap());
@@ -744,9 +696,9 @@ TEST(StackMapTest, TestNoDexRegisterMap) {
 
   stack_map = code_info.GetStackMapAt(1);
   ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForDexPc(1)));
-  ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(68)));
+  ASSERT_TRUE(stack_map.Equals(code_info.GetStackMapForNativePcOffset(68 * kPcAlign)));
   ASSERT_EQ(1u, stack_map.GetDexPc());
-  ASSERT_EQ(68u, stack_map.GetNativePcOffset(kRuntimeISA));
+  ASSERT_EQ(68u * kPcAlign, stack_map.GetNativePcOffset(kRuntimeISA));
   ASSERT_EQ(0x4u, code_info.GetRegisterMaskOf(stack_map));
 
   ASSERT_FALSE(stack_map.HasDexRegisterMap());
@@ -765,7 +717,7 @@ TEST(StackMapTest, InlineTest) {
   sp_mask1.SetBit(4);
 
   // First stack map.
-  stream.BeginStackMapEntry(0, 64, 0x3, &sp_mask1, 2, 2);
+  stream.BeginStackMapEntry(0, 64 * kPcAlign, 0x3, &sp_mask1, 2, 2);
   stream.AddDexRegisterEntry(Kind::kInStack, 0);
   stream.AddDexRegisterEntry(Kind::kConstant, 4);
 
@@ -781,7 +733,7 @@ TEST(StackMapTest, InlineTest) {
   stream.EndStackMapEntry();
 
   // Second stack map.
-  stream.BeginStackMapEntry(2, 22, 0x3, &sp_mask1, 2, 3);
+  stream.BeginStackMapEntry(2, 22 * kPcAlign, 0x3, &sp_mask1, 2, 3);
   stream.AddDexRegisterEntry(Kind::kInStack, 56);
   stream.AddDexRegisterEntry(Kind::kConstant, 0);
 
@@ -799,13 +751,13 @@ TEST(StackMapTest, InlineTest) {
   stream.EndStackMapEntry();
 
   // Third stack map.
-  stream.BeginStackMapEntry(4, 56, 0x3, &sp_mask1, 2, 0);
+  stream.BeginStackMapEntry(4, 56 * kPcAlign, 0x3, &sp_mask1, 2, 0);
   stream.AddDexRegisterEntry(Kind::kNone, 0);
   stream.AddDexRegisterEntry(Kind::kConstant, 4);
   stream.EndStackMapEntry();
 
   // Fourth stack map.
-  stream.BeginStackMapEntry(6, 78, 0x3, &sp_mask1, 2, 3);
+  stream.BeginStackMapEntry(6, 78 * kPcAlign, 0x3, &sp_mask1, 2, 3);
   stream.AddDexRegisterEntry(Kind::kInStack, 56);
   stream.AddDexRegisterEntry(Kind::kConstant, 0);
 
@@ -833,8 +785,8 @@ TEST(StackMapTest, InlineTest) {
     StackMap sm0 = ci.GetStackMapAt(0);
 
     DexRegisterMap dex_registers0 = ci.GetDexRegisterMapOf(sm0, 2);
-    ASSERT_EQ(0, dex_registers0.GetStackOffsetInBytes(0, 2, ci));
-    ASSERT_EQ(4, dex_registers0.GetConstant(1, 2, ci));
+    ASSERT_EQ(0, dex_registers0.GetStackOffsetInBytes(0));
+    ASSERT_EQ(4, dex_registers0.GetConstant(1));
 
     InlineInfo if0 = ci.GetInlineInfoOf(sm0);
     ASSERT_EQ(2u, if0.GetDepth());
@@ -844,12 +796,12 @@ TEST(StackMapTest, InlineTest) {
     ASSERT_TRUE(if0.EncodesArtMethodAtDepth(1));
 
     DexRegisterMap dex_registers1 = ci.GetDexRegisterMapAtDepth(0, if0, 1);
-    ASSERT_EQ(8, dex_registers1.GetStackOffsetInBytes(0, 1, ci));
+    ASSERT_EQ(8, dex_registers1.GetStackOffsetInBytes(0));
 
     DexRegisterMap dex_registers2 = ci.GetDexRegisterMapAtDepth(1, if0, 3);
-    ASSERT_EQ(16, dex_registers2.GetStackOffsetInBytes(0, 3, ci));
-    ASSERT_EQ(20, dex_registers2.GetConstant(1, 3, ci));
-    ASSERT_EQ(15, dex_registers2.GetMachineRegister(2, 3, ci));
+    ASSERT_EQ(16, dex_registers2.GetStackOffsetInBytes(0));
+    ASSERT_EQ(20, dex_registers2.GetConstant(1));
+    ASSERT_EQ(15, dex_registers2.GetMachineRegister(2));
   }
 
   {
@@ -857,8 +809,8 @@ TEST(StackMapTest, InlineTest) {
     StackMap sm1 = ci.GetStackMapAt(1);
 
     DexRegisterMap dex_registers0 = ci.GetDexRegisterMapOf(sm1, 2);
-    ASSERT_EQ(56, dex_registers0.GetStackOffsetInBytes(0, 2, ci));
-    ASSERT_EQ(0, dex_registers0.GetConstant(1, 2, ci));
+    ASSERT_EQ(56, dex_registers0.GetStackOffsetInBytes(0));
+    ASSERT_EQ(0, dex_registers0.GetConstant(1));
 
     InlineInfo if1 = ci.GetInlineInfoOf(sm1);
     ASSERT_EQ(3u, if1.GetDepth());
@@ -870,12 +822,12 @@ TEST(StackMapTest, InlineTest) {
     ASSERT_TRUE(if1.EncodesArtMethodAtDepth(2));
 
     DexRegisterMap dex_registers1 = ci.GetDexRegisterMapAtDepth(0, if1, 1);
-    ASSERT_EQ(12, dex_registers1.GetStackOffsetInBytes(0, 1, ci));
+    ASSERT_EQ(12, dex_registers1.GetStackOffsetInBytes(0));
 
     DexRegisterMap dex_registers2 = ci.GetDexRegisterMapAtDepth(1, if1, 3);
-    ASSERT_EQ(80, dex_registers2.GetStackOffsetInBytes(0, 3, ci));
-    ASSERT_EQ(10, dex_registers2.GetConstant(1, 3, ci));
-    ASSERT_EQ(5, dex_registers2.GetMachineRegister(2, 3, ci));
+    ASSERT_EQ(80, dex_registers2.GetStackOffsetInBytes(0));
+    ASSERT_EQ(10, dex_registers2.GetConstant(1));
+    ASSERT_EQ(5, dex_registers2.GetMachineRegister(2));
 
     ASSERT_FALSE(if1.HasDexRegisterMapAtDepth(2));
   }
@@ -886,7 +838,7 @@ TEST(StackMapTest, InlineTest) {
 
     DexRegisterMap dex_registers0 = ci.GetDexRegisterMapOf(sm2, 2);
     ASSERT_FALSE(dex_registers0.IsDexRegisterLive(0));
-    ASSERT_EQ(4, dex_registers0.GetConstant(1, 2, ci));
+    ASSERT_EQ(4, dex_registers0.GetConstant(1));
     ASSERT_FALSE(sm2.HasInlineInfo());
   }
 
@@ -895,8 +847,8 @@ TEST(StackMapTest, InlineTest) {
     StackMap sm3 = ci.GetStackMapAt(3);
 
     DexRegisterMap dex_registers0 = ci.GetDexRegisterMapOf(sm3, 2);
-    ASSERT_EQ(56, dex_registers0.GetStackOffsetInBytes(0, 2, ci));
-    ASSERT_EQ(0, dex_registers0.GetConstant(1, 2, ci));
+    ASSERT_EQ(56, dex_registers0.GetStackOffsetInBytes(0));
+    ASSERT_EQ(0, dex_registers0.GetConstant(1));
 
     InlineInfo if2 = ci.GetInlineInfoOf(sm3);
     ASSERT_EQ(3u, if2.GetDepth());
@@ -910,34 +862,39 @@ TEST(StackMapTest, InlineTest) {
     ASSERT_FALSE(if2.HasDexRegisterMapAtDepth(0));
 
     DexRegisterMap dex_registers1 = ci.GetDexRegisterMapAtDepth(1, if2, 1);
-    ASSERT_EQ(2, dex_registers1.GetMachineRegister(0, 1, ci));
+    ASSERT_EQ(2, dex_registers1.GetMachineRegister(0));
 
     DexRegisterMap dex_registers2 = ci.GetDexRegisterMapAtDepth(2, if2, 2);
     ASSERT_FALSE(dex_registers2.IsDexRegisterLive(0));
-    ASSERT_EQ(3, dex_registers2.GetMachineRegister(1, 2, ci));
+    ASSERT_EQ(3, dex_registers2.GetMachineRegister(1));
   }
 }
 
-TEST(StackMapTest, CodeOffsetTest) {
-  // Test minimum alignments, and decoding.
-  CodeOffset offset_thumb2 =
-      CodeOffset::FromOffset(kThumb2InstructionAlignment, InstructionSet::kThumb2);
-  CodeOffset offset_arm64 =
-      CodeOffset::FromOffset(kArm64InstructionAlignment, InstructionSet::kArm64);
-  CodeOffset offset_x86 =
-      CodeOffset::FromOffset(kX86InstructionAlignment, InstructionSet::kX86);
-  CodeOffset offset_x86_64 =
-      CodeOffset::FromOffset(kX86_64InstructionAlignment, InstructionSet::kX86_64);
-  CodeOffset offset_mips =
-      CodeOffset::FromOffset(kMipsInstructionAlignment, InstructionSet::kMips);
-  CodeOffset offset_mips64 =
-      CodeOffset::FromOffset(kMips64InstructionAlignment, InstructionSet::kMips64);
-  EXPECT_EQ(offset_thumb2.Uint32Value(InstructionSet::kThumb2), kThumb2InstructionAlignment);
-  EXPECT_EQ(offset_arm64.Uint32Value(InstructionSet::kArm64), kArm64InstructionAlignment);
-  EXPECT_EQ(offset_x86.Uint32Value(InstructionSet::kX86), kX86InstructionAlignment);
-  EXPECT_EQ(offset_x86_64.Uint32Value(InstructionSet::kX86_64), kX86_64InstructionAlignment);
-  EXPECT_EQ(offset_mips.Uint32Value(InstructionSet::kMips), kMipsInstructionAlignment);
-  EXPECT_EQ(offset_mips64.Uint32Value(InstructionSet::kMips64), kMips64InstructionAlignment);
+TEST(StackMapTest, PackedNativePcTest) {
+  uint32_t packed_thumb2 =
+      StackMap::PackNativePc(kThumb2InstructionAlignment, InstructionSet::kThumb2);
+  uint32_t packed_arm64 =
+      StackMap::PackNativePc(kArm64InstructionAlignment, InstructionSet::kArm64);
+  uint32_t packed_x86 =
+      StackMap::PackNativePc(kX86InstructionAlignment, InstructionSet::kX86);
+  uint32_t packed_x86_64 =
+      StackMap::PackNativePc(kX86_64InstructionAlignment, InstructionSet::kX86_64);
+  uint32_t packed_mips =
+      StackMap::PackNativePc(kMipsInstructionAlignment, InstructionSet::kMips);
+  uint32_t packed_mips64 =
+      StackMap::PackNativePc(kMips64InstructionAlignment, InstructionSet::kMips64);
+  EXPECT_EQ(StackMap::UnpackNativePc(packed_thumb2, InstructionSet::kThumb2),
+            kThumb2InstructionAlignment);
+  EXPECT_EQ(StackMap::UnpackNativePc(packed_arm64, InstructionSet::kArm64),
+            kArm64InstructionAlignment);
+  EXPECT_EQ(StackMap::UnpackNativePc(packed_x86, InstructionSet::kX86),
+            kX86InstructionAlignment);
+  EXPECT_EQ(StackMap::UnpackNativePc(packed_x86_64, InstructionSet::kX86_64),
+            kX86_64InstructionAlignment);
+  EXPECT_EQ(StackMap::UnpackNativePc(packed_mips, InstructionSet::kMips),
+            kMipsInstructionAlignment);
+  EXPECT_EQ(StackMap::UnpackNativePc(packed_mips64, InstructionSet::kMips64),
+            kMips64InstructionAlignment);
 }
 
 TEST(StackMapTest, TestDeduplicateStackMask) {
@@ -949,9 +906,9 @@ TEST(StackMapTest, TestDeduplicateStackMask) {
   ArenaBitVector sp_mask(&allocator, 0, true);
   sp_mask.SetBit(1);
   sp_mask.SetBit(4);
-  stream.BeginStackMapEntry(0, 4, 0x3, &sp_mask, 0, 0);
+  stream.BeginStackMapEntry(0, 4 * kPcAlign, 0x3, &sp_mask, 0, 0);
   stream.EndStackMapEntry();
-  stream.BeginStackMapEntry(0, 8, 0x3, &sp_mask, 0, 0);
+  stream.BeginStackMapEntry(0, 8 * kPcAlign, 0x3, &sp_mask, 0, 0);
   stream.EndStackMapEntry();
 
   size_t size = stream.PrepareForFillIn();
@@ -962,8 +919,8 @@ TEST(StackMapTest, TestDeduplicateStackMask) {
   CodeInfo code_info(region);
   ASSERT_EQ(2u, code_info.GetNumberOfStackMaps());
 
-  StackMap stack_map1 = code_info.GetStackMapForNativePcOffset(4);
-  StackMap stack_map2 = code_info.GetStackMapForNativePcOffset(8);
+  StackMap stack_map1 = code_info.GetStackMapForNativePcOffset(4 * kPcAlign);
+  StackMap stack_map2 = code_info.GetStackMapForNativePcOffset(8 * kPcAlign);
   EXPECT_EQ(stack_map1.GetStackMaskIndex(),
             stack_map2.GetStackMaskIndex());
 }
@@ -976,13 +933,13 @@ TEST(StackMapTest, TestInvokeInfo) {
 
   ArenaBitVector sp_mask(&allocator, 0, true);
   sp_mask.SetBit(1);
-  stream.BeginStackMapEntry(0, 4, 0x3, &sp_mask, 0, 0);
+  stream.BeginStackMapEntry(0, 4 * kPcAlign, 0x3, &sp_mask, 0, 0);
   stream.AddInvoke(kSuper, 1);
   stream.EndStackMapEntry();
-  stream.BeginStackMapEntry(0, 8, 0x3, &sp_mask, 0, 0);
+  stream.BeginStackMapEntry(0, 8 * kPcAlign, 0x3, &sp_mask, 0, 0);
   stream.AddInvoke(kStatic, 3);
   stream.EndStackMapEntry();
-  stream.BeginStackMapEntry(0, 16, 0x3, &sp_mask, 0, 0);
+  stream.BeginStackMapEntry(0, 16 * kPcAlign, 0x3, &sp_mask, 0, 0);
   stream.AddInvoke(kDirect, 65535);
   stream.EndStackMapEntry();
 
@@ -999,9 +956,9 @@ TEST(StackMapTest, TestInvokeInfo) {
   MethodInfo method_info(method_info_region.begin());
   ASSERT_EQ(3u, code_info.GetNumberOfStackMaps());
 
-  InvokeInfo invoke1(code_info.GetInvokeInfoForNativePcOffset(4));
-  InvokeInfo invoke2(code_info.GetInvokeInfoForNativePcOffset(8));
-  InvokeInfo invoke3(code_info.GetInvokeInfoForNativePcOffset(16));
+  InvokeInfo invoke1(code_info.GetInvokeInfoForNativePcOffset(4 * kPcAlign));
+  InvokeInfo invoke2(code_info.GetInvokeInfoForNativePcOffset(8 * kPcAlign));
+  InvokeInfo invoke3(code_info.GetInvokeInfoForNativePcOffset(16 * kPcAlign));
   InvokeInfo invoke_invalid(code_info.GetInvokeInfoForNativePcOffset(12));
   EXPECT_FALSE(invoke_invalid.IsValid());  // No entry for that index.
   EXPECT_TRUE(invoke1.IsValid());
@@ -1009,13 +966,13 @@ TEST(StackMapTest, TestInvokeInfo) {
   EXPECT_TRUE(invoke3.IsValid());
   EXPECT_EQ(invoke1.GetInvokeType(), kSuper);
   EXPECT_EQ(invoke1.GetMethodIndex(method_info), 1u);
-  EXPECT_EQ(invoke1.GetNativePcOffset(kRuntimeISA), 4u);
+  EXPECT_EQ(invoke1.GetNativePcOffset(kRuntimeISA), 4u * kPcAlign);
   EXPECT_EQ(invoke2.GetInvokeType(), kStatic);
   EXPECT_EQ(invoke2.GetMethodIndex(method_info), 3u);
-  EXPECT_EQ(invoke2.GetNativePcOffset(kRuntimeISA), 8u);
+  EXPECT_EQ(invoke2.GetNativePcOffset(kRuntimeISA), 8u * kPcAlign);
   EXPECT_EQ(invoke3.GetInvokeType(), kDirect);
   EXPECT_EQ(invoke3.GetMethodIndex(method_info), 65535u);
-  EXPECT_EQ(invoke3.GetNativePcOffset(kRuntimeISA), 16u);
+  EXPECT_EQ(invoke3.GetNativePcOffset(kRuntimeISA), 16u * kPcAlign);
 }
 
 }  // namespace art

@@ -41,10 +41,12 @@
 #include "base/unix_file/fd_file.h"
 #include "class_linker-inl.h"
 #include "class_linker.h"
+#include "class_root.h"
 #include "compiled_method.h"
 #include "debug/debug_info.h"
 #include "debug/elf_debug_writer.h"
 #include "debug/method_debug_info.h"
+#include "dex/class_accessor-inl.h"
 #include "dex/code_item_accessors-inl.h"
 #include "dex/descriptors_names.h"
 #include "dex/dex_file-inl.h"
@@ -268,25 +270,18 @@ class OatSymbolizer FINAL {
   void WalkOatClass(const OatFile::OatClass& oat_class,
                     const DexFile& dex_file,
                     uint32_t class_def_index) {
-    const DexFile::ClassDef& class_def = dex_file.GetClassDef(class_def_index);
-    const uint8_t* class_data = dex_file.GetClassData(class_def);
-    if (class_data == nullptr) {  // empty class such as a marker interface?
-      return;
-    }
+    ClassAccessor accessor(dex_file, dex_file.GetClassDef(class_def_index));
     // Note: even if this is an interface or a native class, we still have to walk it, as there
     //       might be a static initializer.
-    ClassDataItemIterator it(dex_file, class_data);
     uint32_t class_method_idx = 0;
-    it.SkipAllFields();
-    for (; it.HasNextMethod(); it.Next()) {
+    for (const ClassAccessor::Method& method : accessor.GetMethods()) {
       WalkOatMethod(oat_class.GetOatMethod(class_method_idx++),
                     dex_file,
                     class_def_index,
-                    it.GetMemberIndex(),
-                    it.GetMethodCodeItem(),
-                    it.GetMethodAccessFlags());
+                    method.GetIndex(),
+                    method.GetCodeItem(),
+                    method.GetAccessFlags());
     }
-    DCHECK(!it.HasNext());
   }
 
   void WalkOatMethod(const OatFile::OatMethod& oat_method,
@@ -904,21 +899,15 @@ class OatDumper {
         continue;
       }
       offsets_.insert(reinterpret_cast<uintptr_t>(&dex_file->GetHeader()));
-      for (size_t class_def_index = 0;
-           class_def_index < dex_file->NumClassDefs();
-           class_def_index++) {
-        const DexFile::ClassDef& class_def = dex_file->GetClassDef(class_def_index);
+      uint32_t class_def_index = 0u;
+      for (ClassAccessor accessor : dex_file->GetClasses()) {
         const OatFile::OatClass oat_class = oat_dex_file->GetOatClass(class_def_index);
-        const uint8_t* class_data = dex_file->GetClassData(class_def);
-        if (class_data != nullptr) {
-          ClassDataItemIterator it(*dex_file, class_data);
-          it.SkipAllFields();
-          uint32_t class_method_index = 0;
-          while (it.HasNextMethod()) {
-            AddOffsets(oat_class.GetOatMethod(class_method_index++));
-            it.Next();
-          }
+        for (uint32_t class_method_index = 0;
+            class_method_index < accessor.NumMethods();
+            ++class_method_index) {
+          AddOffsets(oat_class.GetOatMethod(class_method_index));
         }
+        ++class_def_index;
       }
     }
 
@@ -1711,7 +1700,7 @@ class OatDumper {
           // Stack maps
           stats_.AddBits(
               Stats::kByteKindStackMapNativePc,
-              stack_maps.NumColumnBits(StackMap::kNativePcOffset) * num_stack_maps);
+              stack_maps.NumColumnBits(StackMap::kPackedNativePc) * num_stack_maps);
           stats_.AddBits(
               Stats::kByteKindStackMapDexPc,
               stack_maps.NumColumnBits(StackMap::kDexPc) * num_stack_maps);
@@ -1731,7 +1720,7 @@ class OatDumper {
           // Stack masks
           stats_.AddBits(
               Stats::kByteKindCodeInfoStackMasks,
-              code_info.stack_masks_.size_in_bits());
+              code_info.stack_masks_.DataBitSize());
 
           // Register masks
           stats_.AddBits(
@@ -3265,7 +3254,7 @@ class IMTDumper {
       PrepareClass(runtime, klass, prepared);
     }
 
-    mirror::Class* object_class = mirror::Class::GetJavaLangClass()->GetSuperClass();
+    ObjPtr<mirror::Class> object_class = GetClassRoot<mirror::Object>();
     DCHECK(object_class->IsObjectClass());
 
     bool result = klass->GetImt(pointer_size) == object_class->GetImt(pointer_size);
@@ -3299,8 +3288,8 @@ class IMTDumper {
                                        Handle<mirror::ClassLoader> h_loader,
                                        const std::string& class_name,
                                        const PointerSize pointer_size,
-                                       mirror::Class** klass_out,
-                                       std::unordered_set<std::string>* prepared)
+                                       /*out*/ ObjPtr<mirror::Class>* klass_out,
+                                       /*inout*/ std::unordered_set<std::string>* prepared)
       REQUIRES_SHARED(Locks::mutator_lock_) {
     if (class_name.empty()) {
       return nullptr;
@@ -3313,7 +3302,8 @@ class IMTDumper {
       descriptor = DotToDescriptor(class_name.c_str());
     }
 
-    mirror::Class* klass = runtime->GetClassLinker()->FindClass(self, descriptor.c_str(), h_loader);
+    ObjPtr<mirror::Class> klass =
+        runtime->GetClassLinker()->FindClass(self, descriptor.c_str(), h_loader);
 
     if (klass == nullptr) {
       self->ClearException();
@@ -3333,7 +3323,7 @@ class IMTDumper {
   static ImTable* PrepareAndGetImTable(Runtime* runtime,
                                        Handle<mirror::Class> h_klass,
                                        const PointerSize pointer_size,
-                                       std::unordered_set<std::string>* prepared)
+                                       /*inout*/ std::unordered_set<std::string>* prepared)
       REQUIRES_SHARED(Locks::mutator_lock_) {
     PrepareClass(runtime, h_klass, prepared);
     return h_klass->GetImt(pointer_size);
@@ -3345,7 +3335,7 @@ class IMTDumper {
                               std::unordered_set<std::string>* prepared)
       REQUIRES_SHARED(Locks::mutator_lock_) {
     const PointerSize pointer_size = runtime->GetClassLinker()->GetImagePointerSize();
-    mirror::Class* klass;
+    ObjPtr<mirror::Class> klass;
     ImTable* imt = PrepareAndGetImTable(runtime,
                                         Thread::Current(),
                                         h_loader,
@@ -3401,10 +3391,10 @@ class IMTDumper {
                                const std::string& class_name,
                                const std::string& method,
                                Handle<mirror::ClassLoader> h_loader,
-                               std::unordered_set<std::string>* prepared)
+                               /*inout*/ std::unordered_set<std::string>* prepared)
       REQUIRES_SHARED(Locks::mutator_lock_) {
     const PointerSize pointer_size = runtime->GetClassLinker()->GetImagePointerSize();
-    mirror::Class* klass;
+    ObjPtr<mirror::Class> klass;
     ImTable* imt = PrepareAndGetImTable(runtime,
                                         Thread::Current(),
                                         h_loader,
@@ -3507,7 +3497,7 @@ class IMTDumper {
   // and note in the given set that the work was done.
   static void PrepareClass(Runtime* runtime,
                            Handle<mirror::Class> h_klass,
-                           std::unordered_set<std::string>* done)
+                           /*inout*/ std::unordered_set<std::string>* done)
       REQUIRES_SHARED(Locks::mutator_lock_) {
     if (!h_klass->ShouldHaveImt()) {
       return;

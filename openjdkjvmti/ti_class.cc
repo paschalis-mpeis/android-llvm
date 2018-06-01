@@ -71,9 +71,11 @@
 #include "scoped_thread_state_change-inl.h"
 #include "thread-current-inl.h"
 #include "thread_list.h"
+#include "ti_class_definition.h"
 #include "ti_class_loader-inl.h"
 #include "ti_phase.h"
 #include "ti_redefine.h"
+#include "transform.h"
 #include "well_known_classes.h"
 
 namespace openjdkjvmti {
@@ -713,7 +715,7 @@ jvmtiError ClassUtil::GetClassSignature(jvmtiEnv* env,
     if (!klass->IsProxyClass() && klass->GetDexCache() != nullptr) {
       art::StackHandleScope<1> hs(soa.Self());
       art::Handle<art::mirror::Class> h_klass = hs.NewHandle(klass);
-      art::mirror::ObjectArray<art::mirror::String>* str_array =
+      art::ObjPtr<art::mirror::ObjectArray<art::mirror::String>> str_array =
           art::annotations::GetSignatureAnnotationForClass(h_klass);
       if (str_array != nullptr) {
         std::ostringstream oss;

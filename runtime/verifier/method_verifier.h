@@ -96,7 +96,7 @@ class MethodVerifier {
  public:
   // Verify a class. Returns "kNoFailure" on success.
   static FailureKind VerifyClass(Thread* self,
-                                 mirror::Class* klass,
+                                 ObjPtr<mirror::Class> klass,
                                  CompilerCallbacks* callbacks,
                                  bool allow_soft_failures,
                                  HardFailLogMode log_level,
@@ -274,23 +274,6 @@ class MethodVerifier {
     // Merge src into this. Uses the most severe failure kind, and the union of types.
     void Merge(const FailureData& src);
   };
-
-  // Verify all direct or virtual methods of a class. The method assumes that the iterator is
-  // positioned correctly, and the iterator will be updated.
-  template <bool kDirect>
-  static FailureData VerifyMethods(Thread* self,
-                                   ClassLinker* linker,
-                                   const DexFile* dex_file,
-                                   const DexFile::ClassDef& class_def,
-                                   ClassDataItemIterator* it,
-                                   Handle<mirror::DexCache> dex_cache,
-                                   Handle<mirror::ClassLoader> class_loader,
-                                   CompilerCallbacks* callbacks,
-                                   bool allow_soft_failures,
-                                   HardFailLogMode log_level,
-                                   bool need_precise_constants,
-                                   std::string* error_string)
-      REQUIRES_SHARED(Locks::mutator_lock_);
 
   /*
    * Perform verification on a single method.
@@ -691,7 +674,7 @@ class MethodVerifier {
   // non-precise reference will be returned.
   // Note: we reuse NO_CLASS as this will throw an exception at runtime, when the failing class is
   //       actually touched.
-  const RegType& FromClass(const char* descriptor, mirror::Class* klass, bool precise)
+  const RegType& FromClass(const char* descriptor, ObjPtr<mirror::Class> klass, bool precise)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   ALWAYS_INLINE bool FailOrAbort(bool condition, const char* error_msg, uint32_t work_insn_idx);

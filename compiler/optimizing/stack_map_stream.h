@@ -68,11 +68,8 @@ class StackMapStream : public ValueObject {
         location_catalog_entries_indices_(allocator->Adapter(kArenaAllocStackMapStream)),
         dex_register_locations_(allocator->Adapter(kArenaAllocStackMapStream)),
         inline_infos_(allocator->Adapter(kArenaAllocStackMapStream)),
-        stack_masks_(allocator->Adapter(kArenaAllocStackMapStream)),
-        register_masks_(allocator->Adapter(kArenaAllocStackMapStream)),
         method_indices_(allocator->Adapter(kArenaAllocStackMapStream)),
         dex_register_entries_(allocator->Adapter(kArenaAllocStackMapStream)),
-        stack_mask_max_(-1),
         out_(allocator->Adapter(kArenaAllocStackMapStream)),
         dex_map_hash_to_stack_map_indices_(std::less<uint32_t>(),
                                            allocator->Adapter(kArenaAllocStackMapStream)),
@@ -106,7 +103,7 @@ class StackMapStream : public ValueObject {
   // See runtime/stack_map.h to know what these fields contain.
   struct StackMapEntry {
     uint32_t dex_pc;
-    CodeOffset native_pc_code_offset;
+    uint32_t packed_native_pc;
     uint32_t register_mask;
     BitVector* sp_mask;
     uint32_t inlining_depth;
@@ -151,14 +148,8 @@ class StackMapStream : public ValueObject {
     return stack_maps_.size();
   }
 
-  const StackMapEntry& GetStackMap(size_t i) const {
-    return stack_maps_[i];
-  }
-
-  void SetStackMapNativePcOffset(size_t i, uint32_t native_pc_offset) {
-    stack_maps_[i].native_pc_code_offset =
-        CodeOffset::FromOffset(native_pc_offset, instruction_set_);
-  }
+  uint32_t GetStackMapNativePcOffset(size_t i);
+  void SetStackMapNativePcOffset(size_t i, uint32_t native_pc_offset);
 
   // Prepares the stream to fill in a memory region. Must be called before FillIn.
   // Returns the size (in bytes) needed to store this stream.
@@ -170,12 +161,6 @@ class StackMapStream : public ValueObject {
 
  private:
   size_t ComputeDexRegisterLocationCatalogSize() const;
-
-  // Returns the number of unique stack masks.
-  size_t PrepareStackMasks(size_t entry_size_in_bits);
-
-  // Returns the number of unique register masks.
-  size_t PrepareRegisterMasks();
 
   // Prepare and deduplicate method indices.
   void PrepareMethodIndices();
@@ -193,8 +178,7 @@ class StackMapStream : public ValueObject {
                             const BitVector& live_dex_registers_mask,
                             uint32_t start_index_in_dex_register_locations) const;
 
-  void CheckDexRegisterMap(const CodeInfo& code_info,
-                           const DexRegisterMap& dex_register_map,
+  void CheckDexRegisterMap(const DexRegisterMap& dex_register_map,
                            size_t num_dex_registers,
                            BitVector* live_dex_registers_mask,
                            size_t dex_register_locations_index) const;
@@ -217,11 +201,8 @@ class StackMapStream : public ValueObject {
   // A set of concatenated maps of Dex register locations indices to `location_catalog_entries_`.
   ScopedArenaVector<size_t> dex_register_locations_;
   ScopedArenaVector<InlineInfoEntry> inline_infos_;
-  ScopedArenaVector<uint8_t> stack_masks_;
-  ScopedArenaVector<uint32_t> register_masks_;
   ScopedArenaVector<uint32_t> method_indices_;
   ScopedArenaVector<DexRegisterMapEntry> dex_register_entries_;
-  int stack_mask_max_;
 
   ScopedArenaVector<uint8_t> out_;
 

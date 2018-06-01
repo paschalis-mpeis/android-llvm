@@ -124,36 +124,42 @@ inline const ImpreciseConstType& RegTypeCache::PosShortConstant() {
 }
 
 inline const PreciseReferenceType& RegTypeCache::JavaLangClass() {
-  const RegType* result = &FromClass("Ljava/lang/Class;", mirror::Class::GetJavaLangClass(), true);
+  const RegType* result = &FromClass("Ljava/lang/Class;",
+                                     GetClassRoot<mirror::Class>(),
+                                     /* precise */ true);
   DCHECK(result->IsPreciseReference());
   return *down_cast<const PreciseReferenceType*>(result);
 }
 
 inline const PreciseReferenceType& RegTypeCache::JavaLangString() {
   // String is final and therefore always precise.
-  const RegType* result = &FromClass("Ljava/lang/String;", mirror::String::GetJavaLangString(),
-                                     true);
+  const RegType* result = &FromClass("Ljava/lang/String;",
+                                     GetClassRoot<mirror::String>(),
+                                     /* precise */ true);
   DCHECK(result->IsPreciseReference());
   return *down_cast<const PreciseReferenceType*>(result);
 }
 
 inline const PreciseReferenceType& RegTypeCache::JavaLangInvokeMethodHandle() {
   const RegType* result = &FromClass("Ljava/lang/invoke/MethodHandle;",
-                                     GetClassRoot<mirror::MethodHandle>().Ptr(), true);
+                                     GetClassRoot<mirror::MethodHandle>(),
+                                     /* precise */ true);
   DCHECK(result->IsPreciseReference());
   return *down_cast<const PreciseReferenceType*>(result);
 }
 
 inline const PreciseReferenceType& RegTypeCache::JavaLangInvokeMethodType() {
   const RegType* result = &FromClass("Ljava/lang/invoke/MethodType;",
-                                     GetClassRoot<mirror::MethodType>().Ptr(), true);
+                                     GetClassRoot<mirror::MethodType>(),
+                                     /* precise */ true);
   DCHECK(result->IsPreciseReference());
   return *down_cast<const PreciseReferenceType*>(result);
 }
 
 inline const RegType&  RegTypeCache::JavaLangThrowable(bool precise) {
   const RegType* result = &FromClass("Ljava/lang/Throwable;",
-                                     mirror::Throwable::GetJavaLangThrowable(), precise);
+                                     GetClassRoot<mirror::Throwable>(),
+                                     precise);
   if (precise) {
     DCHECK(result->IsPreciseReference());
     return *down_cast<const PreciseReferenceType*>(result);
@@ -164,8 +170,7 @@ inline const RegType&  RegTypeCache::JavaLangThrowable(bool precise) {
 }
 
 inline const RegType& RegTypeCache::JavaLangObject(bool precise) {
-  const RegType* result = &FromClass("Ljava/lang/Object;",
-                                     mirror::Class::GetJavaLangClass()->GetSuperClass(), precise);
+  const RegType* result = &FromClass("Ljava/lang/Object;", GetClassRoot<mirror::Object>(), precise);
   if (precise) {
     DCHECK(result->IsPreciseReference());
     return *down_cast<const PreciseReferenceType*>(result);
@@ -180,7 +185,7 @@ inline RegTypeType& RegTypeCache::AddEntry(RegTypeType* new_entry) {
   DCHECK(new_entry != nullptr);
   entries_.push_back(new_entry);
   if (new_entry->HasClass()) {
-    mirror::Class* klass = new_entry->GetClass();
+    ObjPtr<mirror::Class> klass = new_entry->GetClass();
     DCHECK(!klass->IsPrimitive());
     klass_entries_.push_back(std::make_pair(GcRoot<mirror::Class>(klass), new_entry));
   }

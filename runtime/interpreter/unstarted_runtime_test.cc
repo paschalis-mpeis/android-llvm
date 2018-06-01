@@ -196,7 +196,7 @@ class UnstartedRuntimeTest : public CommonRuntimeTest {
   // Prepare for aborts. Aborts assume that the exception class is already resolved, as the
   // loading code doesn't work under transactions.
   void PrepareForAborts() REQUIRES_SHARED(Locks::mutator_lock_) {
-    mirror::Object* result = Runtime::Current()->GetClassLinker()->FindClass(
+    ObjPtr<mirror::Object> result = Runtime::Current()->GetClassLinker()->FindClass(
         Thread::Current(),
         Transaction::kAbortExceptionSignature,
         ScopedNullHandle<mirror::ClassLoader>());
@@ -388,7 +388,7 @@ TEST_F(UnstartedRuntimeTest, StringCharAt) {
 TEST_F(UnstartedRuntimeTest, StringInit) {
   Thread* self = Thread::Current();
   ScopedObjectAccess soa(self);
-  ObjPtr<mirror::Class> klass = mirror::String::GetJavaLangString();
+  ObjPtr<mirror::Class> klass = GetClassRoot<mirror::String>();
   ArtMethod* method =
       klass->FindConstructor("(Ljava/lang/String;)V",
                              Runtime::Current()->GetClassLinker()->GetImagePointerSize());
@@ -537,7 +537,7 @@ TEST_F(UnstartedRuntimeTest, SystemArrayCopyObjectArrayTest) {
                  tmp,
                  false,
                  object_class.Get(),
-                 mirror::String::GetJavaLangString(),
+                 GetClassRoot<mirror::String>(),
                  hs_src,
                  1,
                  hs_dst,
@@ -551,7 +551,7 @@ TEST_F(UnstartedRuntimeTest, SystemArrayCopyObjectArrayTest) {
   {
     StackHandleScope<3> hs_src(self);
     hs_src.NewHandle(mirror::String::AllocFromModifiedUtf8(self, "1"));
-    hs_src.NewHandle(mirror::String::GetJavaLangString());
+    hs_src.NewHandle(GetClassRoot<mirror::String>());
     hs_src.NewHandle(mirror::String::AllocFromModifiedUtf8(self, "3"));
 
     StackHandleScope<3> hs_dst(self);
@@ -568,7 +568,7 @@ TEST_F(UnstartedRuntimeTest, SystemArrayCopyObjectArrayTest) {
                  tmp,
                  true,
                  object_class.Get(),
-                 mirror::String::GetJavaLangString(),
+                 GetClassRoot<mirror::String>(),
                  hs_src,
                  0,
                  hs_dst,
@@ -1348,7 +1348,7 @@ TEST_F(UnstartedRuntimeTest, ConstructorNewInstance0) {
   ClassLinker* class_linker = Runtime::Current()->GetClassLinker();
 
   // Get Throwable.
-  Handle<mirror::Class> throw_class = hs.NewHandle(mirror::Throwable::GetJavaLangThrowable());
+  Handle<mirror::Class> throw_class = hs.NewHandle(GetClassRoot<mirror::Throwable>());
   ASSERT_TRUE(class_linker->EnsureInitialized(self, throw_class, true, true));
 
   // Get an input object.
@@ -1387,8 +1387,8 @@ TEST_F(UnstartedRuntimeTest, ConstructorNewInstance0) {
 
   // Should be a new object.
   ASSERT_NE(result.GetL(), input.Get());
-  // Should be a String.
-  ASSERT_EQ(mirror::Throwable::GetJavaLangThrowable(), result.GetL()->GetClass());
+  // Should be of type Throwable.
+  ASSERT_OBJ_PTR_EQ(GetClassRoot<mirror::Throwable>(), result.GetL()->GetClass());
   // Should have the right string.
   ObjPtr<mirror::String> result_msg =
       reinterpret_cast<mirror::Throwable*>(result.GetL())->GetDetailMessage();
