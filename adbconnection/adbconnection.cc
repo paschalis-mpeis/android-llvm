@@ -489,7 +489,7 @@ bool AdbConnectionState::SetupAdbConnection() {
   int        sleep_ms     = 500;
   const int  sleep_max_ms = 2*1000;
 
-  android::base::unique_fd sock(socket(AF_UNIX, SOCK_SEQPACKET, 0));
+  android::base::unique_fd sock(socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0));
   if (sock < 0) {
     PLOG(ERROR) << "Could not create ADB control socket";
     return false;
@@ -872,7 +872,7 @@ std::string AdbConnectionState::MakeAgentArg() {
       (ContainsArgument(opts, "server=y") ? "" : "server=y,") +
       // See the comment above for why we need to be suspend=n. Since the agent defaults to
       // suspend=y we will add it if it wasn't already present.
-      (ContainsArgument(opts, "suspend=n") ? "" : "suspend=n") +
+      (ContainsArgument(opts, "suspend=n") ? "" : "suspend=n,") +
       "transport=dt_fd_forward,address=" + std::to_string(remote_agent_control_sock_);
 }
 

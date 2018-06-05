@@ -464,8 +464,7 @@ static jlong Field_getArtField(JNIEnv* env, jobject javaField) {
 static jstring Field_getNameInternal(JNIEnv* env, jobject javaField) {
   ScopedFastNativeObjectAccess soa(env);
   ArtField* field = soa.Decode<mirror::Field>(javaField)->GetArtField();
-  return soa.AddLocalReference<jstring>(
-      field->GetStringName(soa.Self(), true /* resolve */));
+  return soa.AddLocalReference<jstring>(field->ResolveNameString());
 }
 
 static jobjectArray Field_getDeclaredAnnotations(JNIEnv* env, jobject javaField) {
@@ -476,7 +475,7 @@ static jobjectArray Field_getDeclaredAnnotations(JNIEnv* env, jobject javaField)
     ObjPtr<mirror::Class> annotation_array_class =
         soa.Decode<mirror::Class>(WellKnownClasses::java_lang_annotation_Annotation__array);
     ObjPtr<mirror::ObjectArray<mirror::Object>> empty_array =
-        mirror::ObjectArray<mirror::Object>::Alloc(soa.Self(), annotation_array_class.Ptr(), 0);
+        mirror::ObjectArray<mirror::Object>::Alloc(soa.Self(), annotation_array_class, 0);
     return soa.AddLocalReference<jobjectArray>(empty_array);
   }
   return soa.AddLocalReference<jobjectArray>(annotations::GetAnnotationsForField(field));

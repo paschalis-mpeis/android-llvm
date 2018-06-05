@@ -298,8 +298,8 @@ void VdexFile::UnquickenDexFile(const DexFile& target_dex_file,
               quicken_data,
               decompile_return_instruction);
         }
-        method.UnHideAccessFlags();
       }
+      method.UnHideAccessFlags();
     }
     for (const ClassAccessor::Field& field : class_accessor.GetFields()) {
       field.UnHideAccessFlags();

@@ -164,7 +164,7 @@ class ClassLinker {
   }
 
   // Finds the array class given for the element class.
-  ObjPtr<mirror::Class> FindArrayClass(Thread* self, ObjPtr<mirror::Class>* element_class)
+  ObjPtr<mirror::Class> FindArrayClass(Thread* self, ObjPtr<mirror::Class> element_class)
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!Locks::dex_lock_);
 
@@ -202,6 +202,16 @@ class ClassLinker {
 
   size_t NumLoadedClasses()
       REQUIRES(!Locks::classlinker_classes_lock_)
+      REQUIRES_SHARED(Locks::mutator_lock_);
+
+  // Resolve a String with the given index from the DexFile associated with the given `referrer`,
+  // storing the result in the DexCache. The `referrer` is used to identify the target DexCache
+  // to use for resolution.
+  ObjPtr<mirror::String> ResolveString(dex::StringIndex string_idx,
+                                       ArtField* referrer)
+      REQUIRES_SHARED(Locks::mutator_lock_);
+  ObjPtr<mirror::String> ResolveString(dex::StringIndex string_idx,
+                                       ArtMethod* referrer)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   // Resolve a String with the given index from the DexFile associated with the given DexCache,
@@ -452,7 +462,7 @@ class ClassLinker {
                                                       LinearAlloc* allocator,
                                                       size_t length);
 
-  mirror::PointerArray* AllocPointerArray(Thread* self, size_t length)
+  ObjPtr<mirror::PointerArray> AllocPointerArray(Thread* self, size_t length)
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!Roles::uninterruptible_);
 
@@ -460,8 +470,8 @@ class ClassLinker {
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!Roles::uninterruptible_);
 
-  mirror::ObjectArray<mirror::StackTraceElement>* AllocStackTraceElementArray(Thread* self,
-                                                                              size_t length)
+  ObjPtr<mirror::ObjectArray<mirror::StackTraceElement>> AllocStackTraceElementArray(Thread* self,
+                                                                                     size_t length)
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!Roles::uninterruptible_);
 
@@ -544,8 +554,9 @@ class ClassLinker {
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   template <ReadBarrierOption kReadBarrierOption = kWithReadBarrier>
-  mirror::ObjectArray<mirror::Class>* GetClassRoots() REQUIRES_SHARED(Locks::mutator_lock_) {
-    mirror::ObjectArray<mirror::Class>* class_roots = class_roots_.Read<kReadBarrierOption>();
+  ObjPtr<mirror::ObjectArray<mirror::Class>> GetClassRoots() REQUIRES_SHARED(Locks::mutator_lock_) {
+    ObjPtr<mirror::ObjectArray<mirror::Class>> class_roots =
+        class_roots_.Read<kReadBarrierOption>();
     DCHECK(class_roots != nullptr);
     return class_roots;
   }
@@ -778,16 +789,16 @@ class ClassLinker {
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!Roles::uninterruptible_);
 
-  mirror::DexCache* AllocDexCache(ObjPtr<mirror::String>* out_location,
-                                  Thread* self,
-                                  const DexFile& dex_file)
+  ObjPtr<mirror::DexCache> AllocDexCache(/*out*/ ObjPtr<mirror::String>* out_location,
+                                         Thread* self,
+                                         const DexFile& dex_file)
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!Roles::uninterruptible_);
 
   // Used for tests and AppendToBootClassPath.
-  mirror::DexCache* AllocAndInitializeDexCache(Thread* self,
-                                               const DexFile& dex_file,
-                                               LinearAlloc* linear_alloc)
+  ObjPtr<mirror::DexCache> AllocAndInitializeDexCache(Thread* self,
+                                                      const DexFile& dex_file,
+                                                      LinearAlloc* linear_alloc)
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!Locks::dex_lock_)
       REQUIRES(!Roles::uninterruptible_);
@@ -847,7 +858,7 @@ class ClassLinker {
                                      const char* descriptor,
                                      size_t hash,
                                      Handle<mirror::ClassLoader> class_loader,
-                                     ObjPtr<mirror::Class>* result)
+                                     /*out*/ ObjPtr<mirror::Class>* result)
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!Locks::dex_lock_);
 
@@ -879,6 +890,19 @@ class ClassLinker {
   ObjPtr<mirror::Class> DoLookupResolvedType(dex::TypeIndex type_idx,
                                              ObjPtr<mirror::DexCache> dex_cache,
                                              ObjPtr<mirror::ClassLoader> class_loader)
+      REQUIRES_SHARED(Locks::mutator_lock_);
+
+  // Implementation of ResolveString() called when the string was not found in the dex cache.
+  ObjPtr<mirror::String> DoResolveString(dex::StringIndex string_idx,
+                                         ObjPtr<mirror::DexCache> dex_cache)
+      REQUIRES_SHARED(Locks::mutator_lock_);
+  ObjPtr<mirror::String> DoResolveString(dex::StringIndex string_idx,
+                                         Handle<mirror::DexCache> dex_cache)
+      REQUIRES_SHARED(Locks::mutator_lock_);
+
+  // Implementation of LookupString() called when the string was not found in the dex cache.
+  ObjPtr<mirror::String> DoLookupString(dex::StringIndex string_idx,
+                                        ObjPtr<mirror::DexCache> dex_cache)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   // Implementation of ResolveType() called when the type was not found in the dex cache.

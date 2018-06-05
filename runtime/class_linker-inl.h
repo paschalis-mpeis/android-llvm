@@ -35,20 +35,19 @@
 namespace art {
 
 inline ObjPtr<mirror::Class> ClassLinker::FindArrayClass(Thread* self,
-                                                         ObjPtr<mirror::Class>* element_class) {
+                                                         ObjPtr<mirror::Class> element_class) {
   for (size_t i = 0; i < kFindArrayCacheSize; ++i) {
     // Read the cached array class once to avoid races with other threads setting it.
     ObjPtr<mirror::Class> array_class = find_array_class_cache_[i].Read();
-    if (array_class != nullptr && array_class->GetComponentType() == *element_class) {
-      return array_class.Ptr();
+    if (array_class != nullptr && array_class->GetComponentType() == element_class) {
+      return array_class;
     }
   }
   std::string descriptor = "[";
   std::string temp;
-  descriptor += (*element_class)->GetDescriptor(&temp);
-  StackHandleScope<2> hs(Thread::Current());
-  Handle<mirror::ClassLoader> class_loader(hs.NewHandle((*element_class)->GetClassLoader()));
-  HandleWrapperObjPtr<mirror::Class> h_element_class(hs.NewHandleWrapper(element_class));
+  descriptor += element_class->GetDescriptor(&temp);
+  StackHandleScope<1> hs(Thread::Current());
+  Handle<mirror::ClassLoader> class_loader(hs.NewHandle(element_class->GetClassLoader()));
   ObjPtr<mirror::Class> array_class = FindClass(self, descriptor.c_str(), class_loader);
   if (array_class != nullptr) {
     // Benign races in storing array class and incrementing index.
@@ -59,7 +58,55 @@ inline ObjPtr<mirror::Class> ClassLinker::FindArrayClass(Thread* self,
     // We should have a NoClassDefFoundError.
     self->AssertPendingException();
   }
-  return array_class.Ptr();
+  return array_class;
+}
+
+inline ObjPtr<mirror::String> ClassLinker::ResolveString(dex::StringIndex string_idx,
+                                                         ArtField* referrer) {
+  Thread::PoisonObjectPointersIfDebug();
+  DCHECK(!Thread::Current()->IsExceptionPending());
+  // We do not need the read barrier for getting the DexCache for the initial resolved type
+  // lookup as both from-space and to-space copies point to the same native resolved types array.
+  ObjPtr<mirror::String> resolved =
+      referrer->GetDexCache<kWithoutReadBarrier>()->GetResolvedString(string_idx);
+  if (resolved == nullptr) {
+    resolved = DoResolveString(string_idx, referrer->GetDexCache());
+  }
+  return resolved;
+}
+
+inline ObjPtr<mirror::String> ClassLinker::ResolveString(dex::StringIndex string_idx,
+                                                         ArtMethod* referrer) {
+  Thread::PoisonObjectPointersIfDebug();
+  DCHECK(!Thread::Current()->IsExceptionPending());
+  // We do not need the read barrier for getting the DexCache for the initial resolved type
+  // lookup as both from-space and to-space copies point to the same native resolved types array.
+  ObjPtr<mirror::String> resolved =
+      referrer->GetDexCache<kWithoutReadBarrier>()->GetResolvedString(string_idx);
+  if (resolved == nullptr) {
+    resolved = DoResolveString(string_idx, referrer->GetDexCache());
+  }
+  return resolved;
+}
+
+inline ObjPtr<mirror::String> ClassLinker::ResolveString(dex::StringIndex string_idx,
+                                                         Handle<mirror::DexCache> dex_cache) {
+  Thread::PoisonObjectPointersIfDebug();
+  DCHECK(!Thread::Current()->IsExceptionPending());
+  ObjPtr<mirror::String> resolved = dex_cache->GetResolvedString(string_idx);
+  if (resolved == nullptr) {
+    resolved = DoResolveString(string_idx, dex_cache);
+  }
+  return resolved;
+}
+
+inline ObjPtr<mirror::String> ClassLinker::LookupString(dex::StringIndex string_idx,
+                                                        ObjPtr<mirror::DexCache> dex_cache) {
+  ObjPtr<mirror::String> resolved = dex_cache->GetResolvedString(string_idx);
+  if (resolved == nullptr) {
+    resolved = DoLookupString(string_idx, dex_cache);
+  }
+  return resolved;
 }
 
 inline ObjPtr<mirror::Class> ClassLinker::ResolveType(dex::TypeIndex type_idx,
