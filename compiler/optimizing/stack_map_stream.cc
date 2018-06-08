@@ -46,6 +46,13 @@ void StackMapStream::BeginStackMapEntry(uint32_t dex_pc,
                                         uint8_t inlining_depth) {
   DCHECK(!in_stack_map_) << "Mismatched Begin/End calls";
   in_stack_map_ = true;
+  // num_dex_registers_ is the constant per-method number of registers.
+  // However we initially don't know what the value is, so lazily initialize it.
+  if (num_dex_registers_ == 0) {
+    num_dex_registers_ = num_dex_registers;
+  } else if (num_dex_registers > 0) {
+    DCHECK_EQ(num_dex_registers_, num_dex_registers) << "Inconsistent register count";
+  }
 
   current_stack_map_ = StackMapEntry {
     .packed_native_pc = StackMap::PackNativePc(native_pc_offset, instruction_set_),
@@ -65,7 +72,7 @@ void StackMapStream::BeginStackMapEntry(uint32_t dex_pc,
   // and it might modify the data before that. Therefore, just store the pointer.
   // See ClearSpillSlotsFromLoopPhisInStackMap in code_generator.h.
   lazy_stack_masks_.push_back(stack_mask);
-  current_inline_infos_ = 0;
+  current_inline_infos_.clear();
   current_dex_registers_.clear();
   expected_num_dex_registers_ = num_dex_registers;
 
@@ -84,10 +91,7 @@ void StackMapStream::BeginStackMapEntry(uint32_t dex_pc,
         CHECK_EQ(seen_stack_mask.LoadBit(b), stack_mask != nullptr && stack_mask->IsBitSet(b));
       }
       CHECK_EQ(stack_map.HasInlineInfo(), (inlining_depth != 0));
-      if (inlining_depth != 0) {
-        CHECK_EQ(code_info.GetInlineInfoOf(stack_map).GetDepth(), inlining_depth);
-      }
-      CHECK_EQ(stack_map.HasDexRegisterMap(), (num_dex_registers != 0));
+      CHECK_EQ(code_info.GetInlineDepthOf(stack_map), inlining_depth);
     });
   }
 }
@@ -97,21 +101,21 @@ void StackMapStream::EndStackMapEntry() {
   in_stack_map_ = false;
   DCHECK_EQ(expected_num_dex_registers_, current_dex_registers_.size());
 
-  // Mark the last inline info as last in the list for the stack map.
-  if (current_inline_infos_ > 0) {
-    inline_infos_[inline_infos_.size() - 1].is_last = InlineInfo::kLast;
+  // Generate index into the InlineInfo table.
+  if (!current_inline_infos_.empty()) {
+    current_inline_infos_.back().is_last = InlineInfo::kLast;
+    current_stack_map_.inline_info_index =
+        inline_infos_.Dedup(current_inline_infos_.data(), current_inline_infos_.size());
   }
+
+  // Generate delta-compressed dex register map.
+  CreateDexRegisterMap();
 
   stack_maps_.Add(current_stack_map_);
 }
 
 void StackMapStream::AddDexRegisterEntry(DexRegisterLocation::Kind kind, int32_t value) {
   current_dex_registers_.push_back(DexRegisterLocation(kind, value));
-
-  // We have collected all the dex registers for StackMap/InlineInfo - create the map.
-  if (current_dex_registers_.size() == expected_num_dex_registers_) {
-    CreateDexRegisterMap();
-  }
 }
 
 void StackMapStream::AddInvoke(InvokeType invoke_type, uint32_t dex_method_index) {
@@ -129,7 +133,7 @@ void StackMapStream::AddInvoke(InvokeType invoke_type, uint32_t dex_method_index
       CHECK_EQ(invoke_info.GetNativePcOffset(instruction_set_),
                StackMap::UnpackNativePc(packed_native_pc, instruction_set_));
       CHECK_EQ(invoke_info.GetInvokeType(), invoke_type);
-      CHECK_EQ(method_infos_[invoke_info.GetMethodIndexIdx()], dex_method_index);
+      CHECK_EQ(method_infos_[invoke_info.GetMethodInfoIndex()], dex_method_index);
     });
   }
 }
@@ -142,14 +146,15 @@ void StackMapStream::BeginInlineInfoEntry(ArtMethod* method,
   in_inline_info_ = true;
   DCHECK_EQ(expected_num_dex_registers_, current_dex_registers_.size());
 
+  expected_num_dex_registers_ += num_dex_registers;
+
   InlineInfoEntry entry = {
     .is_last = InlineInfo::kMore,
     .dex_pc = dex_pc,
     .method_info_index = kNoValue,
     .art_method_hi = kNoValue,
     .art_method_lo = kNoValue,
-    .dex_register_mask_index = kNoValue,
-    .dex_register_map_index = kNoValue,
+    .num_dex_registers = static_cast<uint32_t>(expected_num_dex_registers_),
   };
   if (EncodeArtMethodInInlineInfo(method)) {
     entry.art_method_hi = High32Bits(reinterpret_cast<uintptr_t>(method));
@@ -162,30 +167,23 @@ void StackMapStream::BeginInlineInfoEntry(ArtMethod* method,
     uint32_t dex_method_index = method->GetDexMethodIndexUnchecked();
     entry.method_info_index = method_infos_.Dedup(&dex_method_index);
   }
-  if (current_inline_infos_++ == 0) {
-    current_stack_map_.inline_info_index = inline_infos_.size();
-  }
-  inline_infos_.Add(entry);
-
-  current_dex_registers_.clear();
-  expected_num_dex_registers_ = num_dex_registers;
+  current_inline_infos_.push_back(entry);
 
   if (kVerifyStackMaps) {
     size_t stack_map_index = stack_maps_.size();
-    size_t depth = current_inline_infos_ - 1;
+    size_t depth = current_inline_infos_.size() - 1;
     dchecks_.emplace_back([=](const CodeInfo& code_info) {
       StackMap stack_map = code_info.GetStackMapAt(stack_map_index);
-      InlineInfo inline_info = code_info.GetInlineInfoOf(stack_map);
-      CHECK_EQ(inline_info.GetDexPcAtDepth(depth), dex_pc);
+      InlineInfo inline_info = code_info.GetInlineInfoAtDepth(stack_map, depth);
+      CHECK_EQ(inline_info.GetDexPc(), dex_pc);
       bool encode_art_method = EncodeArtMethodInInlineInfo(method);
-      CHECK_EQ(inline_info.EncodesArtMethodAtDepth(depth), encode_art_method);
+      CHECK_EQ(inline_info.EncodesArtMethod(), encode_art_method);
       if (encode_art_method) {
-        CHECK_EQ(inline_info.GetArtMethodAtDepth(depth), method);
+        CHECK_EQ(inline_info.GetArtMethod(), method);
       } else {
-        CHECK_EQ(method_infos_[inline_info.GetMethodIndexIdxAtDepth(depth)],
+        CHECK_EQ(method_infos_[inline_info.GetMethodInfoIndex()],
                  method->GetDexMethodIndexUnchecked());
       }
-      CHECK_EQ(inline_info.HasDexRegisterMapAtDepth(depth), (num_dex_registers != 0));
     });
   }
 }
@@ -196,58 +194,68 @@ void StackMapStream::EndInlineInfoEntry() {
   DCHECK_EQ(expected_num_dex_registers_, current_dex_registers_.size());
 }
 
-// Create dex register map (bitmap + indices + catalogue entries)
-// based on the currently accumulated list of DexRegisterLocations.
+// Create delta-compressed dex register map based on the current list of DexRegisterLocations.
+// All dex registers for a stack map are concatenated - inlined registers are just appended.
 void StackMapStream::CreateDexRegisterMap() {
-  // Create mask and map based on current registers.
+  // These are fields rather than local variables so that we can reuse the reserved memory.
   temp_dex_register_mask_.ClearAllBits();
   temp_dex_register_map_.clear();
+
+  // Ensure that the arrays that hold previous state are big enough to be safely indexed below.
+  if (previous_dex_registers_.size() < current_dex_registers_.size()) {
+    previous_dex_registers_.resize(current_dex_registers_.size(), DexRegisterLocation::None());
+    dex_register_timestamp_.resize(current_dex_registers_.size(), 0u);
+  }
+
+  // Set bit in the mask for each register that has been changed since the previous stack map.
+  // Modified registers are stored in the catalogue and the catalogue index added to the list.
   for (size_t i = 0; i < current_dex_registers_.size(); i++) {
     DexRegisterLocation reg = current_dex_registers_[i];
-    if (reg.IsLive()) {
-      DexRegisterEntry entry = DexRegisterEntry {
+    // Distance is difference between this index and the index of last modification.
+    uint32_t distance = stack_maps_.size() - dex_register_timestamp_[i];
+    if (previous_dex_registers_[i] != reg || distance > kMaxDexRegisterMapSearchDistance) {
+      DexRegisterEntry entry = DexRegisterEntry{
         .kind = static_cast<uint32_t>(reg.GetKind()),
         .packed_value = DexRegisterInfo::PackValue(reg.GetKind(), reg.GetValue()),
       };
+      uint32_t index = reg.IsLive() ? dex_register_catalog_.Dedup(&entry) : kNoValue;
       temp_dex_register_mask_.SetBit(i);
-      temp_dex_register_map_.push_back(dex_register_catalog_.Dedup(&entry));
+      temp_dex_register_map_.push_back(index);
+      previous_dex_registers_[i] = reg;
+      dex_register_timestamp_[i] = stack_maps_.size();
     }
   }
 
-  // Set the mask and map for the current StackMap/InlineInfo.
-  uint32_t mask_index = StackMap::kNoValue;  // Represents mask with all zero bits.
+  // Set the mask and map for the current StackMap (which includes inlined registers).
   if (temp_dex_register_mask_.GetNumberOfBits() != 0) {
-    mask_index = dex_register_masks_.Dedup(temp_dex_register_mask_.GetRawStorage(),
-                                           temp_dex_register_mask_.GetNumberOfBits());
+    current_stack_map_.dex_register_mask_index =
+        dex_register_masks_.Dedup(temp_dex_register_mask_.GetRawStorage(),
+                                  temp_dex_register_mask_.GetNumberOfBits());
   }
-  uint32_t map_index = dex_register_maps_.Dedup(temp_dex_register_map_.data(),
-                                                temp_dex_register_map_.size());
-  if (current_inline_infos_ > 0) {
-    inline_infos_[inline_infos_.size() - 1].dex_register_mask_index = mask_index;
-    inline_infos_[inline_infos_.size() - 1].dex_register_map_index = map_index;
-  } else {
-    current_stack_map_.dex_register_mask_index = mask_index;
-    current_stack_map_.dex_register_map_index = map_index;
+  if (!current_dex_registers_.empty()) {
+    current_stack_map_.dex_register_map_index =
+        dex_register_maps_.Dedup(temp_dex_register_map_.data(),
+                                 temp_dex_register_map_.size());
   }
 
   if (kVerifyStackMaps) {
     size_t stack_map_index = stack_maps_.size();
-    int32_t depth = current_inline_infos_ - 1;
+    uint32_t depth = current_inline_infos_.size();
     // We need to make copy of the current registers for later (when the check is run).
-    auto expected_dex_registers = std::make_shared<std::vector<DexRegisterLocation>>(
+    auto expected_dex_registers = std::make_shared<dchecked_vector<DexRegisterLocation>>(
         current_dex_registers_.begin(), current_dex_registers_.end());
     dchecks_.emplace_back([=](const CodeInfo& code_info) {
       StackMap stack_map = code_info.GetStackMapAt(stack_map_index);
-      size_t num_dex_registers = expected_dex_registers->size();
-      DexRegisterMap map = (depth == -1)
-        ? code_info.GetDexRegisterMapOf(stack_map, num_dex_registers)
-        : code_info.GetDexRegisterMapAtDepth(depth,
-                                             code_info.GetInlineInfoOf(stack_map),
-                                             num_dex_registers);
-      CHECK_EQ(map.size(), num_dex_registers);
-      for (size_t r = 0; r < num_dex_registers; r++) {
-        CHECK_EQ(expected_dex_registers->at(r), map.Get(r));
+      uint32_t expected_reg = 0;
+      for (DexRegisterLocation reg : code_info.GetDexRegisterMapOf(stack_map)) {
+        CHECK_EQ((*expected_dex_registers)[expected_reg++], reg);
       }
+      for (uint32_t d = 0; d < depth; d++) {
+        for (DexRegisterLocation reg : code_info.GetDexRegisterMapAtDepth(d, stack_map)) {
+          CHECK_EQ((*expected_dex_registers)[expected_reg++], reg);
+        }
+      }
+      CHECK_EQ(expected_reg, expected_dex_registers->size());
     });
   }
 }
@@ -295,6 +303,7 @@ size_t StackMapStream::PrepareForFillIn() {
   dex_register_masks_.Encode(&out_, &bit_offset);
   dex_register_maps_.Encode(&out_, &bit_offset);
   dex_register_catalog_.Encode(&out_, &bit_offset);
+  EncodeVarintBits(&out_, &bit_offset, num_dex_registers_);
 
   return UnsignedLeb128Size(out_.size()) +  out_.size();
 }

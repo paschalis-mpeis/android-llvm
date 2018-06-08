@@ -39,6 +39,12 @@ class VariableIndentationOutputStream;
 // (signed) values.
 static constexpr ssize_t kFrameSlotSize = 4;
 
+// The delta compression of dex register maps means we need to scan the stackmaps backwards.
+// We compress the data in such a way so that there is an upper bound on the search distance.
+// Max distance 0 means each stack map must be fully defined and no scanning back is allowed.
+// If this value is changed, the oat file version should be incremented (for DCHECK to pass).
+static constexpr size_t kMaxDexRegisterMapSearchDistance = 32;
+
 class ArtMethod;
 class CodeInfo;
 
@@ -49,18 +55,23 @@ std::ostream& operator<<(std::ostream& stream, const DexRegisterLocation& reg);
 // If the size is small enough, it keeps the data on the stack.
 class DexRegisterMap {
  public:
-  // Create map for given number of registers and initialize all locations to None.
-  explicit DexRegisterMap(size_t count) : count_(count), regs_small_{} {
+  using iterator = DexRegisterLocation*;
+
+  // Create map for given number of registers and initialize them to the given value.
+  DexRegisterMap(size_t count, DexRegisterLocation value) : count_(count), regs_small_{} {
     if (count_ <= kSmallCount) {
-      std::fill_n(regs_small_.begin(), count, DexRegisterLocation::None());
+      std::fill_n(regs_small_.begin(), count, value);
     } else {
-      regs_large_.resize(count, DexRegisterLocation::None());
+      regs_large_.resize(count, value);
     }
   }
 
   DexRegisterLocation* data() {
     return count_ <= kSmallCount ? regs_small_.data() : regs_large_.data();
   }
+
+  iterator begin() { return data(); }
+  iterator end() { return data() + count_; }
 
   size_t size() const { return count_; }
 
@@ -147,38 +158,26 @@ class DexRegisterMap {
  */
 class StackMap : public BitTable<7>::Accessor {
  public:
-  enum Field {
-    kPackedNativePc,
-    kDexPc,
-    kRegisterMaskIndex,
-    kStackMaskIndex,
-    kInlineInfoIndex,
-    kDexRegisterMaskIndex,
-    kDexRegisterMapIndex,
-    kCount,
-  };
-
-  StackMap() : BitTable<kCount>::Accessor(nullptr, -1) {}
-  StackMap(const BitTable<kCount>* table, uint32_t row)
-    : BitTable<kCount>::Accessor(table, row) {}
+  BIT_TABLE_HEADER()
+  BIT_TABLE_COLUMN(0, PackedNativePc)
+  BIT_TABLE_COLUMN(1, DexPc)
+  BIT_TABLE_COLUMN(2, RegisterMaskIndex)
+  BIT_TABLE_COLUMN(3, StackMaskIndex)
+  BIT_TABLE_COLUMN(4, InlineInfoIndex)
+  BIT_TABLE_COLUMN(5, DexRegisterMaskIndex)
+  BIT_TABLE_COLUMN(6, DexRegisterMapIndex)
 
   ALWAYS_INLINE uint32_t GetNativePcOffset(InstructionSet instruction_set) const {
     return UnpackNativePc(Get<kPackedNativePc>(), instruction_set);
   }
 
-  uint32_t GetDexPc() const { return Get<kDexPc>(); }
+  ALWAYS_INLINE bool HasInlineInfo() const {
+    return HasInlineInfoIndex();
+  }
 
-  uint32_t GetDexRegisterMaskIndex() const { return Get<kDexRegisterMaskIndex>(); }
-
-  uint32_t GetDexRegisterMapIndex() const { return Get<kDexRegisterMapIndex>(); }
-  bool HasDexRegisterMap() const { return GetDexRegisterMapIndex() != kNoValue; }
-
-  uint32_t GetInlineInfoIndex() const { return Get<kInlineInfoIndex>(); }
-  bool HasInlineInfo() const { return GetInlineInfoIndex() != kNoValue; }
-
-  uint32_t GetRegisterMaskIndex() const { return Get<kRegisterMaskIndex>(); }
-
-  uint32_t GetStackMaskIndex() const { return Get<kStackMaskIndex>(); }
+  ALWAYS_INLINE bool HasDexRegisterMap() const {
+    return HasDexRegisterMapIndex();
+  }
 
   static uint32_t PackNativePc(uint32_t native_pc, InstructionSet isa) {
     DCHECK_ALIGNED_PARAM(native_pc, GetInstructionSetInstructionAlignment(isa));
@@ -204,113 +203,66 @@ class StackMap : public BitTable<7>::Accessor {
  * The row referenced from the StackMap holds information at depth 0.
  * Following rows hold information for further depths.
  */
-class InlineInfo : public BitTable<7>::Accessor {
+class InlineInfo : public BitTable<6>::Accessor {
  public:
-  enum Field {
-    kIsLast,  // Determines if there are further rows for further depths.
-    kDexPc,
-    kMethodIndexIdx,
-    kArtMethodHi,  // High bits of ArtMethod*.
-    kArtMethodLo,  // Low bits of ArtMethod*.
-    kDexRegisterMaskIndex,
-    kDexRegisterMapIndex,
-    kCount,
-  };
+  BIT_TABLE_HEADER()
+  BIT_TABLE_COLUMN(0, IsLast)  // Determines if there are further rows for further depths.
+  BIT_TABLE_COLUMN(1, DexPc)
+  BIT_TABLE_COLUMN(2, MethodInfoIndex)
+  BIT_TABLE_COLUMN(3, ArtMethodHi)  // High bits of ArtMethod*.
+  BIT_TABLE_COLUMN(4, ArtMethodLo)  // Low bits of ArtMethod*.
+  BIT_TABLE_COLUMN(5, NumberOfDexRegisters)  // Includes outer levels and the main method.
+  BIT_TABLE_COLUMN(6, DexRegisterMapIndex)
+
   static constexpr uint32_t kLast = -1;
   static constexpr uint32_t kMore = 0;
 
-  InlineInfo(const BitTable<kCount>* table, uint32_t row)
-    : BitTable<kCount>::Accessor(table, row) {}
-
-  ALWAYS_INLINE InlineInfo AtDepth(uint32_t depth) const {
-    return InlineInfo(table_, this->row_ + depth);
+  uint32_t GetMethodIndex(const MethodInfo& method_info) const {
+    return method_info.GetMethodIndex(GetMethodInfoIndex());
   }
 
-  uint32_t GetDepth() const {
-    size_t depth = 0;
-    while (AtDepth(depth++).Get<kIsLast>() == kMore) { }
-    return depth;
+  bool EncodesArtMethod() const {
+    return HasArtMethodLo();
   }
 
-  uint32_t GetMethodIndexIdxAtDepth(uint32_t depth) const {
-    DCHECK(!EncodesArtMethodAtDepth(depth));
-    return AtDepth(depth).Get<kMethodIndexIdx>();
-  }
-
-  uint32_t GetMethodIndexAtDepth(const MethodInfo& method_info, uint32_t depth) const {
-    return method_info.GetMethodIndex(GetMethodIndexIdxAtDepth(depth));
-  }
-
-  uint32_t GetDexPcAtDepth(uint32_t depth) const {
-    return AtDepth(depth).Get<kDexPc>();
-  }
-
-  bool EncodesArtMethodAtDepth(uint32_t depth) const {
-    return AtDepth(depth).Get<kArtMethodLo>() != kNoValue;
-  }
-
-  ArtMethod* GetArtMethodAtDepth(uint32_t depth) const {
-    uint64_t lo = AtDepth(depth).Get<kArtMethodLo>();
-    uint64_t hi = AtDepth(depth).Get<kArtMethodHi>();
+  ArtMethod* GetArtMethod() const {
+    uint64_t lo = GetArtMethodLo();
+    uint64_t hi = GetArtMethodHi();
     return reinterpret_cast<ArtMethod*>((hi << 32) | lo);
-  }
-
-  uint32_t GetDexRegisterMaskIndexAtDepth(uint32_t depth) const {
-    return AtDepth(depth).Get<kDexRegisterMaskIndex>();
-  }
-
-  uint32_t GetDexRegisterMapIndexAtDepth(uint32_t depth) const {
-    return AtDepth(depth).Get<kDexRegisterMapIndex>();
-  }
-  bool HasDexRegisterMapAtDepth(uint32_t depth) const {
-    return GetDexRegisterMapIndexAtDepth(depth) != kNoValue;
   }
 
   void Dump(VariableIndentationOutputStream* vios,
             const CodeInfo& info,
+            const StackMap& stack_map,
             const MethodInfo& method_info,
-            uint16_t* number_of_dex_registers) const;
+            uint16_t number_of_dex_registers) const;
 };
 
 class InvokeInfo : public BitTable<3>::Accessor {
  public:
-  enum Field {
-    kPackedNativePc,
-    kInvokeType,
-    kMethodIndexIdx,
-    kCount,
-  };
-
-  InvokeInfo(const BitTable<kCount>* table, uint32_t row)
-    : BitTable<kCount>::Accessor(table, row) {}
+  BIT_TABLE_HEADER()
+  BIT_TABLE_COLUMN(0, PackedNativePc)
+  BIT_TABLE_COLUMN(1, InvokeType)
+  BIT_TABLE_COLUMN(2, MethodInfoIndex)
 
   ALWAYS_INLINE uint32_t GetNativePcOffset(InstructionSet instruction_set) const {
     return StackMap::UnpackNativePc(Get<kPackedNativePc>(), instruction_set);
   }
 
-  uint32_t GetInvokeType() const { return Get<kInvokeType>(); }
-
-  uint32_t GetMethodIndexIdx() const { return Get<kMethodIndexIdx>(); }
-
   uint32_t GetMethodIndex(MethodInfo method_info) const {
-    return method_info.GetMethodIndex(GetMethodIndexIdx());
+    return method_info.GetMethodIndex(GetMethodInfoIndex());
   }
 };
 
 class DexRegisterInfo : public BitTable<2>::Accessor {
  public:
-  enum Field {
-    kKind,
-    kPackedValue,
-    kCount,
-  };
-
-  DexRegisterInfo(const BitTable<kCount>* table, uint32_t row)
-    : BitTable<kCount>::Accessor(table, row) {}
+  BIT_TABLE_HEADER()
+  BIT_TABLE_COLUMN(0, Kind)
+  BIT_TABLE_COLUMN(1, PackedValue)
 
   ALWAYS_INLINE DexRegisterLocation GetLocation() const {
-    DexRegisterLocation::Kind kind = static_cast<DexRegisterLocation::Kind>(Get<kKind>());
-    return DexRegisterLocation(kind, UnpackValue(kind, Get<kPackedValue>()));
+    DexRegisterLocation::Kind kind = static_cast<DexRegisterLocation::Kind>(GetKind());
+    return DexRegisterLocation(kind, UnpackValue(kind, GetPackedValue()));
   }
 
   static uint32_t PackValue(DexRegisterLocation::Kind kind, uint32_t value) {
@@ -335,17 +287,12 @@ class DexRegisterInfo : public BitTable<2>::Accessor {
 // therefore it is worth encoding the mask as value+shift.
 class RegisterMask : public BitTable<2>::Accessor {
  public:
-  enum Field {
-    kValue,
-    kShift,
-    kCount,
-  };
-
-  RegisterMask(const BitTable<kCount>* table, uint32_t row)
-    : BitTable<kCount>::Accessor(table, row) {}
+  BIT_TABLE_HEADER()
+  BIT_TABLE_COLUMN(0, Value)
+  BIT_TABLE_COLUMN(1, Shift)
 
   ALWAYS_INLINE uint32_t GetMask() const {
-    return Get<kValue>() << Get<kShift>();
+    return GetValue() << GetShift();
   }
 };
 
@@ -398,7 +345,9 @@ class CodeInfo {
   }
 
   ALWAYS_INLINE DexRegisterLocation GetDexRegisterCatalogEntry(size_t index) const {
-    return DexRegisterInfo(&dex_register_catalog_, index).GetLocation();
+    return (index == StackMap::kNoValue)
+      ? DexRegisterLocation::None()
+      : DexRegisterInfo(&dex_register_catalog_, index).GetLocation();
   }
 
   uint32_t GetNumberOfStackMaps() const {
@@ -410,28 +359,49 @@ class CodeInfo {
   }
 
   ALWAYS_INLINE DexRegisterMap GetDexRegisterMapOf(StackMap stack_map,
-                                                   size_t num_dex_registers) const {
-    return DecodeDexRegisterMap(stack_map.GetDexRegisterMaskIndex(),
-                                stack_map.GetDexRegisterMapIndex(),
-                                num_dex_registers);
+                                                   size_t vregs ATTRIBUTE_UNUSED = 0) const {
+    if (stack_map.HasDexRegisterMap()) {
+      DexRegisterMap map(number_of_dex_registers_, DexRegisterLocation::Invalid());
+      DecodeDexRegisterMap(stack_map.Row(), /* first_dex_register */ 0, &map);
+      return map;
+    }
+    return DexRegisterMap(0, DexRegisterLocation::None());
   }
 
   ALWAYS_INLINE DexRegisterMap GetDexRegisterMapAtDepth(uint8_t depth,
-                                                        InlineInfo inline_info,
-                                                        size_t num_dex_registers) const {
-    return DecodeDexRegisterMap(inline_info.GetDexRegisterMaskIndexAtDepth(depth),
-                                inline_info.GetDexRegisterMapIndexAtDepth(depth),
-                                num_dex_registers);
+                                                        StackMap stack_map,
+                                                        size_t vregs ATTRIBUTE_UNUSED = 0) const {
+    if (stack_map.HasDexRegisterMap()) {
+      // The register counts are commutative and include all outer levels.
+      // This allows us to determine the range [first, last) in just two lookups.
+      // If we are at depth 0 (the first inlinee), the count from the main method is used.
+      uint32_t first = (depth == 0) ? number_of_dex_registers_
+          : GetInlineInfoAtDepth(stack_map, depth - 1).GetNumberOfDexRegisters();
+      uint32_t last = GetInlineInfoAtDepth(stack_map, depth).GetNumberOfDexRegisters();
+      DexRegisterMap map(last - first, DexRegisterLocation::Invalid());
+      DecodeDexRegisterMap(stack_map.Row(), first, &map);
+      return map;
+    }
+    return DexRegisterMap(0, DexRegisterLocation::None());
   }
 
   InlineInfo GetInlineInfo(size_t index) const {
     return InlineInfo(&inline_infos_, index);
   }
 
-  InlineInfo GetInlineInfoOf(StackMap stack_map) const {
-    DCHECK(stack_map.HasInlineInfo());
+  uint32_t GetInlineDepthOf(StackMap stack_map) const {
+    uint32_t depth = 0;
     uint32_t index = stack_map.GetInlineInfoIndex();
-    return GetInlineInfo(index);
+    if (index != StackMap::kNoValue) {
+      while (GetInlineInfo(index + depth++).GetIsLast() == InlineInfo::kMore) { }
+    }
+    return depth;
+  }
+
+  InlineInfo GetInlineInfoAtDepth(StackMap stack_map, uint32_t depth) const {
+    DCHECK(stack_map.HasInlineInfo());
+    DCHECK_LT(depth, GetInlineDepthOf(stack_map));
+    return GetInlineInfo(stack_map.GetInlineInfoIndex() + depth);
   }
 
   StackMap GetStackMapForDexPc(uint32_t dex_pc) const {
@@ -471,9 +441,6 @@ class CodeInfo {
         if (other.GetDexPc() == dex_pc &&
             other.GetNativePcOffset(kRuntimeISA) ==
                 stack_map.GetNativePcOffset(kRuntimeISA)) {
-          DCHECK_EQ(other.GetDexRegisterMapIndex(),
-                    stack_map.GetDexRegisterMapIndex());
-          DCHECK(!stack_map.HasInlineInfo());
           if (i < e - 2) {
             // Make sure there are not three identical stack maps following each other.
             DCHECK_NE(
@@ -507,7 +474,7 @@ class CodeInfo {
         return item;
       }
     }
-    return InvokeInfo(&invoke_infos_, -1);
+    return InvokeInfo();
   }
 
   // Dump this CodeInfo object on `vios`.
@@ -520,23 +487,10 @@ class CodeInfo {
             const MethodInfo& method_info) const;
 
  private:
-  ALWAYS_INLINE DexRegisterMap DecodeDexRegisterMap(uint32_t mask_index,
-                                                    uint32_t map_index,
-                                                    uint32_t num_dex_registers) const {
-    DexRegisterMap map(map_index == StackMap::kNoValue ? 0 : num_dex_registers);
-    if (mask_index != StackMap::kNoValue) {
-      BitMemoryRegion mask = dex_register_masks_.GetBitMemoryRegion(mask_index);
-      num_dex_registers = std::min<uint32_t>(num_dex_registers, mask.size_in_bits());
-      DexRegisterLocation* regs = map.data();
-      for (uint32_t r = 0; r < mask.size_in_bits(); r++) {
-        if (mask.LoadBit(r) /* is_live */) {
-          DCHECK_LT(r, map.size());
-          regs[r] = GetDexRegisterCatalogEntry(dex_register_maps_.Get(map_index++));
-        }
-      }
-    }
-    return map;
-  }
+  // Scan backward to determine dex register locations at given stack map.
+  void DecodeDexRegisterMap(uint32_t stack_map_index,
+                            uint32_t first_dex_register,
+                            /*out*/ DexRegisterMap* map) const;
 
   void Decode(const uint8_t* data) {
     size_t non_header_size = DecodeUnsignedLeb128(&data);
@@ -551,18 +505,20 @@ class CodeInfo {
     dex_register_masks_.Decode(region, &bit_offset);
     dex_register_maps_.Decode(region, &bit_offset);
     dex_register_catalog_.Decode(region, &bit_offset);
+    number_of_dex_registers_ = DecodeVarintBits(region, &bit_offset);
     CHECK_EQ(non_header_size, BitsToBytesRoundUp(bit_offset)) << "Invalid CodeInfo";
   }
 
   size_t size_;
-  BitTable<StackMap::Field::kCount> stack_maps_;
-  BitTable<RegisterMask::Field::kCount> register_masks_;
+  BitTable<StackMap::kCount> stack_maps_;
+  BitTable<RegisterMask::kCount> register_masks_;
   BitTable<1> stack_masks_;
-  BitTable<InvokeInfo::Field::kCount> invoke_infos_;
-  BitTable<InlineInfo::Field::kCount> inline_infos_;
+  BitTable<InvokeInfo::kCount> invoke_infos_;
+  BitTable<InlineInfo::kCount> inline_infos_;
   BitTable<1> dex_register_masks_;
   BitTable<1> dex_register_maps_;
-  BitTable<DexRegisterInfo::Field::kCount> dex_register_catalog_;
+  BitTable<DexRegisterInfo::kCount> dex_register_catalog_;
+  uint32_t number_of_dex_registers_;  // Excludes any inlined methods.
 
   friend class OatDumper;
 };
