@@ -274,7 +274,7 @@ class OatSymbolizer FINAL {
   void WalkOatClass(const OatFile::OatClass& oat_class,
                     const DexFile& dex_file,
                     uint32_t class_def_index) {
-    ClassAccessor accessor(dex_file, dex_file.GetClassDef(class_def_index));
+    ClassAccessor accessor(dex_file, class_def_index);
     // Note: even if this is an interface or a native class, we still have to walk it, as there
     //       might be a static initializer.
     uint32_t class_method_idx = 0;
@@ -905,15 +905,13 @@ class OatDumper {
         continue;
       }
       offsets_.insert(reinterpret_cast<uintptr_t>(&dex_file->GetHeader()));
-      uint32_t class_def_index = 0u;
       for (ClassAccessor accessor : dex_file->GetClasses()) {
-        const OatFile::OatClass oat_class = oat_dex_file->GetOatClass(class_def_index);
+        const OatFile::OatClass oat_class = oat_dex_file->GetOatClass(accessor.GetClassDefIndex());
         for (uint32_t class_method_index = 0;
             class_method_index < accessor.NumMethods();
             ++class_method_index) {
           AddOffsets(oat_class.GetOatMethod(class_method_index));
         }
-        ++class_def_index;
       }
     }
 
@@ -1429,7 +1427,7 @@ class OatDumper {
         DCHECK(code_item_accessor.HasCodeItem());
         ScopedIndentation indent1(vios);
         MethodInfo method_info = oat_method.GetOatQuickMethodHeader()->GetOptimizedMethodInfo();
-        DumpCodeInfo(vios, code_info, oat_method, code_item_accessor, method_info);
+        DumpCodeInfo(vios, code_info, oat_method, method_info);
       }
     } else if (IsMethodGeneratedByDexToDexCompiler(oat_method, code_item_accessor)) {
       // We don't encode the size in the table, so just emit that we have quickened
@@ -1445,11 +1443,9 @@ class OatDumper {
   void DumpCodeInfo(VariableIndentationOutputStream* vios,
                     const CodeInfo& code_info,
                     const OatFile::OatMethod& oat_method,
-                    const CodeItemDataAccessor& code_item_accessor,
                     const MethodInfo& method_info) {
     code_info.Dump(vios,
                    oat_method.GetCodeOffset(),
-                   code_item_accessor.RegistersSize(),
                    options_.dump_code_info_stack_maps_,
                    instruction_set_,
                    method_info);
@@ -1779,7 +1775,6 @@ class OatDumper {
                          helper.GetCodeInfo(),
                          method_info,
                          oat_method.GetCodeOffset(),
-                         code_item_accessor.RegistersSize(),
                          instruction_set_);
           do {
             helper.Next();
