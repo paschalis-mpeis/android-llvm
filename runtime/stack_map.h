@@ -47,15 +47,18 @@ static constexpr size_t kMaxDexRegisterMapSearchDistance = 32;
 
 class ArtMethod;
 class CodeInfo;
+class Stats;
 
 std::ostream& operator<<(std::ostream& stream, const DexRegisterLocation& reg);
 
 // Information on Dex register locations for a specific PC.
 // Effectively just a convenience wrapper for DexRegisterLocation vector.
 // If the size is small enough, it keeps the data on the stack.
+// TODO: Replace this with generic purpose "small-vector" implementation.
 class DexRegisterMap {
  public:
   using iterator = DexRegisterLocation*;
+  using const_iterator = const DexRegisterLocation*;
 
   // Create map for given number of registers and initialize them to the given value.
   DexRegisterMap(size_t count, DexRegisterLocation value) : count_(count), regs_small_{} {
@@ -69,75 +72,35 @@ class DexRegisterMap {
   DexRegisterLocation* data() {
     return count_ <= kSmallCount ? regs_small_.data() : regs_large_.data();
   }
+  const DexRegisterLocation* data() const {
+    return count_ <= kSmallCount ? regs_small_.data() : regs_large_.data();
+  }
 
   iterator begin() { return data(); }
   iterator end() { return data() + count_; }
-
+  const_iterator begin() const { return data(); }
+  const_iterator end() const { return data() + count_; }
   size_t size() const { return count_; }
-
   bool empty() const { return count_ == 0; }
 
-  DexRegisterLocation Get(size_t index) const {
+  DexRegisterLocation& operator[](size_t index) {
     DCHECK_LT(index, count_);
-    return count_ <= kSmallCount ? regs_small_[index] : regs_large_[index];
+    return data()[index];
   }
-
-  DexRegisterLocation::Kind GetLocationKind(uint16_t dex_register_number) const {
-    return Get(dex_register_number).GetKind();
-  }
-
-  // TODO: Remove.
-  DexRegisterLocation::Kind GetLocationInternalKind(uint16_t dex_register_number) const {
-    return Get(dex_register_number).GetKind();
-  }
-
-  DexRegisterLocation GetDexRegisterLocation(uint16_t dex_register_number) const {
-    return Get(dex_register_number);
-  }
-
-  int32_t GetStackOffsetInBytes(uint16_t dex_register_number) const {
-    DexRegisterLocation location = Get(dex_register_number);
-    DCHECK(location.GetKind() == DexRegisterLocation::Kind::kInStack);
-    return location.GetValue();
-  }
-
-  int32_t GetConstant(uint16_t dex_register_number) const {
-    DexRegisterLocation location = Get(dex_register_number);
-    DCHECK(location.GetKind() == DexRegisterLocation::Kind::kConstant);
-    return location.GetValue();
-  }
-
-  int32_t GetMachineRegister(uint16_t dex_register_number) const {
-    DexRegisterLocation location = Get(dex_register_number);
-    DCHECK(location.GetKind() == DexRegisterLocation::Kind::kInRegister ||
-           location.GetKind() == DexRegisterLocation::Kind::kInRegisterHigh ||
-           location.GetKind() == DexRegisterLocation::Kind::kInFpuRegister ||
-           location.GetKind() == DexRegisterLocation::Kind::kInFpuRegisterHigh);
-    return location.GetValue();
-  }
-
-  ALWAYS_INLINE bool IsDexRegisterLive(uint16_t dex_register_number) const {
-    return Get(dex_register_number).IsLive();
+  const DexRegisterLocation& operator[](size_t index) const {
+    DCHECK_LT(index, count_);
+    return data()[index];
   }
 
   size_t GetNumberOfLiveDexRegisters() const {
-    size_t number_of_live_dex_registers = 0;
-    for (size_t i = 0; i < count_; ++i) {
-      if (IsDexRegisterLive(i)) {
-        ++number_of_live_dex_registers;
-      }
-    }
-    return number_of_live_dex_registers;
+    return std::count_if(begin(), end(), [](auto& loc) { return loc.IsLive(); });
   }
 
   bool HasAnyLiveDexRegisters() const {
-    for (size_t i = 0; i < count_; ++i) {
-      if (IsDexRegisterLive(i)) {
-        return true;
-      }
-    }
-    return false;
+    return std::any_of(begin(), end(), [](auto& loc) { return loc.IsLive(); });
   }
+
+  void Dump(VariableIndentationOutputStream* vios) const;
 
  private:
   // Store the data inline if the number of registers is small to avoid memory allocations.
@@ -156,16 +119,23 @@ class DexRegisterMap {
  * - Knowing the inlining information,
  * - Knowing the values of dex registers.
  */
-class StackMap : public BitTable<7>::Accessor {
+class StackMap : public BitTable<8>::Accessor {
  public:
+  enum Kind {
+    Default = -1,
+    Catch = 0,
+    OSR = 1,
+    Debug = 2,
+  };
   BIT_TABLE_HEADER()
-  BIT_TABLE_COLUMN(0, PackedNativePc)
-  BIT_TABLE_COLUMN(1, DexPc)
-  BIT_TABLE_COLUMN(2, RegisterMaskIndex)
-  BIT_TABLE_COLUMN(3, StackMaskIndex)
-  BIT_TABLE_COLUMN(4, InlineInfoIndex)
-  BIT_TABLE_COLUMN(5, DexRegisterMaskIndex)
-  BIT_TABLE_COLUMN(6, DexRegisterMapIndex)
+  BIT_TABLE_COLUMN(0, Kind)
+  BIT_TABLE_COLUMN(1, PackedNativePc)
+  BIT_TABLE_COLUMN(2, DexPc)
+  BIT_TABLE_COLUMN(3, RegisterMaskIndex)
+  BIT_TABLE_COLUMN(4, StackMaskIndex)
+  BIT_TABLE_COLUMN(5, InlineInfoIndex)
+  BIT_TABLE_COLUMN(6, DexRegisterMaskIndex)
+  BIT_TABLE_COLUMN(7, DexRegisterMapIndex)
 
   ALWAYS_INLINE uint32_t GetNativePcOffset(InstructionSet instruction_set) const {
     return UnpackNativePc(Get<kPackedNativePc>(), instruction_set);
@@ -250,6 +220,18 @@ class InvokeInfo : public BitTable<3>::Accessor {
   uint32_t GetMethodIndex(MethodInfo method_info) const {
     return method_info.GetMethodIndex(GetMethodInfoIndex());
   }
+};
+
+class MaskInfo : public BitTable<1>::Accessor {
+ public:
+  BIT_TABLE_HEADER()
+  BIT_TABLE_COLUMN(0, Mask)
+};
+
+class DexRegisterMapInfo : public BitTable<1>::Accessor {
+ public:
+  BIT_TABLE_HEADER()
+  BIT_TABLE_COLUMN(0, CatalogueIndex)
 };
 
 class DexRegisterInfo : public BitTable<2>::Accessor {
@@ -402,19 +384,18 @@ class CodeInfo {
   StackMap GetStackMapForDexPc(uint32_t dex_pc) const {
     for (size_t i = 0, e = GetNumberOfStackMaps(); i < e; ++i) {
       StackMap stack_map = GetStackMapAt(i);
-      if (stack_map.GetDexPc() == dex_pc) {
+      if (stack_map.GetDexPc() == dex_pc && stack_map.GetKind() != StackMap::Kind::Debug) {
         return stack_map;
       }
     }
     return StackMap();
   }
 
-  // Searches the stack map list backwards because catch stack maps are stored
-  // at the end.
+  // Searches the stack map list backwards because catch stack maps are stored at the end.
   StackMap GetCatchStackMapForDexPc(uint32_t dex_pc) const {
     for (size_t i = GetNumberOfStackMaps(); i > 0; --i) {
       StackMap stack_map = GetStackMapAt(i - 1);
-      if (stack_map.GetDexPc() == dex_pc) {
+      if (stack_map.GetDexPc() == dex_pc && stack_map.GetKind() == StackMap::Kind::Catch) {
         return stack_map;
       }
     }
@@ -422,41 +403,26 @@ class CodeInfo {
   }
 
   StackMap GetOsrStackMapForDexPc(uint32_t dex_pc) const {
-    size_t e = GetNumberOfStackMaps();
-    if (e == 0) {
-      // There cannot be OSR stack map if there is no stack map.
-      return StackMap();
-    }
-    // Walk over all stack maps. If two consecutive stack maps are identical, then we
-    // have found a stack map suitable for OSR.
-    for (size_t i = 0; i < e - 1; ++i) {
+    for (size_t i = 0, e = GetNumberOfStackMaps(); i < e; ++i) {
       StackMap stack_map = GetStackMapAt(i);
-      if (stack_map.GetDexPc() == dex_pc) {
-        StackMap other = GetStackMapAt(i + 1);
-        if (other.GetDexPc() == dex_pc &&
-            other.GetNativePcOffset(kRuntimeISA) ==
-                stack_map.GetNativePcOffset(kRuntimeISA)) {
-          if (i < e - 2) {
-            // Make sure there are not three identical stack maps following each other.
-            DCHECK_NE(
-                stack_map.GetNativePcOffset(kRuntimeISA),
-                GetStackMapAt(i + 2).GetNativePcOffset(kRuntimeISA));
-          }
-          return stack_map;
-        }
+      if (stack_map.GetDexPc() == dex_pc && stack_map.GetKind() == StackMap::Kind::OSR) {
+        return stack_map;
       }
     }
     return StackMap();
   }
 
-  StackMap GetStackMapForNativePcOffset(uint32_t native_pc_offset) const {
+  StackMap GetStackMapForNativePcOffset(uint32_t pc, InstructionSet isa = kRuntimeISA) const {
     // TODO: Safepoint stack maps are sorted by native_pc_offset but catch stack
     //       maps are not. If we knew that the method does not have try/catch,
     //       we could do binary search.
     for (size_t i = 0, e = GetNumberOfStackMaps(); i < e; ++i) {
       StackMap stack_map = GetStackMapAt(i);
-      if (stack_map.GetNativePcOffset(kRuntimeISA) == native_pc_offset) {
-        return stack_map;
+      if (stack_map.GetNativePcOffset(isa) == pc) {
+        StackMap::Kind kind = static_cast<StackMap::Kind>(stack_map.GetKind());
+        if (kind == StackMap::Kind::Default || kind == StackMap::Kind::OSR) {
+          return stack_map;
+        }
       }
     }
     return StackMap();
@@ -479,6 +445,9 @@ class CodeInfo {
             bool verbose,
             InstructionSet instruction_set,
             const MethodInfo& method_info) const;
+
+  // Accumulate code info size statistics into the given Stats tree.
+  void AddSizeStats(/*out*/ Stats* parent) const;
 
  private:
   // Scan backward to determine dex register locations at given stack map.
@@ -506,15 +475,13 @@ class CodeInfo {
   size_t size_;
   BitTable<StackMap::kCount> stack_maps_;
   BitTable<RegisterMask::kCount> register_masks_;
-  BitTable<1> stack_masks_;
+  BitTable<MaskInfo::kCount> stack_masks_;
   BitTable<InvokeInfo::kCount> invoke_infos_;
   BitTable<InlineInfo::kCount> inline_infos_;
-  BitTable<1> dex_register_masks_;
-  BitTable<1> dex_register_maps_;
+  BitTable<MaskInfo::kCount> dex_register_masks_;
+  BitTable<DexRegisterMapInfo::kCount> dex_register_maps_;
   BitTable<DexRegisterInfo::kCount> dex_register_catalog_;
   uint32_t number_of_dex_registers_;  // Excludes any inlined methods.
-
-  friend class OatDumper;
 };
 
 #undef ELEMENT_BYTE_OFFSET_AFTER

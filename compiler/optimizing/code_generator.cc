@@ -1055,7 +1055,8 @@ void CodeGenerator::BuildStackMaps(MemoryRegion stack_map_region,
 
 void CodeGenerator::RecordPcInfo(HInstruction* instruction,
                                  uint32_t dex_pc,
-                                 SlowPathCode* slow_path) {
+                                 SlowPathCode* slow_path,
+                                 bool native_debug_info) {
   if (instruction != nullptr) {
     // The code generated for some type conversions
     // may call the runtime, thus normally requiring a subsequent
@@ -1120,12 +1121,23 @@ void CodeGenerator::RecordPcInfo(HInstruction* instruction,
     outer_dex_pc = outer_environment->GetDexPc();
     outer_environment_size = outer_environment->Size();
   }
+
+  HLoopInformation* info = instruction->GetBlock()->GetLoopInformation();
+  bool osr =
+      instruction->IsSuspendCheck() &&
+      (info != nullptr) &&
+      graph_->IsCompilingOsr() &&
+      (inlining_depth == 0);
+  StackMap::Kind kind = native_debug_info
+      ? StackMap::Kind::Debug
+      : (osr ? StackMap::Kind::OSR : StackMap::Kind::Default);
   stack_map_stream->BeginStackMapEntry(outer_dex_pc,
                                        native_pc,
                                        register_mask,
                                        locations->GetStackMask(),
                                        outer_environment_size,
-                                       inlining_depth);
+                                       inlining_depth,
+                                       kind);
   EmitEnvironment(environment, slow_path);
   // Record invoke info, the common case for the trampoline is super and static invokes. Only
   // record these to reduce oat file size.
@@ -1138,19 +1150,9 @@ void CodeGenerator::RecordPcInfo(HInstruction* instruction,
   }
   stack_map_stream->EndStackMapEntry();
 
-  HLoopInformation* info = instruction->GetBlock()->GetLoopInformation();
-  if (instruction->IsSuspendCheck() &&
-      (info != nullptr) &&
-      graph_->IsCompilingOsr() &&
-      (inlining_depth == 0)) {
+  if (osr) {
     DCHECK_EQ(info->GetSuspendCheck(), instruction);
-    // We duplicate the stack map as a marker that this stack map can be an OSR entry.
-    // Duplicating it avoids having the runtime recognize and skip an OSR stack map.
     DCHECK(info->IsIrreducible());
-    stack_map_stream->BeginStackMapEntry(
-        dex_pc, native_pc, register_mask, locations->GetStackMask(), outer_environment_size, 0);
-    EmitEnvironment(instruction->GetEnvironment(), slow_path);
-    stack_map_stream->EndStackMapEntry();
     if (kIsDebugBuild) {
       for (size_t i = 0, environment_size = environment->Size(); i < environment_size; ++i) {
         HInstruction* in_environment = environment->GetInstructionAt(i);
@@ -1166,14 +1168,6 @@ void CodeGenerator::RecordPcInfo(HInstruction* instruction,
           }
         }
       }
-    }
-  } else if (kIsDebugBuild) {
-    // Ensure stack maps are unique, by checking that the native pc in the stack map
-    // last emitted is different than the native pc of the stack map just emitted.
-    size_t number_of_stack_maps = stack_map_stream->GetNumberOfStackMaps();
-    if (number_of_stack_maps > 1) {
-      DCHECK_NE(stack_map_stream->GetStackMapNativePcOffset(number_of_stack_maps - 1),
-                stack_map_stream->GetStackMapNativePcOffset(number_of_stack_maps - 2));
     }
   }
 }
@@ -1196,12 +1190,11 @@ void CodeGenerator::MaybeRecordNativeDebugInfo(HInstruction* instruction,
       // Ensure that we do not collide with the stack map of the previous instruction.
       GenerateNop();
     }
-    RecordPcInfo(instruction, dex_pc, slow_path);
+    RecordPcInfo(instruction, dex_pc, slow_path, /* native_debug_info */ true);
   }
 }
 
 void CodeGenerator::RecordCatchBlockInfo() {
-  ArenaAllocator* allocator = graph_->GetAllocator();
   StackMapStream* stack_map_stream = GetStackMapStream();
 
   for (HBasicBlock* block : *block_order_) {
@@ -1213,28 +1206,24 @@ void CodeGenerator::RecordCatchBlockInfo() {
     uint32_t num_vregs = graph_->GetNumberOfVRegs();
     uint32_t inlining_depth = 0;  // Inlining of catch blocks is not supported at the moment.
     uint32_t native_pc = GetAddressOf(block);
-    uint32_t register_mask = 0;   // Not used.
-
-    // The stack mask is not used, so we leave it empty.
-    ArenaBitVector* stack_mask =
-        ArenaBitVector::Create(allocator, 0, /* expandable */ true, kArenaAllocCodeGenerator);
 
     stack_map_stream->BeginStackMapEntry(dex_pc,
                                          native_pc,
-                                         register_mask,
-                                         stack_mask,
+                                         /* register_mask */ 0,
+                                         /* stack_mask */ nullptr,
                                          num_vregs,
-                                         inlining_depth);
+                                         inlining_depth,
+                                         StackMap::Kind::Catch);
 
     HInstruction* current_phi = block->GetFirstPhi();
     for (size_t vreg = 0; vreg < num_vregs; ++vreg) {
-    while (current_phi != nullptr && current_phi->AsPhi()->GetRegNumber() < vreg) {
-      HInstruction* next_phi = current_phi->GetNext();
-      DCHECK(next_phi == nullptr ||
-             current_phi->AsPhi()->GetRegNumber() <= next_phi->AsPhi()->GetRegNumber())
-          << "Phis need to be sorted by vreg number to keep this a linear-time loop.";
-      current_phi = next_phi;
-    }
+      while (current_phi != nullptr && current_phi->AsPhi()->GetRegNumber() < vreg) {
+        HInstruction* next_phi = current_phi->GetNext();
+        DCHECK(next_phi == nullptr ||
+               current_phi->AsPhi()->GetRegNumber() <= next_phi->AsPhi()->GetRegNumber())
+            << "Phis need to be sorted by vreg number to keep this a linear-time loop.";
+        current_phi = next_phi;
+      }
 
       if (current_phi == nullptr || current_phi->AsPhi()->GetRegNumber() != vreg) {
         stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kNone, 0);
@@ -1294,50 +1283,45 @@ void CodeGenerator::EmitEnvironment(HEnvironment* environment, SlowPathCode* slo
       continue;
     }
 
+    using Kind = DexRegisterLocation::Kind;
     Location location = environment->GetLocationAt(i);
     switch (location.GetKind()) {
       case Location::kConstant: {
         DCHECK_EQ(current, location.GetConstant());
         if (current->IsLongConstant()) {
           int64_t value = current->AsLongConstant()->GetValue();
-          stack_map_stream->AddDexRegisterEntry(
-              DexRegisterLocation::Kind::kConstant, Low32Bits(value));
-          stack_map_stream->AddDexRegisterEntry(
-              DexRegisterLocation::Kind::kConstant, High32Bits(value));
+          stack_map_stream->AddDexRegisterEntry(Kind::kConstant, Low32Bits(value));
+          stack_map_stream->AddDexRegisterEntry(Kind::kConstant, High32Bits(value));
           ++i;
           DCHECK_LT(i, environment_size);
         } else if (current->IsDoubleConstant()) {
           int64_t value = bit_cast<int64_t, double>(current->AsDoubleConstant()->GetValue());
-          stack_map_stream->AddDexRegisterEntry(
-              DexRegisterLocation::Kind::kConstant, Low32Bits(value));
-          stack_map_stream->AddDexRegisterEntry(
-              DexRegisterLocation::Kind::kConstant, High32Bits(value));
+          stack_map_stream->AddDexRegisterEntry(Kind::kConstant, Low32Bits(value));
+          stack_map_stream->AddDexRegisterEntry(Kind::kConstant, High32Bits(value));
           ++i;
           DCHECK_LT(i, environment_size);
         } else if (current->IsIntConstant()) {
           int32_t value = current->AsIntConstant()->GetValue();
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kConstant, value);
+          stack_map_stream->AddDexRegisterEntry(Kind::kConstant, value);
         } else if (current->IsNullConstant()) {
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kConstant, 0);
+          stack_map_stream->AddDexRegisterEntry(Kind::kConstant, 0);
         } else {
           DCHECK(current->IsFloatConstant()) << current->DebugName();
           int32_t value = bit_cast<int32_t, float>(current->AsFloatConstant()->GetValue());
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kConstant, value);
+          stack_map_stream->AddDexRegisterEntry(Kind::kConstant, value);
         }
         break;
       }
 
       case Location::kStackSlot: {
-        stack_map_stream->AddDexRegisterEntry(
-            DexRegisterLocation::Kind::kInStack, location.GetStackIndex());
+        stack_map_stream->AddDexRegisterEntry(Kind::kInStack, location.GetStackIndex());
         break;
       }
 
       case Location::kDoubleStackSlot: {
+        stack_map_stream->AddDexRegisterEntry(Kind::kInStack, location.GetStackIndex());
         stack_map_stream->AddDexRegisterEntry(
-            DexRegisterLocation::Kind::kInStack, location.GetStackIndex());
-        stack_map_stream->AddDexRegisterEntry(
-            DexRegisterLocation::Kind::kInStack, location.GetHighStackIndex(kVRegSize));
+            Kind::kInStack, location.GetHighStackIndex(kVRegSize));
         ++i;
         DCHECK_LT(i, environment_size);
         break;
@@ -1347,17 +1331,16 @@ void CodeGenerator::EmitEnvironment(HEnvironment* environment, SlowPathCode* slo
         int id = location.reg();
         if (slow_path != nullptr && slow_path->IsCoreRegisterSaved(id)) {
           uint32_t offset = slow_path->GetStackOffsetOfCoreRegister(id);
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInStack, offset);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInStack, offset);
           if (current->GetType() == DataType::Type::kInt64) {
-            stack_map_stream->AddDexRegisterEntry(
-                DexRegisterLocation::Kind::kInStack, offset + kVRegSize);
+            stack_map_stream->AddDexRegisterEntry(Kind::kInStack, offset + kVRegSize);
             ++i;
             DCHECK_LT(i, environment_size);
           }
         } else {
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInRegister, id);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInRegister, id);
           if (current->GetType() == DataType::Type::kInt64) {
-            stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInRegisterHigh, id);
+            stack_map_stream->AddDexRegisterEntry(Kind::kInRegisterHigh, id);
             ++i;
             DCHECK_LT(i, environment_size);
           }
@@ -1369,18 +1352,16 @@ void CodeGenerator::EmitEnvironment(HEnvironment* environment, SlowPathCode* slo
         int id = location.reg();
         if (slow_path != nullptr && slow_path->IsFpuRegisterSaved(id)) {
           uint32_t offset = slow_path->GetStackOffsetOfFpuRegister(id);
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInStack, offset);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInStack, offset);
           if (current->GetType() == DataType::Type::kFloat64) {
-            stack_map_stream->AddDexRegisterEntry(
-                DexRegisterLocation::Kind::kInStack, offset + kVRegSize);
+            stack_map_stream->AddDexRegisterEntry(Kind::kInStack, offset + kVRegSize);
             ++i;
             DCHECK_LT(i, environment_size);
           }
         } else {
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInFpuRegister, id);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInFpuRegister, id);
           if (current->GetType() == DataType::Type::kFloat64) {
-            stack_map_stream->AddDexRegisterEntry(
-                DexRegisterLocation::Kind::kInFpuRegisterHigh, id);
+            stack_map_stream->AddDexRegisterEntry(Kind::kInFpuRegisterHigh, id);
             ++i;
             DCHECK_LT(i, environment_size);
           }
@@ -1393,16 +1374,16 @@ void CodeGenerator::EmitEnvironment(HEnvironment* environment, SlowPathCode* slo
         int high = location.high();
         if (slow_path != nullptr && slow_path->IsFpuRegisterSaved(low)) {
           uint32_t offset = slow_path->GetStackOffsetOfFpuRegister(low);
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInStack, offset);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInStack, offset);
         } else {
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInFpuRegister, low);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInFpuRegister, low);
         }
         if (slow_path != nullptr && slow_path->IsFpuRegisterSaved(high)) {
           uint32_t offset = slow_path->GetStackOffsetOfFpuRegister(high);
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInStack, offset);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInStack, offset);
           ++i;
         } else {
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInFpuRegister, high);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInFpuRegister, high);
           ++i;
         }
         DCHECK_LT(i, environment_size);
@@ -1414,15 +1395,15 @@ void CodeGenerator::EmitEnvironment(HEnvironment* environment, SlowPathCode* slo
         int high = location.high();
         if (slow_path != nullptr && slow_path->IsCoreRegisterSaved(low)) {
           uint32_t offset = slow_path->GetStackOffsetOfCoreRegister(low);
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInStack, offset);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInStack, offset);
         } else {
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInRegister, low);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInRegister, low);
         }
         if (slow_path != nullptr && slow_path->IsCoreRegisterSaved(high)) {
           uint32_t offset = slow_path->GetStackOffsetOfCoreRegister(high);
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInStack, offset);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInStack, offset);
         } else {
-          stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kInRegister, high);
+          stack_map_stream->AddDexRegisterEntry(Kind::kInRegister, high);
         }
         ++i;
         DCHECK_LT(i, environment_size);
@@ -1430,7 +1411,7 @@ void CodeGenerator::EmitEnvironment(HEnvironment* environment, SlowPathCode* slo
       }
 
       case Location::kInvalid: {
-        stack_map_stream->AddDexRegisterEntry(DexRegisterLocation::Kind::kNone, 0);
+        stack_map_stream->AddDexRegisterEntry(Kind::kNone, 0);
         break;
       }
 

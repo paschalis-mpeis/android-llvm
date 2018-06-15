@@ -21,6 +21,7 @@
 
 #include "art_method.h"
 #include "base/indenter.h"
+#include "base/stats.h"
 #include "scoped_thread_state_change-inl.h"
 
 namespace art {
@@ -88,56 +89,62 @@ void CodeInfo::DecodeDexRegisterMap(uint32_t stack_map_index,
   }
 }
 
-std::ostream& operator<<(std::ostream& stream, const DexRegisterLocation& reg) {
-  using Kind = DexRegisterLocation::Kind;
-  switch (reg.GetKind()) {
-    case Kind::kNone:
-      return stream << "None";
-    case Kind::kInStack:
-      return stream << "sp+" << reg.GetValue();
-    case Kind::kInRegister:
-      return stream << "r" << reg.GetValue();
-    case Kind::kInRegisterHigh:
-      return stream << "r" << reg.GetValue() << "/hi";
-    case Kind::kInFpuRegister:
-      return stream << "f" << reg.GetValue();
-    case Kind::kInFpuRegisterHigh:
-      return stream << "f" << reg.GetValue() << "/hi";
-    case Kind::kConstant:
-      return stream << "#" << reg.GetValue();
-    case Kind::kInvalid:
-      return stream << "Invalid";
-    default:
-      return stream << "DexRegisterLocation(" << static_cast<uint32_t>(reg.GetKind())
-                    << "," << reg.GetValue() << ")";
+template<typename Accessor>
+static void AddTableSizeStats(const char* table_name,
+                              const BitTable<Accessor::kCount>& table,
+                              /*out*/ Stats* parent) {
+  Stats* table_stats = parent->Child(table_name);
+  table_stats->AddBits(table.BitSize());
+  table_stats->Child("Header")->AddBits(table.HeaderBitSize());
+  const char* const* column_names = GetBitTableColumnNames<Accessor>();
+  for (size_t c = 0; c < table.NumColumns(); c++) {
+    if (table.NumColumnBits(c) > 0) {
+      Stats* column_stats = table_stats->Child(column_names[c]);
+      column_stats->AddBits(table.NumRows() * table.NumColumnBits(c), table.NumRows());
+    }
   }
 }
 
-static void DumpDexRegisterMap(VariableIndentationOutputStream* vios,
-                               const DexRegisterMap& map) {
-  if (!map.empty()) {
+void CodeInfo::AddSizeStats(/*out*/ Stats* parent) const {
+  Stats* stats = parent->Child("CodeInfo");
+  stats->AddBytes(size_);
+  stats->Child("Header")->AddBytes(UnsignedLeb128Size(size_));
+  AddTableSizeStats<StackMap>("StackMaps", stack_maps_, stats);
+  AddTableSizeStats<RegisterMask>("RegisterMasks", register_masks_, stats);
+  AddTableSizeStats<MaskInfo>("StackMasks", stack_masks_, stats);
+  AddTableSizeStats<InvokeInfo>("InvokeInfos", invoke_infos_, stats);
+  AddTableSizeStats<InlineInfo>("InlineInfos", inline_infos_, stats);
+  AddTableSizeStats<MaskInfo>("DexRegisterMasks", dex_register_masks_, stats);
+  AddTableSizeStats<DexRegisterMapInfo>("DexRegisterMaps", dex_register_maps_, stats);
+  AddTableSizeStats<DexRegisterInfo>("DexRegisterCatalog", dex_register_catalog_, stats);
+}
+
+void DexRegisterMap::Dump(VariableIndentationOutputStream* vios) const {
+  if (HasAnyLiveDexRegisters()) {
     ScopedIndentation indent1(vios);
-    for (size_t i = 0; i < map.size(); ++i) {
-      if (map.IsDexRegisterLive(i)) {
-        vios->Stream() << "v" << i << ":" << map.Get(i) << " ";
+    for (size_t i = 0; i < size(); ++i) {
+      DexRegisterLocation reg = (*this)[i];
+      if (reg.IsLive()) {
+        vios->Stream() << "v" << i << ":" << reg << " ";
       }
     }
     vios->Stream() << "\n";
   }
 }
 
-template<uint32_t kNumColumns>
+template<typename Accessor>
 static void DumpTable(VariableIndentationOutputStream* vios,
                       const char* table_name,
-                      const BitTable<kNumColumns>& table,
+                      const BitTable<Accessor::kCount>& table,
                       bool verbose,
                       bool is_mask = false) {
   if (table.NumRows() != 0) {
-    vios->Stream() << table_name << " BitSize=" << table.NumRows() * table.NumRowBits();
+    vios->Stream() << table_name << " BitSize=" << table.BitSize();
     vios->Stream() << " Rows=" << table.NumRows() << " Bits={";
+    const char* const* column_names = GetBitTableColumnNames<Accessor>();
     for (size_t c = 0; c < table.NumColumns(); c++) {
       vios->Stream() << (c != 0 ? " " : "");
-      vios->Stream() << table.NumColumnBits(c);
+      vios->Stream() << column_names[c] << "=" << table.NumColumnBits(c);
     }
     vios->Stream() << "}\n";
     if (verbose) {
@@ -171,14 +178,14 @@ void CodeInfo::Dump(VariableIndentationOutputStream* vios,
       << " BitSize="  << size_ * kBitsPerByte
       << "\n";
   ScopedIndentation indent1(vios);
-  DumpTable(vios, "StackMaps", stack_maps_, verbose);
-  DumpTable(vios, "RegisterMasks", register_masks_, verbose);
-  DumpTable(vios, "StackMasks", stack_masks_, verbose, true /* is_mask */);
-  DumpTable(vios, "InvokeInfos", invoke_infos_, verbose);
-  DumpTable(vios, "InlineInfos", inline_infos_, verbose);
-  DumpTable(vios, "DexRegisterMasks", dex_register_masks_, verbose, true /* is_mask */);
-  DumpTable(vios, "DexRegisterMaps", dex_register_maps_, verbose);
-  DumpTable(vios, "DexRegisterCatalog", dex_register_catalog_, verbose);
+  DumpTable<StackMap>(vios, "StackMaps", stack_maps_, verbose);
+  DumpTable<RegisterMask>(vios, "RegisterMasks", register_masks_, verbose);
+  DumpTable<MaskInfo>(vios, "StackMasks", stack_masks_, verbose, true /* is_mask */);
+  DumpTable<InvokeInfo>(vios, "InvokeInfos", invoke_infos_, verbose);
+  DumpTable<InlineInfo>(vios, "InlineInfos", inline_infos_, verbose);
+  DumpTable<MaskInfo>(vios, "DexRegisterMasks", dex_register_masks_, verbose, true /* is_mask */);
+  DumpTable<DexRegisterMapInfo>(vios, "DexRegisterMaps", dex_register_maps_, verbose);
+  DumpTable<DexRegisterInfo>(vios, "DexRegisterCatalog", dex_register_catalog_, verbose);
 
   // Display stack maps along with (live) Dex register maps.
   if (verbose) {
@@ -208,7 +215,7 @@ void StackMap::Dump(VariableIndentationOutputStream* vios,
     vios->Stream() << stack_mask.LoadBit(e - i - 1);
   }
   vios->Stream() << ")\n";
-  DumpDexRegisterMap(vios, code_info.GetDexRegisterMapOf(*this));
+  code_info.GetDexRegisterMapOf(*this).Dump(vios);
   uint32_t depth = code_info.GetInlineDepthOf(*this);
   for (size_t d = 0; d < depth; d++) {
     InlineInfo inline_info = code_info.GetInlineInfoAtDepth(*this, d);
@@ -235,7 +242,7 @@ void InlineInfo::Dump(VariableIndentationOutputStream* vios,
         << ", method_index=" << GetMethodIndex(method_info);
   }
   vios->Stream() << ")\n";
-  DumpDexRegisterMap(vios, code_info.GetDexRegisterMapAtDepth(depth, stack_map));
+  code_info.GetDexRegisterMapAtDepth(depth, stack_map).Dump(vios);
 }
 
 }  // namespace art
