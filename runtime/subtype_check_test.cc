@@ -86,9 +86,11 @@ struct MockClass {
   }
 
   template <bool kTransactionActive>
-  bool CasFieldWeakSequentiallyConsistent32(art::MemberOffset offset,
-                                            int32_t old_value,
-                                            int32_t new_value)
+  bool CasField32(art::MemberOffset offset,
+                  int32_t old_value,
+                  int32_t new_value,
+                  CASMode mode ATTRIBUTE_UNUSED,
+                  std::memory_order memory_order ATTRIBUTE_UNUSED)
       REQUIRES_SHARED(Locks::mutator_lock_) {
     UNUSED(offset);
     if (old_value == GetField32Volatile(offset)) {
@@ -652,13 +654,15 @@ void EnsureStateChangedTestRecursive(
     MockClass* klass,
     size_t cur_depth,
     size_t total_depth,
-    std::vector<std::pair<SubtypeCheckInfo::State, SubtypeCheckInfo::State>> transitions) {
+    const std::vector<std::pair<SubtypeCheckInfo::State, SubtypeCheckInfo::State>>& transitions) {
   MockScopedLockSubtypeCheck lock_a;
   MockScopedLockMutator lock_b;
   using SCTree = MockSubtypeCheck;
 
   ASSERT_EQ(cur_depth, klass->Depth());
-  ApplyTransition(SCTree::Lookup(klass), transitions[cur_depth].first, transitions[cur_depth].second);
+  ApplyTransition(SCTree::Lookup(klass),
+                  transitions[cur_depth].first,
+                  transitions[cur_depth].second);
 
   if (total_depth == cur_depth + 1) {
     return;
@@ -674,7 +678,7 @@ void EnsureStateChangedTestRecursive(
 void EnsureStateChangedTest(
     MockClass* root,
     size_t depth,
-    std::vector<std::pair<SubtypeCheckInfo::State, SubtypeCheckInfo::State>> transitions) {
+    const std::vector<std::pair<SubtypeCheckInfo::State, SubtypeCheckInfo::State>>& transitions) {
   ASSERT_EQ(depth, transitions.size());
 
   EnsureStateChangedTestRecursive(root, /*cur_depth*/0u, depth, transitions);

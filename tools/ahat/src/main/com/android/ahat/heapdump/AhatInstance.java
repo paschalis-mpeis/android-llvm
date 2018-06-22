@@ -17,6 +17,7 @@
 package com.android.ahat.heapdump;
 
 import com.android.ahat.dominators.DominatorsComputation;
+import com.android.ahat.progress.Progress;
 import java.awt.image.BufferedImage;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -452,6 +453,18 @@ public abstract class AhatInstance implements Diffable<AhatInstance>,
   }
 
   /**
+   * Returns the class object that this object represents the overhead for.
+   * ART adds a fake byte[] $classOverhead static field to classes to show the
+   * overheads associated with the class. If this is one such byte[] instance,
+   * returns the class it is associated with. Otherwise null is returned.
+   *
+   * @return the class instance that this is the overhead for
+   */
+  public AhatClassObj getAssociatedClassForOverhead() {
+    return null;
+  }
+
+  /**
    * Returns the (bounded-length) string associated with this instance.
    * Applies to instances of java.lang.String, char[], and in some cases
    * byte[]. Returns null if this object cannot be interpreted as a string.
@@ -603,10 +616,16 @@ public abstract class AhatInstance implements Diffable<AhatInstance>,
    *   mNextInstanceToGcRootField
    *   mHardReverseReferences
    *   mSoftReverseReferences
+   *
+   * @param progress used to track progress of the traversal.
+   * @param numInsts upper bound on the total number of instances reachable
+   *                 from the root, solely used for the purposes of tracking
+   *                 progress.
    */
-  static void computeReverseReferences(SuperRoot root) {
+  static void computeReverseReferences(SuperRoot root, Progress progress, long numInsts) {
     // Start by doing a breadth first search through strong references.
     // Then continue the breadth first search through weak references.
+    progress.start("Reversing references", numInsts);
     Queue<Reference> strong = new ArrayDeque<Reference>();
     Queue<Reference> weak = new ArrayDeque<Reference>();
 
@@ -620,6 +639,7 @@ public abstract class AhatInstance implements Diffable<AhatInstance>,
 
       if (ref.ref.mNextInstanceToGcRoot == null) {
         // This is the first time we have seen ref.ref.
+        progress.advance();
         ref.ref.mNextInstanceToGcRoot = ref.src;
         ref.ref.mNextInstanceToGcRootField = ref.field;
         ref.ref.mHardReverseReferences = new ArrayList<AhatInstance>();
@@ -646,6 +666,7 @@ public abstract class AhatInstance implements Diffable<AhatInstance>,
 
       if (ref.ref.mNextInstanceToGcRoot == null) {
         // This is the first time we have seen ref.ref.
+        progress.advance();
         ref.ref.mNextInstanceToGcRoot = ref.src;
         ref.ref.mNextInstanceToGcRootField = ref.field;
         ref.ref.mHardReverseReferences = new ArrayList<AhatInstance>();
@@ -664,6 +685,8 @@ public abstract class AhatInstance implements Diffable<AhatInstance>,
         ref.ref.mSoftReverseReferences.add(ref.src);
       }
     }
+
+    progress.done();
   }
 
   /**

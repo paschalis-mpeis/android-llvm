@@ -16,6 +16,8 @@
 
 #include "common_compiler_test.h"
 
+#include <type_traits>
+
 #include "arch/instruction_set_features.h"
 #include "art_field-inl.h"
 #include "art_method-inl.h"
@@ -79,6 +81,7 @@ void CommonCompilerTest::MakeExecutable(ArtMethod* method) {
     const size_t size = method_info.size() + vmap_table.size() + sizeof(method_header) + code_size;
     chunk->reserve(size + max_padding);
     chunk->resize(sizeof(method_header));
+    static_assert(std::is_trivially_copyable<OatQuickMethodHeader>::value, "Cannot use memcpy");
     memcpy(&(*chunk)[0], &method_header, sizeof(method_header));
     chunk->insert(chunk->begin(), vmap_table.begin(), vmap_table.end());
     chunk->insert(chunk->begin(), method_info.begin(), method_info.end());
@@ -133,9 +136,9 @@ void CommonCompilerTest::MakeExecutable(ObjPtr<mirror::ClassLoader> class_loader
 
 // Get the set of image classes given to the compiler-driver in SetUp. Note: the compiler
 // driver assumes ownership of the set, so the test should properly release the set.
-std::unordered_set<std::string>* CommonCompilerTest::GetImageClasses() {
+std::unique_ptr<HashSet<std::string>> CommonCompilerTest::GetImageClasses() {
   // Empty set: by default no classes are retained in the image.
-  return new std::unordered_set<std::string>();
+  return std::make_unique<HashSet<std::string>>();
 }
 
 // Get ProfileCompilationInfo that should be passed to the driver.

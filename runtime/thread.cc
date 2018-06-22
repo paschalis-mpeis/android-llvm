@@ -504,6 +504,13 @@ static size_t FixStackSize(size_t stack_size) {
   // so include that here to support apps that expect large native stacks.
   stack_size += 1 * MB;
 
+  // Under sanitization, frames of the interpreter may become bigger, both for C code as
+  // well as the ShadowFrame. Ensure a larger minimum size. Otherwise initialization
+  // of all core classes cannot be done in all test circumstances.
+  if (kMemoryToolIsAvailable) {
+    stack_size = std::max(2 * MB, stack_size);
+  }
+
   // It's not possible to request a stack smaller than the system-defined PTHREAD_STACK_MIN.
   if (stack_size < PTHREAD_STACK_MIN) {
     stack_size = PTHREAD_STACK_MIN;
@@ -598,7 +605,7 @@ void Thread::InstallImplicitProtection() {
           1u;
 #endif
       volatile char space[kPageSize - (kAsanMultiplier * 256)];
-      char sink ATTRIBUTE_UNUSED = space[zero];
+      char sink ATTRIBUTE_UNUSED = space[zero];  // NOLINT
       if (reinterpret_cast<uintptr_t>(space) >= target + kPageSize) {
         Touch(target);
       }

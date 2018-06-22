@@ -121,16 +121,15 @@ Object* Object::CopyObject(ObjPtr<mirror::Object> dest,
     CopyReferenceFieldsWithReadBarrierVisitor visitor(dest);
     src->VisitReferences(visitor, visitor);
   }
-  gc::Heap* heap = Runtime::Current()->GetHeap();
   // Perform write barriers on copied object references.
   ObjPtr<Class> c = src->GetClass();
   if (c->IsArrayClass()) {
     if (!c->GetComponentType()->IsPrimitive()) {
       ObjectArray<Object>* array = dest->AsObjectArray<Object>();
-      heap->WriteBarrierArray(dest, 0, array->GetLength());
+      WriteBarrier::ForArrayWrite(dest, 0, array->GetLength());
     }
   } else {
-    heap->WriteBarrierEveryFieldOf(dest);
+    WriteBarrier::ForEveryFieldWrite(dest);
   }
   return dest.Ptr();
 }
@@ -199,7 +198,7 @@ int32_t Object::IdentityHashCode() {
         DCHECK_EQ(hash_word.GetState(), LockWord::kHashCode);
         // Use a strong CAS to prevent spurious failures since these can make the boot image
         // non-deterministic.
-        if (current_this->CasLockWordStrongRelaxed(lw, hash_word)) {
+        if (current_this->CasLockWord(lw, hash_word, CASMode::kStrong, std::memory_order_relaxed)) {
           return hash_word.GetHashCode();
         }
         break;
@@ -283,10 +282,7 @@ ArtField* Object::FindFieldByOffset(MemberOffset offset) {
 }
 
 std::string Object::PrettyTypeOf(ObjPtr<mirror::Object> obj) {
-  if (obj == nullptr) {
-    return "null";
-  }
-  return obj->PrettyTypeOf();
+  return (obj == nullptr) ? "null" : obj->PrettyTypeOf();
 }
 
 std::string Object::PrettyTypeOf() {
