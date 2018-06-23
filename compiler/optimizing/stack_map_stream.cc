@@ -61,6 +61,16 @@ void StackMapStream::BeginStackMapEntry(uint32_t dex_pc,
   current_stack_map_[StackMap::kPackedNativePc] =
       StackMap::PackNativePc(native_pc_offset, instruction_set_);
   current_stack_map_[StackMap::kDexPc] = dex_pc;
+  if (stack_maps_.size() > 0) {
+    // Check that non-catch stack maps are sorted by pc.
+    // Catch stack maps are at the end and may be unordered.
+    if (stack_maps_.back()[StackMap::kKind] == StackMap::Kind::Catch) {
+      DCHECK(current_stack_map_[StackMap::kKind] == StackMap::Kind::Catch);
+    } else if (current_stack_map_[StackMap::kKind] != StackMap::Kind::Catch) {
+      DCHECK_LE(stack_maps_.back()[StackMap::kPackedNativePc],
+                current_stack_map_[StackMap::kPackedNativePc]);
+    }
+  }
   if (register_mask != 0) {
     uint32_t shift = LeastSignificantBit(register_mask);
     BitTableBuilder<RegisterMask>::Entry entry;
@@ -291,16 +301,16 @@ size_t StackMapStream::PrepareForFillIn() {
     }
   }
 
-  size_t bit_offset = 0;
-  stack_maps_.Encode(&out_, &bit_offset);
-  register_masks_.Encode(&out_, &bit_offset);
-  stack_masks_.Encode(&out_, &bit_offset);
-  invoke_infos_.Encode(&out_, &bit_offset);
-  inline_infos_.Encode(&out_, &bit_offset);
-  dex_register_masks_.Encode(&out_, &bit_offset);
-  dex_register_maps_.Encode(&out_, &bit_offset);
-  dex_register_catalog_.Encode(&out_, &bit_offset);
-  EncodeVarintBits(&out_, &bit_offset, num_dex_registers_);
+  BitMemoryWriter<ScopedArenaVector<uint8_t>> out(&out_);
+  stack_maps_.Encode(out);
+  register_masks_.Encode(out);
+  stack_masks_.Encode(out);
+  invoke_infos_.Encode(out);
+  inline_infos_.Encode(out);
+  dex_register_masks_.Encode(out);
+  dex_register_maps_.Encode(out);
+  dex_register_catalog_.Encode(out);
+  EncodeVarintBits(out, num_dex_registers_);
 
   return UnsignedLeb128Size(out_.size()) +  out_.size();
 }

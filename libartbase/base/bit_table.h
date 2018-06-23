@@ -39,28 +39,24 @@ constexpr uint32_t kVarintSmallValue = 11;  // Maximum value which is stored as-
 // The first four bits determine the variable length of the encoded integer:
 //   Values 0..11 represent the result as-is, with no further following bits.
 //   Values 12..15 mean the result is in the next 8/16/24/32-bits respectively.
-ALWAYS_INLINE static inline uint32_t DecodeVarintBits(BitMemoryRegion region, size_t* bit_offset) {
-  uint32_t x = region.LoadBitsAndAdvance(bit_offset, kVarintHeaderBits);
+ALWAYS_INLINE static inline uint32_t DecodeVarintBits(BitMemoryReader& reader) {
+  uint32_t x = reader.ReadBits(kVarintHeaderBits);
   if (x > kVarintSmallValue) {
-    x = region.LoadBitsAndAdvance(bit_offset, (x - kVarintSmallValue) * kBitsPerByte);
+    x = reader.ReadBits((x - kVarintSmallValue) * kBitsPerByte);
   }
   return x;
 }
 
 // Store variable-length bit-packed integer from `data` starting at `bit_offset`.
 template<typename Vector>
-ALWAYS_INLINE static inline void EncodeVarintBits(Vector* out, size_t* bit_offset, uint32_t value) {
+ALWAYS_INLINE static inline void EncodeVarintBits(BitMemoryWriter<Vector>& out, uint32_t value) {
   if (value <= kVarintSmallValue) {
-    out->resize(BitsToBytesRoundUp(*bit_offset + kVarintHeaderBits));
-    BitMemoryRegion region(MemoryRegion(out->data(), out->size()));
-    region.StoreBitsAndAdvance(bit_offset, value, kVarintHeaderBits);
+    out.WriteBits(value, kVarintHeaderBits);
   } else {
     uint32_t num_bits = RoundUp(MinimumBitsToStore(value), kBitsPerByte);
-    out->resize(BitsToBytesRoundUp(*bit_offset + kVarintHeaderBits + num_bits));
-    BitMemoryRegion region(MemoryRegion(out->data(), out->size()));
     uint32_t header = kVarintSmallValue + num_bits / kBitsPerByte;
-    region.StoreBitsAndAdvance(bit_offset, header, kVarintHeaderBits);
-    region.StoreBitsAndAdvance(bit_offset, value, num_bits);
+    out.WriteBits(header, kVarintHeaderBits);
+    out.WriteBits(value, num_bits);
   }
 }
 
@@ -74,26 +70,25 @@ class BitTableBase {
   static constexpr uint32_t kValueBias = kNoValue;  // Bias so that -1 is encoded as 0.
 
   BitTableBase() {}
-  BitTableBase(void* data, size_t size, size_t* bit_offset) {
-    Decode(BitMemoryRegion(MemoryRegion(data, size)), bit_offset);
+  explicit BitTableBase(BitMemoryReader& reader) {
+    Decode(reader);
   }
 
-  ALWAYS_INLINE void Decode(BitMemoryRegion region, size_t* bit_offset) {
+  ALWAYS_INLINE void Decode(BitMemoryReader& reader) {
     // Decode row count and column sizes from the table header.
-    size_t initial_bit_offset = *bit_offset;
-    num_rows_ = DecodeVarintBits(region, bit_offset);
+    size_t initial_bit_offset = reader.GetBitOffset();
+    num_rows_ = DecodeVarintBits(reader);
     if (num_rows_ != 0) {
       column_offset_[0] = 0;
       for (uint32_t i = 0; i < kNumColumns; i++) {
-        size_t column_end = column_offset_[i] + DecodeVarintBits(region, bit_offset);
+        size_t column_end = column_offset_[i] + DecodeVarintBits(reader);
         column_offset_[i + 1] = dchecked_integral_cast<uint16_t>(column_end);
       }
     }
-    header_bit_size_ = *bit_offset - initial_bit_offset;
+    header_bit_size_ = reader.GetBitOffset() - initial_bit_offset;
 
     // Record the region which contains the table data and skip past it.
-    table_data_ = region.Subregion(*bit_offset, num_rows_ * NumRowBits());
-    *bit_offset += table_data_.size_in_bits();
+    table_data_ = reader.Skip(num_rows_ * NumRowBits());
   }
 
   ALWAYS_INLINE uint32_t Get(uint32_t row, uint32_t column = 0) const {
@@ -139,14 +134,14 @@ class BitTableAccessor {
   static constexpr uint32_t kNumColumns = NumColumns;
   static constexpr uint32_t kNoValue = BitTableBase<kNumColumns>::kNoValue;
 
-  BitTableAccessor() {}
   BitTableAccessor(const BitTableBase<kNumColumns>* table, uint32_t row)
       : table_(table), row_(row) {
+    DCHECK(table_ != nullptr);
   }
 
   ALWAYS_INLINE uint32_t Row() const { return row_; }
 
-  ALWAYS_INLINE bool IsValid() const { return table_ != nullptr && row_ < table_->NumRows(); }
+  ALWAYS_INLINE bool IsValid() const { return row_ < table_->NumRows(); }
 
   ALWAYS_INLINE bool Equals(const BitTableAccessor& other) {
     return this->table_ == other.table_ && this->row_ == other.row_;
@@ -188,12 +183,58 @@ static const char* const* GetBitTableColumnNames() {
 template<typename Accessor>
 class BitTable : public BitTableBase<Accessor::kNumColumns> {
  public:
+  class const_iterator : public std::iterator<std::random_access_iterator_tag,
+                                              /* value_type */ Accessor,
+                                              /* difference_type */ int32_t,
+                                              /* pointer */ void,
+                                              /* reference */ void> {
+   public:
+    using difference_type = int32_t;
+    const_iterator() {}
+    const_iterator(const BitTable* table, uint32_t row) : table_(table), row_(row) {}
+    const_iterator operator+(difference_type n) { return const_iterator(table_, row_ + n); }
+    const_iterator operator-(difference_type n) { return const_iterator(table_, row_ - n); }
+    difference_type operator-(const const_iterator& other) { return row_ - other.row_; }
+    void operator+=(difference_type rows) { row_ += rows; }
+    void operator-=(difference_type rows) { row_ -= rows; }
+    const_iterator operator++() { return const_iterator(table_, ++row_); }
+    const_iterator operator--() { return const_iterator(table_, --row_); }
+    const_iterator operator++(int) { return const_iterator(table_, row_++); }
+    const_iterator operator--(int) { return const_iterator(table_, row_--); }
+    bool operator==(const_iterator i) const { DCHECK(table_ == i.table_); return row_ == i.row_; }
+    bool operator!=(const_iterator i) const { DCHECK(table_ == i.table_); return row_ != i.row_; }
+    bool operator<=(const_iterator i) const { DCHECK(table_ == i.table_); return row_ <= i.row_; }
+    bool operator>=(const_iterator i) const { DCHECK(table_ == i.table_); return row_ >= i.row_; }
+    bool operator<(const_iterator i) const { DCHECK(table_ == i.table_); return row_ < i.row_; }
+    bool operator>(const_iterator i) const { DCHECK(table_ == i.table_); return row_ > i.row_; }
+    Accessor operator*() { return Accessor(table_, row_); }
+    Accessor operator->() { return Accessor(table_, row_); }
+    Accessor operator[](size_t index) { return Accessor(table_, row_ + index); }
+   private:
+    const BitTable* table_ = nullptr;
+    uint32_t row_ = 0;
+  };
+
   using BitTableBase<Accessor::kNumColumns>::BitTableBase;  // Constructors.
+
+  ALWAYS_INLINE const_iterator begin() const { return const_iterator(this, 0); }
+  ALWAYS_INLINE const_iterator end() const { return const_iterator(this, this->NumRows()); }
 
   ALWAYS_INLINE Accessor GetRow(uint32_t row) const {
     return Accessor(this, row);
   }
+
+  ALWAYS_INLINE Accessor GetInvalidRow() const {
+    return Accessor(this, static_cast<uint32_t>(-1));
+  }
 };
+
+template<typename Accessor>
+typename BitTable<Accessor>::const_iterator operator+(
+    typename BitTable<Accessor>::const_iterator::difference_type n,
+    typename BitTable<Accessor>::const_iterator a) {
+  return a + n;
+}
 
 // Helper class for encoding BitTable. It can optionally de-duplicate the inputs.
 template<uint32_t kNumColumns>
@@ -234,6 +275,7 @@ class BitTableBuilderBase {
 
   Entry& operator[](size_t row) { return rows_[row]; }
   const Entry& operator[](size_t row) const { return rows_[row]; }
+  const Entry& back() const { return rows_.back(); }
   size_t size() const { return rows_.size(); }
 
   // Append given value to the vector without de-duplication.
@@ -290,25 +332,22 @@ class BitTableBuilderBase {
 
   // Encode the stored data into a BitTable.
   template<typename Vector>
-  void Encode(Vector* out, size_t* bit_offset) const {
-    size_t initial_bit_offset = *bit_offset;
+  void Encode(BitMemoryWriter<Vector>& out) const {
+    size_t initial_bit_offset = out.GetBitOffset();
 
     std::array<uint32_t, kNumColumns> column_bits;
     Measure(&column_bits);
-    EncodeVarintBits(out, bit_offset, size());
+    EncodeVarintBits(out, size());
     if (size() != 0) {
       // Write table header.
       for (uint32_t c = 0; c < kNumColumns; c++) {
-        EncodeVarintBits(out, bit_offset, column_bits[c]);
+        EncodeVarintBits(out, column_bits[c]);
       }
 
       // Write table data.
-      uint32_t row_bits = std::accumulate(column_bits.begin(), column_bits.end(), 0u);
-      out->resize(BitsToBytesRoundUp(*bit_offset + row_bits * size()));
-      BitMemoryRegion region(MemoryRegion(out->data(), out->size()));
       for (uint32_t r = 0; r < size(); r++) {
         for (uint32_t c = 0; c < kNumColumns; c++) {
-          region.StoreBitsAndAdvance(bit_offset, rows_[r][c] - kValueBias, column_bits[c]);
+          out.WriteBits(rows_[r][c] - kValueBias, column_bits[c]);
         }
       }
     }
@@ -316,8 +355,8 @@ class BitTableBuilderBase {
     // Verify the written data.
     if (kIsDebugBuild) {
       BitTableBase<kNumColumns> table;
-      BitMemoryRegion region(MemoryRegion(out->data(), out->size()));
-      table.Decode(region, &initial_bit_offset);
+      BitMemoryReader reader(out.GetWrittenRegion(), initial_bit_offset);
+      table.Decode(reader);
       DCHECK_EQ(size(), table.NumRows());
       for (uint32_t c = 0; c < kNumColumns; c++) {
         DCHECK_EQ(column_bits[c], table.NumColumnBits(c));
@@ -384,28 +423,26 @@ class BitmapTableBuilder {
 
   // Encode the stored data into a BitTable.
   template<typename Vector>
-  void Encode(Vector* out, size_t* bit_offset) const {
-    size_t initial_bit_offset = *bit_offset;
+  void Encode(BitMemoryWriter<Vector>& out) const {
+    size_t initial_bit_offset = out.GetBitOffset();
 
-    EncodeVarintBits(out, bit_offset, size());
+    EncodeVarintBits(out, size());
     if (size() != 0) {
-      EncodeVarintBits(out, bit_offset, max_num_bits_);
+      EncodeVarintBits(out, max_num_bits_);
 
       // Write table data.
-      out->resize(BitsToBytesRoundUp(*bit_offset + max_num_bits_ * size()));
-      BitMemoryRegion region(MemoryRegion(out->data(), out->size()));
       for (MemoryRegion row : rows_) {
         BitMemoryRegion src(row);
-        region.StoreBits(*bit_offset, src, std::min(max_num_bits_, src.size_in_bits()));
-        *bit_offset += max_num_bits_;
+        BitMemoryRegion dst = out.Allocate(max_num_bits_);
+        dst.StoreBits(/* bit_offset */ 0, src, std::min(max_num_bits_, src.size_in_bits()));
       }
     }
 
     // Verify the written data.
     if (kIsDebugBuild) {
       BitTableBase<1> table;
-      BitMemoryRegion region(MemoryRegion(out->data(), out->size()));
-      table.Decode(region, &initial_bit_offset);
+      BitMemoryReader reader(out.GetWrittenRegion(), initial_bit_offset);
+      table.Decode(reader);
       DCHECK_EQ(size(), table.NumRows());
       DCHECK_EQ(max_num_bits_, table.NumColumnBits(0));
       for (uint32_t r = 0; r < size(); r++) {
