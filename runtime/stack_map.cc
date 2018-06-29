@@ -22,15 +22,22 @@
 #include "art_method.h"
 #include "base/indenter.h"
 #include "base/stats.h"
+#include "oat_quick_method_header.h"
 #include "scoped_thread_state_change-inl.h"
 
 namespace art {
 
+CodeInfo::CodeInfo(const OatQuickMethodHeader* header)
+  : CodeInfo(header->GetOptimizedCodeInfoPtr()) {
+}
+
 void CodeInfo::Decode(const uint8_t* data) {
-  size_t non_header_size = DecodeUnsignedLeb128(&data);
-  size_ = UnsignedLeb128Size(non_header_size) + non_header_size;
-  MemoryRegion region(const_cast<uint8_t*>(data), non_header_size);
-  BitMemoryReader reader(BitMemoryRegion(region), /* bit_offset */ 0);
+  const uint8_t* begin = data;
+  frame_size_in_bytes_ = DecodeUnsignedLeb128(&data);
+  core_spill_mask_ = DecodeUnsignedLeb128(&data);
+  fp_spill_mask_ = DecodeUnsignedLeb128(&data);
+  number_of_dex_registers_ = DecodeUnsignedLeb128(&data);
+  BitMemoryReader reader(data, /* bit_offset */ 0);
   stack_maps_.Decode(reader);
   register_masks_.Decode(reader);
   stack_masks_.Decode(reader);
@@ -39,8 +46,7 @@ void CodeInfo::Decode(const uint8_t* data) {
   dex_register_masks_.Decode(reader);
   dex_register_maps_.Decode(reader);
   dex_register_catalog_.Decode(reader);
-  number_of_dex_registers_ = DecodeVarintBits(reader);
-  CHECK_EQ(non_header_size, BitsToBytesRoundUp(reader.GetBitOffset())) << "Invalid CodeInfo";
+  size_in_bits_ = (data - begin) * kBitsPerByte + reader.GetBitOffset();
 }
 
 BitTable<StackMap>::const_iterator CodeInfo::BinarySearchNativePc(uint32_t packed_pc) const {
@@ -145,8 +151,7 @@ static void AddTableSizeStats(const char* table_name,
 
 void CodeInfo::AddSizeStats(/*out*/ Stats* parent) const {
   Stats* stats = parent->Child("CodeInfo");
-  stats->AddBytes(size_);
-  stats->Child("Header")->AddBytes(UnsignedLeb128Size(size_));
+  stats->AddBytes(Size());
   AddTableSizeStats<StackMap>("StackMaps", stack_maps_, stats);
   AddTableSizeStats<RegisterMask>("RegisterMasks", register_masks_, stats);
   AddTableSizeStats<MaskInfo>("StackMasks", stack_masks_, stats);
@@ -213,7 +218,7 @@ void CodeInfo::Dump(VariableIndentationOutputStream* vios,
                     const MethodInfo& method_info) const {
   vios->Stream()
       << "CodeInfo"
-      << " BitSize="  << size_ * kBitsPerByte
+      << " BitSize="  << size_in_bits_
       << "\n";
   ScopedIndentation indent1(vios);
   DumpTable<StackMap>(vios, "StackMaps", stack_maps_, verbose);

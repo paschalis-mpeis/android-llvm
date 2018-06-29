@@ -610,7 +610,6 @@ class Dex2Oat FINAL {
  public:
   explicit Dex2Oat(TimingLogger* timings) :
       compiler_kind_(Compiler::kOptimizing),
-      instruction_set_(kRuntimeISA == InstructionSet::kArm ? InstructionSet::kThumb2 : kRuntimeISA),
       // Take the default set of instruction features from the build.
       image_file_location_oat_checksum_(0),
       image_file_location_oat_data_begin_(0),
@@ -696,29 +695,30 @@ class Dex2Oat FINAL {
   }
 
   bool VerifyProfileData() {
-    return profile_compilation_info_->VerifyProfileData(dex_files_);
+    return profile_compilation_info_->VerifyProfileData(compiler_options_->dex_files_for_oat_file_);
   }
 
   void ParseInstructionSetVariant(const std::string& option, ParserOptions* parser_options) {
-    instruction_set_features_ = InstructionSetFeatures::FromVariant(
-        instruction_set_, option, &parser_options->error_msg);
-    if (instruction_set_features_.get() == nullptr) {
+    compiler_options_->instruction_set_features_ = InstructionSetFeatures::FromVariant(
+        compiler_options_->instruction_set_, option, &parser_options->error_msg);
+    if (compiler_options_->instruction_set_features_ == nullptr) {
       Usage("%s", parser_options->error_msg.c_str());
     }
   }
 
   void ParseInstructionSetFeatures(const std::string& option, ParserOptions* parser_options) {
-    if (instruction_set_features_ == nullptr) {
-      instruction_set_features_ = InstructionSetFeatures::FromVariant(
-          instruction_set_, "default", &parser_options->error_msg);
-      if (instruction_set_features_.get() == nullptr) {
+    if (compiler_options_->instruction_set_features_ == nullptr) {
+      compiler_options_->instruction_set_features_ = InstructionSetFeatures::FromVariant(
+          compiler_options_->instruction_set_, "default", &parser_options->error_msg);
+      if (compiler_options_->instruction_set_features_ == nullptr) {
         Usage("Problem initializing default instruction set features variant: %s",
               parser_options->error_msg.c_str());
       }
     }
-    instruction_set_features_ =
-        instruction_set_features_->AddFeaturesFromString(option, &parser_options->error_msg);
-    if (instruction_set_features_ == nullptr) {
+    compiler_options_->instruction_set_features_ =
+        compiler_options_->instruction_set_features_->AddFeaturesFromString(
+            option, &parser_options->error_msg);
+    if (compiler_options_->instruction_set_features_ == nullptr) {
       Usage("Error parsing '%s': %s", option.c_str(), parser_options->error_msg.c_str());
     }
   }
@@ -870,23 +870,23 @@ class Dex2Oat FINAL {
 
     // If no instruction set feature was given, use the default one for the target
     // instruction set.
-    if (instruction_set_features_.get() == nullptr) {
-      instruction_set_features_ = InstructionSetFeatures::FromVariant(
-         instruction_set_, "default", &parser_options->error_msg);
-      if (instruction_set_features_.get() == nullptr) {
+    if (compiler_options_->instruction_set_features_.get() == nullptr) {
+      compiler_options_->instruction_set_features_ = InstructionSetFeatures::FromVariant(
+          compiler_options_->instruction_set_, "default", &parser_options->error_msg);
+      if (compiler_options_->instruction_set_features_ == nullptr) {
         Usage("Problem initializing default instruction set features variant: %s",
               parser_options->error_msg.c_str());
       }
     }
 
-    if (instruction_set_ == kRuntimeISA) {
+    if (compiler_options_->instruction_set_ == kRuntimeISA) {
       std::unique_ptr<const InstructionSetFeatures> runtime_features(
           InstructionSetFeatures::FromCppDefines());
-      if (!instruction_set_features_->Equals(runtime_features.get())) {
+      if (!compiler_options_->GetInstructionSetFeatures()->Equals(runtime_features.get())) {
         LOG(WARNING) << "Mismatch between dex2oat instruction set features ("
-            << *instruction_set_features_ << ") and those of dex2oat executable ("
-            << *runtime_features <<") for the command line:\n"
-            << CommandLine();
+            << *compiler_options_->GetInstructionSetFeatures()
+            << ") and those of dex2oat executable (" << *runtime_features
+            << ") for the command line:\n" << CommandLine();
       }
     }
 
@@ -896,7 +896,7 @@ class Dex2Oat FINAL {
 
     // Checks are all explicit until we know the architecture.
     // Set the compilation target's implicit checks options.
-    switch (instruction_set_) {
+    switch (compiler_options_->GetInstructionSet()) {
       case InstructionSet::kArm:
       case InstructionSet::kThumb2:
       case InstructionSet::kArm64:
@@ -1215,10 +1215,10 @@ class Dex2Oat FINAL {
     AssignIfExists(args, M::Backend, &compiler_kind_);
     parser_options->requested_specific_compiler = args.Exists(M::Backend);
 
-    AssignIfExists(args, M::TargetInstructionSet, &instruction_set_);
+    AssignIfExists(args, M::TargetInstructionSet, &compiler_options_->instruction_set_);
     // arm actually means thumb2.
-    if (instruction_set_ == InstructionSet::kArm) {
-      instruction_set_ = InstructionSet::kThumb2;
+    if (compiler_options_->instruction_set_ == InstructionSet::kArm) {
+      compiler_options_->instruction_set_ = InstructionSet::kThumb2;
     }
 
     AssignTrueIfExists(args, M::Host, &is_host_);
@@ -1491,8 +1491,8 @@ class Dex2Oat FINAL {
     if (profile_compilation_info_ != nullptr) {
       // TODO: The following comment looks outdated or misplaced.
       // Filter out class path classes since we don't want to include these in the image.
-      HashSet<std::string> image_classes =
-          profile_compilation_info_->GetClassDescriptors(dex_files_);
+      HashSet<std::string> image_classes = profile_compilation_info_->GetClassDescriptors(
+          compiler_options_->dex_files_for_oat_file_);
       VLOG(compiler) << "Loaded " << image_classes.size()
                      << " image class descriptors from profile";
       if (VLOG_IS_ON(compiler)) {
@@ -1628,8 +1628,6 @@ class Dex2Oat FINAL {
         if (!oat_writers_[i]->WriteAndOpenDexFiles(
             vdex_files_[i].get(),
             rodata_.back(),
-            instruction_set_,
-            instruction_set_features_.get(),
             key_value_store_.get(),
             verify,
             update_input_vdex_,
@@ -1653,10 +1651,11 @@ class Dex2Oat FINAL {
       }
     }
 
-    dex_files_ = MakeNonOwningPointerVector(opened_dex_files_);
+    compiler_options_->dex_files_for_oat_file_ = MakeNonOwningPointerVector(opened_dex_files_);
+    const std::vector<const DexFile*>& dex_files = compiler_options_->dex_files_for_oat_file_;
 
     // If we need to downgrade the compiler-filter for size reasons.
-    if (!IsBootImage() && IsVeryLarge(dex_files_)) {
+    if (!IsBootImage() && IsVeryLarge(dex_files)) {
       // Disable app image to make sure dex2oat unloading is enabled.
       compiler_options_->DisableAppImage();
 
@@ -1689,7 +1688,7 @@ class Dex2Oat FINAL {
     CHECK(driver_ == nullptr);
     // If we use a swap file, ensure we are above the threshold to make it necessary.
     if (swap_fd_ != -1) {
-      if (!UseSwap(IsBootImage(), dex_files_)) {
+      if (!UseSwap(IsBootImage(), dex_files)) {
         close(swap_fd_);
         swap_fd_ = -1;
         VLOG(compiler) << "Decided to run without swap.";
@@ -1732,7 +1731,7 @@ class Dex2Oat FINAL {
     // Verification results are only required for modes that have any compilation. Avoid
     // adding the dex files if possible to prevent allocating large arrays.
     if (verification_results_ != nullptr) {
-      for (const auto& dex_file : dex_files_) {
+      for (const auto& dex_file : dex_files) {
         // Pre-register dex files so that we can access verification results without locks during
         // compilation and verification.
         verification_results_->AddDexFile(dex_file);
@@ -1750,7 +1749,7 @@ class Dex2Oat FINAL {
   // Doesn't return the class loader since it's not meant to be used for image compilation.
   void CompileDexFilesIndividually() {
     CHECK(!IsImage()) << "Not supported with image";
-    for (const DexFile* dex_file : dex_files_) {
+    for (const DexFile* dex_file : compiler_options_->dex_files_for_oat_file_) {
       std::vector<const DexFile*> dex_files(1u, dex_file);
       VLOG(compiler) << "Compiling " << dex_file->GetLocation();
       jobject class_loader = CompileDexFiles(dex_files);
@@ -1781,7 +1780,7 @@ class Dex2Oat FINAL {
     // mode (to reduce RAM used by the compiler).
     return !IsImage() &&
         !update_input_vdex_ &&
-        dex_files_.size() > 1 &&
+        compiler_options_->dex_files_for_oat_file_.size() > 1 &&
         !CompilerFilter::IsAotCompilationEnabled(compiler_options_->GetCompilerFilter());
   }
 
@@ -1808,11 +1807,12 @@ class Dex2Oat FINAL {
         class_path_files = class_loader_context_->FlattenOpenedDexFiles();
       }
 
+      const std::vector<const DexFile*>& dex_files = compiler_options_->dex_files_for_oat_file_;
       std::vector<const DexFile*> no_inline_from_dex_files;
-      std::vector<const std::vector<const DexFile*>*> dex_file_vectors = {
+      const std::vector<const DexFile*>* dex_file_vectors[] = {
           &class_linker->GetBootClassPath(),
           &class_path_files,
-          &dex_files_
+          &dex_files
       };
       for (const std::vector<const DexFile*>* dex_file_vector : dex_file_vectors) {
         for (const DexFile* dex_file : *dex_file_vector) {
@@ -1845,13 +1845,10 @@ class Dex2Oat FINAL {
     driver_.reset(new CompilerDriver(compiler_options_.get(),
                                      verification_results_.get(),
                                      compiler_kind_,
-                                     instruction_set_,
-                                     instruction_set_features_.get(),
                                      &compiler_options_->image_classes_,
                                      thread_count_,
                                      swap_fd_,
                                      profile_compilation_info_.get()));
-    driver_->SetDexFilesForOatFile(dex_files_);
     if (!IsBootImage()) {
       driver_->SetClasspathDexFiles(class_loader_context_->FlattenOpenedDexFiles());
     }
@@ -1867,9 +1864,10 @@ class Dex2Oat FINAL {
     }
 
     // Setup vdex for compilation.
+    const std::vector<const DexFile*>& dex_files = compiler_options_->dex_files_for_oat_file_;
     if (!DoEagerUnquickeningOfVdex() && input_vdex_file_ != nullptr) {
       callbacks_->SetVerifierDeps(
-          new verifier::VerifierDeps(dex_files_, input_vdex_file_->GetVerifierDepsData()));
+          new verifier::VerifierDeps(dex_files, input_vdex_file_->GetVerifierDepsData()));
 
       // TODO: we unquicken unconditionally, as we don't know
       // if the boot image has changed. How exactly we'll know is under
@@ -1879,11 +1877,11 @@ class Dex2Oat FINAL {
       // We do not decompile a RETURN_VOID_NO_BARRIER into a RETURN_VOID, as the quickening
       // optimization does not depend on the boot image (the optimization relies on not
       // having final fields in a class, which does not change for an app).
-      input_vdex_file_->Unquicken(dex_files_, /* decompile_return_instruction */ false);
+      input_vdex_file_->Unquicken(dex_files, /* decompile_return_instruction */ false);
     } else {
       // Create the main VerifierDeps, here instead of in the compiler since we want to aggregate
       // the results for all the dex files, not just the results for the current dex file.
-      callbacks_->SetVerifierDeps(new verifier::VerifierDeps(dex_files_));
+      callbacks_->SetVerifierDeps(new verifier::VerifierDeps(dex_files));
     }
     // Invoke the compilation.
     if (compile_individually) {
@@ -1891,7 +1889,7 @@ class Dex2Oat FINAL {
       // Return a null classloader since we already freed released it.
       return nullptr;
     }
-    return CompileDexFiles(dex_files_);
+    return CompileDexFiles(dex_files);
   }
 
   // Create the class loader, use it to compile, and return.
@@ -1900,7 +1898,8 @@ class Dex2Oat FINAL {
 
     jobject class_loader = nullptr;
     if (!IsBootImage()) {
-      class_loader = class_loader_context_->CreateClassLoader(dex_files_);
+      class_loader =
+          class_loader_context_->CreateClassLoader(compiler_options_->dex_files_for_oat_file_);
       callbacks_->SetDexFiles(&dex_files);
     }
 
@@ -2018,7 +2017,7 @@ class Dex2Oat FINAL {
         VLOG(compiler) << "App image base=" << reinterpret_cast<void*>(image_base_);
       }
 
-      image_writer_.reset(new linker::ImageWriter(*driver_,
+      image_writer_.reset(new linker::ImageWriter(*compiler_options_,
                                                   image_base_,
                                                   compiler_options_->GetCompilePic(),
                                                   IsAppImage(),
@@ -2073,8 +2072,8 @@ class Dex2Oat FINAL {
 
     {
       TimingLogger::ScopedTiming t2("dex2oat Write ELF", timings_);
-      linker::MultiOatRelativePatcher patcher(instruction_set_,
-                                              instruction_set_features_.get(),
+      linker::MultiOatRelativePatcher patcher(compiler_options_->GetInstructionSet(),
+                                              compiler_options_->GetInstructionSetFeatures(),
                                               driver_->GetCompiledMethodStorage());
       for (size_t i = 0, size = oat_files_.size(); i != size; ++i) {
         std::unique_ptr<linker::ElfWriter>& elf_writer = elf_writers_[i];
@@ -2370,7 +2369,7 @@ class Dex2Oat FINAL {
     return dex_files_size >= min_dex_file_cumulative_size_for_swap_;
   }
 
-  bool IsVeryLarge(std::vector<const DexFile*>& dex_files) {
+  bool IsVeryLarge(const std::vector<const DexFile*>& dex_files) {
     size_t dex_files_size = 0;
     for (const auto* dex_file : dex_files) {
       dex_files_size += dex_file->GetHeader().file_size_;
@@ -2483,17 +2482,14 @@ class Dex2Oat FINAL {
     elf_writers_.reserve(oat_files_.size());
     oat_writers_.reserve(oat_files_.size());
     for (const std::unique_ptr<File>& oat_file : oat_files_) {
-      elf_writers_.emplace_back(linker::CreateElfWriterQuick(instruction_set_,
-                                                             instruction_set_features_.get(),
-                                                             compiler_options_.get(),
-                                                             oat_file.get()));
+      elf_writers_.emplace_back(linker::CreateElfWriterQuick(*compiler_options_, oat_file.get()));
       elf_writers_.back()->Start();
       bool do_oat_writer_layout = DoDexLayoutOptimizations() || DoOatLayoutOptimizations();
       if (profile_compilation_info_ != nullptr && profile_compilation_info_->IsEmpty()) {
         do_oat_writer_layout = false;
       }
       oat_writers_.emplace_back(new linker::OatWriter(
-          IsBootImage(),
+          *compiler_options_,
           timings_,
           do_oat_writer_layout ? profile_compilation_info_.get() : nullptr,
           compact_dex_level_));
@@ -2501,8 +2497,9 @@ class Dex2Oat FINAL {
   }
 
   void SaveDexInput() {
-    for (size_t i = 0; i < dex_files_.size(); ++i) {
-      const DexFile* dex_file = dex_files_[i];
+    const std::vector<const DexFile*>& dex_files = compiler_options_->dex_files_for_oat_file_;
+    for (size_t i = 0, size = dex_files.size(); i != size; ++i) {
+      const DexFile* dex_file = dex_files[i];
       std::string tmp_file_name(StringPrintf("/data/local/tmp/dex2oat.%d.%zd.dex",
                                              getpid(), i));
       std::unique_ptr<File> tmp_file(OS::CreateEmptyFile(tmp_file_name.c_str()));
@@ -2540,7 +2537,8 @@ class Dex2Oat FINAL {
 
     raw_options.push_back(std::make_pair("compilercallbacks", callbacks));
     raw_options.push_back(
-        std::make_pair("imageinstructionset", GetInstructionSetString(instruction_set_)));
+        std::make_pair("imageinstructionset",
+                       GetInstructionSetString(compiler_options_->GetInstructionSet())));
 
     // Only allow no boot image for the runtime if we're compiling one. When we compile an app,
     // we don't want fallback mode, it will abort as we do not push a boot classpath (it might
@@ -2603,7 +2601,7 @@ class Dex2Oat FINAL {
     SetThreadName(kIsDebugBuild ? "dex2oatd" : "dex2oat");
 
     runtime_.reset(Runtime::Current());
-    runtime_->SetInstructionSet(instruction_set_);
+    runtime_->SetInstructionSet(compiler_options_->GetInstructionSet());
     for (uint32_t i = 0; i < static_cast<uint32_t>(CalleeSaveType::kLastCalleeSaveType); ++i) {
       CalleeSaveType type = CalleeSaveType(i);
       if (!runtime_->HasCalleeSaveMethod(type)) {
@@ -2798,9 +2796,6 @@ class Dex2Oat FINAL {
   std::unique_ptr<CompilerOptions> compiler_options_;
   Compiler::Kind compiler_kind_;
 
-  InstructionSet instruction_set_;
-  std::unique_ptr<const InstructionSetFeatures> instruction_set_features_;
-
   uint32_t image_file_location_oat_checksum_;
   uintptr_t image_file_location_oat_data_begin_;
   int32_t image_patch_delta_;
@@ -2854,8 +2849,6 @@ class Dex2Oat FINAL {
   bool multi_image_;
   bool is_host_;
   std::string android_root_;
-  // Dex files we are compiling, does not include the class path dex files.
-  std::vector<const DexFile*> dex_files_;
   std::string no_inline_from_string_;
   CompactDexLevel compact_dex_level_ = kDefaultCompactDexLevel;
 
@@ -2898,7 +2891,7 @@ class Dex2Oat FINAL {
 
   // By default, copy the dex to the vdex file only if dex files are
   // compressed in APK.
-  CopyOption copy_dex_files_ = CopyOption::kOnlyIfCompressed;
+  linker::CopyOption copy_dex_files_ = linker::CopyOption::kOnlyIfCompressed;
 
   // The reason for invoking the compiler.
   std::string compilation_reason_;

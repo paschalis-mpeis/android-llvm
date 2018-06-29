@@ -261,8 +261,6 @@ CompilerDriver::CompilerDriver(
     const CompilerOptions* compiler_options,
     VerificationResults* verification_results,
     Compiler::Kind compiler_kind,
-    InstructionSet instruction_set,
-    const InstructionSetFeatures* instruction_set_features,
     HashSet<std::string>* image_classes,
     size_t thread_count,
     int swap_fd,
@@ -271,9 +269,6 @@ CompilerDriver::CompilerDriver(
       verification_results_(verification_results),
       compiler_(Compiler::Create(this, compiler_kind)),
       compiler_kind_(compiler_kind),
-      instruction_set_(
-          instruction_set == InstructionSet::kArm ? InstructionSet::kThumb2 : instruction_set),
-      instruction_set_features_(instruction_set_features),
       requires_constructor_barrier_lock_("constructor barrier lock"),
       non_relative_linker_patch_count_(0u),
       image_classes_(std::move(image_classes)),
@@ -309,13 +304,15 @@ CompilerDriver::~CompilerDriver() {
 }
 
 
-#define CREATE_TRAMPOLINE(type, abi, offset) \
-    if (Is64BitInstructionSet(instruction_set_)) { \
-      return CreateTrampoline64(instruction_set_, abi, \
-                                type ## _ENTRYPOINT_OFFSET(PointerSize::k64, offset)); \
-    } else { \
-      return CreateTrampoline32(instruction_set_, abi, \
-                                type ## _ENTRYPOINT_OFFSET(PointerSize::k32, offset)); \
+#define CREATE_TRAMPOLINE(type, abi, offset)                                            \
+    if (Is64BitInstructionSet(GetCompilerOptions().GetInstructionSet())) {              \
+      return CreateTrampoline64(GetCompilerOptions().GetInstructionSet(),               \
+                                abi,                                                    \
+                                type ## _ENTRYPOINT_OFFSET(PointerSize::k64, offset));  \
+    } else {                                                                            \
+      return CreateTrampoline32(GetCompilerOptions().GetInstructionSet(),               \
+                                abi,                                                    \
+                                type ## _ENTRYPOINT_OFFSET(PointerSize::k32, offset));  \
     }
 
 std::unique_ptr<const std::vector<uint8_t>> CompilerDriver::CreateJniDlsymLookup() const {
@@ -601,7 +598,7 @@ static void CompileMethodQuick(
     if ((access_flags & kAccNative) != 0) {
       // Are we extracting only and have support for generic JNI down calls?
       if (!driver->GetCompilerOptions().IsJniCompilationEnabled() &&
-          InstructionSetHasGenericJniStub(driver->GetInstructionSet())) {
+          InstructionSetHasGenericJniStub(driver->GetCompilerOptions().GetInstructionSet())) {
         // Leaving this empty will trigger the generic JNI version
       } else {
         // Query any JNI optimization annotations such as @FastNative or @CriticalNative.
@@ -885,7 +882,11 @@ void CompilerDriver::PreCompile(jobject class_loader,
                                 const std::vector<const DexFile*>& dex_files,
                                 TimingLogger* timings) {
   CheckThreadPools();
+
   VLOG(compiler) << "Before precompile " << GetMemoryUsageString(false);
+
+  compiled_classes_.AddDexFiles(GetCompilerOptions().GetDexFilesForOatFile());
+  dex_to_dex_compiler_.SetDexFiles(GetCompilerOptions().GetDexFilesForOatFile());
 
   // Precompile:
   // 1) Load image classes.
@@ -1948,7 +1949,8 @@ void CompilerDriver::Verify(jobject jclass_loader,
     // Create per-thread VerifierDeps to avoid contention on the main one.
     // We will merge them after verification.
     for (ThreadPoolWorker* worker : parallel_thread_pool_->GetWorkers()) {
-      worker->GetThread()->SetVerifierDeps(new verifier::VerifierDeps(dex_files_for_oat_file_));
+      worker->GetThread()->SetVerifierDeps(
+          new verifier::VerifierDeps(GetCompilerOptions().GetDexFilesForOatFile()));
     }
   }
 
@@ -1973,7 +1975,7 @@ void CompilerDriver::Verify(jobject jclass_loader,
     for (ThreadPoolWorker* worker : parallel_thread_pool_->GetWorkers()) {
       verifier::VerifierDeps* thread_deps = worker->GetThread()->GetVerifierDeps();
       worker->GetThread()->SetVerifierDeps(nullptr);
-      verifier_deps->MergeWith(*thread_deps, dex_files_for_oat_file_);
+      verifier_deps->MergeWith(*thread_deps, GetCompilerOptions().GetDexFilesForOatFile());
       delete thread_deps;
     }
     Thread::Current()->SetVerifierDeps(nullptr);
@@ -2141,8 +2143,9 @@ class SetVerifiedClassVisitor : public CompilationVisitor {
           mirror::Class::SetStatus(klass, ClassStatus::kVerified, soa.Self());
           // Mark methods as pre-verified. If we don't do this, the interpreter will run with
           // access checks.
-          klass->SetSkipAccessChecksFlagOnAllMethods(
-              GetInstructionSetPointerSize(manager_->GetCompiler()->GetInstructionSet()));
+          InstructionSet instruction_set =
+              manager_->GetCompiler()->GetCompilerOptions().GetInstructionSet();
+          klass->SetSkipAccessChecksFlagOnAllMethods(GetInstructionSetPointerSize(instruction_set));
           klass->SetVerificationAttempted();
         }
         // Record the final class status if necessary.
@@ -2846,7 +2849,7 @@ void CompilerDriver::RecordClassStatus(const ClassReference& ref, ClassStatus st
       if (kIsDebugBuild) {
         // Check to make sure it's not a dex file for an oat file we are compiling since these
         // should always succeed. These do not include classes in for used libraries.
-        for (const DexFile* dex_file : GetDexFilesForOatFile()) {
+        for (const DexFile* dex_file : GetCompilerOptions().GetDexFilesForOatFile()) {
           CHECK_NE(ref.dex_file, dex_file) << ref.dex_file->GetLocation();
         }
       }
@@ -2945,17 +2948,6 @@ std::string CompilerDriver::GetMemoryUsageString(bool extended) const {
   return oss.str();
 }
 
-bool CompilerDriver::MayInlineInternal(const DexFile* inlined_from,
-                                       const DexFile* inlined_into) const {
-  // We're not allowed to inline across dex files if we're the no-inline-from dex file.
-  if (inlined_from != inlined_into &&
-      ContainsElement(compiler_options_->GetNoInlineFromDexFile(), inlined_from)) {
-    return false;
-  }
-
-  return true;
-}
-
 void CompilerDriver::InitializeThreadPools() {
   size_t parallel_count = parallel_thread_count_ > 0 ? parallel_thread_count_ - 1 : 0;
   parallel_thread_pool_.reset(
@@ -2966,12 +2958,6 @@ void CompilerDriver::InitializeThreadPools() {
 void CompilerDriver::FreeThreadPools() {
   parallel_thread_pool_.reset();
   single_thread_pool_.reset();
-}
-
-void CompilerDriver::SetDexFilesForOatFile(const std::vector<const DexFile*>& dex_files) {
-  dex_files_for_oat_file_ = dex_files;
-  compiled_classes_.AddDexFiles(dex_files);
-  dex_to_dex_compiler_.SetDexFiles(dex_files);
 }
 
 void CompilerDriver::SetClasspathDexFiles(const std::vector<const DexFile*>& dex_files) {

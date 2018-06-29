@@ -97,8 +97,6 @@ class CompilerDriver {
   CompilerDriver(const CompilerOptions* compiler_options,
                  VerificationResults* verification_results,
                  Compiler::Kind compiler_kind,
-                 InstructionSet instruction_set,
-                 const InstructionSetFeatures* instruction_set_features,
                  HashSet<std::string>* image_classes,
                  size_t thread_count,
                  int swap_fd,
@@ -106,16 +104,8 @@ class CompilerDriver {
 
   ~CompilerDriver();
 
-  // Set dex files associated with the oat file being compiled.
-  void SetDexFilesForOatFile(const std::vector<const DexFile*>& dex_files);
-
   // Set dex files classpath.
   void SetClasspathDexFiles(const std::vector<const DexFile*>& dex_files);
-
-  // Get dex files associated with the the oat file being compiled.
-  ArrayRef<const DexFile* const> GetDexFilesForOatFile() const {
-    return ArrayRef<const DexFile* const>(dex_files_for_oat_file_);
-  }
 
   void CompileAll(jobject class_loader,
                   const std::vector<const DexFile*>& dex_files,
@@ -136,14 +126,6 @@ class CompilerDriver {
       REQUIRES(!Locks::mutator_lock_);
 
   VerificationResults* GetVerificationResults() const;
-
-  InstructionSet GetInstructionSet() const {
-    return instruction_set_;
-  }
-
-  const InstructionSetFeatures* GetInstructionSetFeatures() const {
-    return instruction_set_features_;
-  }
 
   const CompilerOptions& GetCompilerOptions() const {
     return *compiler_options_;
@@ -354,13 +336,6 @@ class CompilerDriver {
   bool CanAssumeClassIsLoaded(mirror::Class* klass)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
-  bool MayInline(const DexFile* inlined_from, const DexFile* inlined_into) const {
-    if (!kIsTargetBuild) {
-      return MayInlineInternal(inlined_from, inlined_into);
-    }
-    return true;
-  }
-
   const ProfileCompilationInfo* GetProfileCompilationInfo() const {
     return profile_compilation_info_;
   }
@@ -454,8 +429,6 @@ class CompilerDriver {
                const std::vector<const DexFile*>& dex_files,
                TimingLogger* timings);
 
-  bool MayInlineInternal(const DexFile* inlined_from, const DexFile* inlined_into) const;
-
   void InitializeThreadPools();
   void FreeThreadPools();
   void CheckThreadPools();
@@ -467,9 +440,6 @@ class CompilerDriver {
 
   std::unique_ptr<Compiler> compiler_;
   Compiler::Kind compiler_kind_;
-
-  const InstructionSet instruction_set_;
-  const InstructionSetFeatures* const instruction_set_features_;
 
   // All class references that require constructor barriers. If the class reference is not in the
   // set then the result has not yet been computed.
@@ -524,9 +494,6 @@ class CompilerDriver {
   void* compiler_context_;
 
   bool support_boot_image_fixup_;
-
-  // List of dex files associates with the oat file.
-  std::vector<const DexFile*> dex_files_for_oat_file_;
 
   CompiledMethodStorage compiled_method_storage_;
 

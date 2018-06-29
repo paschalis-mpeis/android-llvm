@@ -35,6 +35,7 @@
 #include "compiler_callbacks.h"
 #include "debug/method_debug_info.h"
 #include "dex/quick_compiler_callbacks.h"
+#include "driver/compiler_driver.h"
 #include "driver/compiler_options.h"
 #include "gc/space/image_space.h"
 #include "image_writer.h"
@@ -63,9 +64,6 @@ struct CompilationHelper {
   std::vector<ScratchFile> vdex_files;
   std::string image_dir;
 
-  void Compile(CompilerDriver* driver,
-               ImageHeader::StorageMode storage_mode);
-
   std::vector<size_t> GetImageObjectSectionSizes();
 
   ~CompilationHelper();
@@ -81,7 +79,7 @@ class ImageTest : public CommonCompilerTest {
   void TestWriteRead(ImageHeader::StorageMode storage_mode);
 
   void Compile(ImageHeader::StorageMode storage_mode,
-               CompilationHelper& out_helper,
+               /*out*/ CompilationHelper& out_helper,
                const std::string& extra_dex = "",
                const std::initializer_list<std::string>& image_classes = {});
 
@@ -111,6 +109,8 @@ class ImageTest : public CommonCompilerTest {
   }
 
  private:
+  void DoCompile(ImageHeader::StorageMode storage_mode, /*out*/ CompilationHelper& out_helper);
+
   HashSet<std::string> image_classes_;
 };
 
@@ -141,12 +141,13 @@ inline std::vector<size_t> CompilationHelper::GetImageObjectSectionSizes() {
   return ret;
 }
 
-inline void CompilationHelper::Compile(CompilerDriver* driver,
-                                       ImageHeader::StorageMode storage_mode) {
+inline void ImageTest::DoCompile(ImageHeader::StorageMode storage_mode,
+                                 /*out*/ CompilationHelper& out_helper) {
+  CompilerDriver* driver = compiler_driver_.get();
   ClassLinker* class_linker = Runtime::Current()->GetClassLinker();
   std::vector<const DexFile*> class_path = class_linker->GetBootClassPath();
 
-  for (const std::unique_ptr<const DexFile>& dex_file : extra_dex_files) {
+  for (const std::unique_ptr<const DexFile>& dex_file : out_helper.extra_dex_files) {
     {
       ScopedObjectAccess soa(Thread::Current());
       // Inject in boot class path so that the compiler driver can see it.
@@ -157,7 +158,7 @@ inline void CompilationHelper::Compile(CompilerDriver* driver,
 
   // Enable write for dex2dex.
   for (const DexFile* dex_file : class_path) {
-    dex_file_locations.push_back(dex_file->GetLocation());
+    out_helper.dex_file_locations.push_back(dex_file->GetLocation());
     if (dex_file->IsReadOnly()) {
       dex_file->EnableWrite();
     }
@@ -168,31 +169,31 @@ inline void CompilationHelper::Compile(CompilerDriver* driver,
     for (int i = 0; i < static_cast<int>(class_path.size()); ++i) {
       std::string cur_location =
           android::base::StringPrintf("%s-%d.art", location.GetFilename().c_str(), i);
-      image_locations.push_back(ScratchFile(cur_location));
+      out_helper.image_locations.push_back(ScratchFile(cur_location));
     }
   }
   std::vector<std::string> image_filenames;
-  for (ScratchFile& file : image_locations) {
+  for (ScratchFile& file : out_helper.image_locations) {
     std::string image_filename(GetSystemImageFilename(file.GetFilename().c_str(), kRuntimeISA));
     image_filenames.push_back(image_filename);
     size_t pos = image_filename.rfind('/');
     CHECK_NE(pos, std::string::npos) << image_filename;
-    if (image_dir.empty()) {
-      image_dir = image_filename.substr(0, pos);
-      int mkdir_result = mkdir(image_dir.c_str(), 0700);
-      CHECK_EQ(0, mkdir_result) << image_dir;
+    if (out_helper.image_dir.empty()) {
+      out_helper.image_dir = image_filename.substr(0, pos);
+      int mkdir_result = mkdir(out_helper.image_dir.c_str(), 0700);
+      CHECK_EQ(0, mkdir_result) << out_helper.image_dir;
     }
-    image_files.push_back(ScratchFile(OS::CreateEmptyFile(image_filename.c_str())));
+    out_helper.image_files.push_back(ScratchFile(OS::CreateEmptyFile(image_filename.c_str())));
   }
 
   std::vector<std::string> oat_filenames;
   std::vector<std::string> vdex_filenames;
   for (const std::string& image_filename : image_filenames) {
     std::string oat_filename = ReplaceFileExtension(image_filename, "oat");
-    oat_files.push_back(ScratchFile(OS::CreateEmptyFile(oat_filename.c_str())));
+    out_helper.oat_files.push_back(ScratchFile(OS::CreateEmptyFile(oat_filename.c_str())));
     oat_filenames.push_back(oat_filename);
     std::string vdex_filename = ReplaceFileExtension(image_filename, "vdex");
-    vdex_files.push_back(ScratchFile(OS::CreateEmptyFile(vdex_filename.c_str())));
+    out_helper.vdex_files.push_back(ScratchFile(OS::CreateEmptyFile(vdex_filename.c_str())));
     vdex_filenames.push_back(vdex_filename);
   }
 
@@ -211,7 +212,7 @@ inline void CompilationHelper::Compile(CompilerDriver* driver,
     ++image_idx;
   }
   // TODO: compile_pic should be a test argument.
-  std::unique_ptr<ImageWriter> writer(new ImageWriter(*driver,
+  std::unique_ptr<ImageWriter> writer(new ImageWriter(*compiler_options_,
                                                       kRequestedImageBase,
                                                       /*compile_pic*/false,
                                                       /*compile_app_image*/false,
@@ -224,7 +225,7 @@ inline void CompilationHelper::Compile(CompilerDriver* driver,
       jobject class_loader = nullptr;
       TimingLogger timings("ImageTest::WriteRead", false, false);
       TimingLogger::ScopedTiming t("CompileAll", &timings);
-      driver->SetDexFilesForOatFile(class_path);
+      SetDexFilesForOatFile(class_path);
       driver->CompileAll(class_loader, class_path, &timings);
 
       t.NewTiming("WriteElf");
@@ -241,13 +242,10 @@ inline void CompilationHelper::Compile(CompilerDriver* driver,
 
       std::vector<std::unique_ptr<ElfWriter>> elf_writers;
       std::vector<std::unique_ptr<OatWriter>> oat_writers;
-      for (ScratchFile& oat_file : oat_files) {
-        elf_writers.emplace_back(CreateElfWriterQuick(driver->GetInstructionSet(),
-                                                      driver->GetInstructionSetFeatures(),
-                                                      &driver->GetCompilerOptions(),
-                                                      oat_file.GetFile()));
+      for (ScratchFile& oat_file : out_helper.oat_files) {
+        elf_writers.emplace_back(CreateElfWriterQuick(*compiler_options_, oat_file.GetFile()));
         elf_writers.back()->Start();
-        oat_writers.emplace_back(new OatWriter(/*compiling_boot_image*/true,
+        oat_writers.emplace_back(new OatWriter(*compiler_options_,
                                                &timings,
                                                /*profile_compilation_info*/nullptr,
                                                CompactDexLevel::kCompactDexLevelNone));
@@ -270,10 +268,8 @@ inline void CompilationHelper::Compile(CompilerDriver* driver,
         std::vector<std::unique_ptr<MemMap>> cur_opened_dex_files_maps;
         std::vector<std::unique_ptr<const DexFile>> cur_opened_dex_files;
         bool dex_files_ok = oat_writers[i]->WriteAndOpenDexFiles(
-            vdex_files[i].GetFile(),
+            out_helper.vdex_files[i].GetFile(),
             rodata.back(),
-            driver->GetInstructionSet(),
-            driver->GetInstructionSetFeatures(),
             &key_value_store,
             /* verify */ false,           // Dex files may be dex-to-dex-ed, don't verify.
             /* update_input_vdex */ false,
@@ -297,10 +293,10 @@ inline void CompilationHelper::Compile(CompilerDriver* driver,
       bool image_space_ok = writer->PrepareImageAddressSpace(&timings);
       ASSERT_TRUE(image_space_ok);
 
-      DCHECK_EQ(vdex_files.size(), oat_files.size());
-      for (size_t i = 0, size = oat_files.size(); i != size; ++i) {
-        MultiOatRelativePatcher patcher(driver->GetInstructionSet(),
-                                        driver->GetInstructionSetFeatures(),
+      DCHECK_EQ(out_helper.vdex_files.size(), out_helper.oat_files.size());
+      for (size_t i = 0, size = out_helper.oat_files.size(); i != size; ++i) {
+        MultiOatRelativePatcher patcher(compiler_options_->GetInstructionSet(),
+                                        compiler_options_->GetInstructionSetFeatures(),
                                         driver->GetCompiledMethodStorage());
         OatWriter* const oat_writer = oat_writers[i].get();
         ElfWriter* const elf_writer = elf_writers[i].get();
@@ -309,7 +305,7 @@ inline void CompilationHelper::Compile(CompilerDriver* driver,
 
         std::unique_ptr<BufferedOutputStream> vdex_out =
             std::make_unique<BufferedOutputStream>(
-                std::make_unique<FileOutputStream>(vdex_files[i].GetFile()));
+                std::make_unique<FileOutputStream>(out_helper.vdex_files[i].GetFile()));
         oat_writer->WriteVerifierDeps(vdex_out.get(), nullptr);
         oat_writer->WriteQuickeningInfo(vdex_out.get());
         oat_writer->WriteChecksumsAndVdexHeader(vdex_out.get());
@@ -366,8 +362,7 @@ inline void CompilationHelper::Compile(CompilerDriver* driver,
       const char* oat_filename = oat_filenames[i].c_str();
       std::unique_ptr<File> oat_file(OS::OpenFileReadWrite(oat_filename));
       ASSERT_TRUE(oat_file != nullptr);
-      bool success_fixup = ElfWriter::Fixup(oat_file.get(),
-                                            writer->GetOatDataBegin(i));
+      bool success_fixup = ElfWriter::Fixup(oat_file.get(), writer->GetOatDataBegin(i));
       ASSERT_TRUE(success_fixup);
       ASSERT_EQ(oat_file->FlushCloseOrErase(), 0) << "Could not flush and close oat file "
                                                   << oat_filename;
@@ -382,14 +377,15 @@ inline void ImageTest::Compile(ImageHeader::StorageMode storage_mode,
   for (const std::string& image_class : image_classes) {
     image_classes_.insert(image_class);
   }
-  CreateCompilerDriver(Compiler::kOptimizing, kRuntimeISA, kIsTargetBuild ? 2U : 16U);
+  number_of_threads_ = kIsTargetBuild ? 2U : 16U;
+  CreateCompilerDriver();
   // Set inline filter values.
   compiler_options_->SetInlineMaxCodeUnits(CompilerOptions::kDefaultInlineMaxCodeUnits);
   image_classes_.clear();
   if (!extra_dex.empty()) {
     helper.extra_dex_files = OpenTestDexFiles(extra_dex.c_str());
   }
-  helper.Compile(compiler_driver_.get(), storage_mode);
+  DoCompile(storage_mode, helper);
   if (image_classes.begin() != image_classes.end()) {
     // Make sure the class got initialized.
     ScopedObjectAccess soa(Thread::Current());
