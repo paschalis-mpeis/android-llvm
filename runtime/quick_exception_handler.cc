@@ -404,7 +404,7 @@ class DeoptimizeStackVisitor FINAL : public StackVisitor {
     uint32_t register_mask = code_info.GetRegisterMaskOf(stack_map);
     BitMemoryRegion stack_mask = code_info.GetStackMaskOf(stack_map);
     DexRegisterMap vreg_map = IsInInlinedFrame()
-        ? code_info.GetDexRegisterMapAtDepth(GetCurrentInliningDepth() - 1, stack_map)
+        ? code_info.GetInlineDexRegisterMapOf(stack_map, GetCurrentInlinedFrame())
         : code_info.GetDexRegisterMapOf(stack_map);
     if (vreg_map.empty()) {
       return;
@@ -472,7 +472,7 @@ class DeoptimizeStackVisitor FINAL : public StackVisitor {
   }
 
   static VRegKind GetVRegKind(uint16_t reg, const std::vector<int32_t>& kinds) {
-    return static_cast<VRegKind>(kinds.at(reg * 2));
+    return static_cast<VRegKind>(kinds[reg * 2]);
   }
 
   QuickExceptionHandler* const exception_handler_;

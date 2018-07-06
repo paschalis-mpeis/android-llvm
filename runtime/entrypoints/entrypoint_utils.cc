@@ -74,11 +74,11 @@ JValue InvokeProxyInvocationHandler(ScopedObjectAccessAlreadyRunnable& soa, cons
     }
     for (size_t i = 0; i < args.size(); ++i) {
       if (shorty[i + 1] == 'L') {
-        jobject val = args.at(i).l;
+        jobject val = args[i].l;
         soa.Env()->SetObjectArrayElement(args_jobj, i, val);
       } else {
         JValue jv;
-        jv.SetJ(args.at(i).j);
+        jv.SetJ(args[i].j);
         mirror::Object* val = BoxPrimitive(Primitive::GetType(shorty[i + 1]), jv).Ptr();
         if (val == nullptr) {
           CHECK(soa.Self()->IsExceptionPending());
@@ -205,9 +205,9 @@ static inline ArtMethod* DoGetCalleeSaveMethodCaller(ArtMethod* outer_method,
       MethodInfo method_info = current_code->GetOptimizedMethodInfo();
       StackMap stack_map = code_info.GetStackMapForNativePcOffset(native_pc_offset);
       DCHECK(stack_map.IsValid());
-      uint32_t depth = code_info.GetInlineDepthOf(stack_map);
-      if (depth != 0) {
-        caller = GetResolvedMethod(outer_method, method_info, code_info, stack_map, depth - 1);
+      BitTableRange<InlineInfo> inline_infos = code_info.GetInlineInfosOf(stack_map);
+      if (!inline_infos.empty()) {
+        caller = GetResolvedMethod(outer_method, method_info, inline_infos);
       }
     }
     if (kIsDebugBuild && do_caller_check) {
