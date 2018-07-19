@@ -56,6 +56,7 @@ public class Parser {
   private HprofBuffer hprof = null;
   private ProguardMap map = new ProguardMap();
   private Progress progress = new NullProgress();
+  private Reachability retained = Reachability.SOFT;
 
   /**
    * Creates an hprof Parser that parses a heap dump from a byte buffer.
@@ -101,6 +102,17 @@ public class Parser {
       throw new NullPointerException("progress == null");
     }
     this.progress = progress;
+    return this;
+  }
+
+  /**
+   * Specify the weakest reachability of instances to treat as retained.
+   *
+   * @param retained the weakest reachability of instances to treat as retained.
+   * @return this Parser instance.
+   */
+  public Parser retained(Reachability retained) {
+    this.retained = retained;
     return this;
   }
 
@@ -262,13 +274,15 @@ public class Parser {
             break;
           }
 
+          case 0x0C:   // HEAP DUMP
           case 0x1C: { // HEAP DUMP SEGMENT
+            int endOfRecord = hprof.tell() + recordLength;
             if (classById == null) {
               classById = new Instances<AhatClassObj>(classes);
             }
-            int subtag;
-            while (!isEndOfHeapDumpSegment(subtag = hprof.getU1())) {
+            while (hprof.tell() < endOfRecord) {
               progress.update(hprof.tell());
+              int subtag = hprof.getU1();
               switch (subtag) {
                 case 0x01: { // ROOT JNI GLOBAL
                   long objectId = hprof.getId();
@@ -549,10 +563,6 @@ public class Parser {
                       String.format("Unsupported heap dump sub tag 0x%02x", subtag));
               }
             }
-
-            // Reset the file pointer back because we read the first byte into
-            // the next record.
-            hprof.skip(-1);
             break;
           }
 
@@ -660,11 +670,7 @@ public class Parser {
 
     hprof = null;
     roots = null;
-    return new AhatSnapshot(superRoot, mInstances, heaps.heaps, rootSite, progress);
-  }
-
-  private static boolean isEndOfHeapDumpSegment(int subtag) {
-    return subtag == 0x1C || subtag == 0x2C;
+    return new AhatSnapshot(superRoot, mInstances, heaps.heaps, rootSite, progress, retained);
   }
 
   private static class RootData {
