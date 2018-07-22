@@ -886,7 +886,7 @@ class PatchOat::RelocatedPointerVisitor {
   explicit RelocatedPointerVisitor(PatchOat* patch_oat) : patch_oat_(patch_oat) {}
 
   template <typename T>
-  T* operator()(T* ptr, void** dest_addr ATTRIBUTE_UNUSED = 0) const {
+  T* operator()(T* ptr, void** dest_addr ATTRIBUTE_UNUSED = nullptr) const {
     return patch_oat_->RelocatedAddressOfPointer(ptr);
   }
 
@@ -1072,7 +1072,7 @@ void PatchOat::FixupMethod(ArtMethod* object, ArtMethod* copy) {
   copy->CopyFrom(object, pointer_size);
   // Just update the entry points if it looks like we should.
   // TODO: sanity check all the pointers' values
-  copy->SetDeclaringClass(RelocatedAddressOfPointer(object->GetDeclaringClass()));
+  copy->SetDeclaringClass(RelocatedAddressOfPointer(object->GetDeclaringClass().Ptr()));
   copy->SetEntryPointFromQuickCompiledCodePtrSize(RelocatedAddressOfPointer(
       object->GetEntryPointFromQuickCompiledCodePtrSize(pointer_size)), pointer_size);
   // No special handling for IMT conflict table since all pointers are moved by the same offset.
