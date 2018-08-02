@@ -31,6 +31,24 @@ CodeInfo::CodeInfo(const OatQuickMethodHeader* header, DecodeFlags flags)
   : CodeInfo(header->GetOptimizedCodeInfoPtr(), flags) {
 }
 
+template<typename Accessor>
+ALWAYS_INLINE static void DecodeTable(BitTable<Accessor>& table,
+                                      BitMemoryReader& reader,
+                                      const uint8_t* data) {
+  bool is_deduped = reader.ReadBit();
+  if (is_deduped) {
+    // 'data' points to the start of the reader's data.
+    uint32_t current_bit_offset = reader.GetBitOffset();
+    uint32_t bit_offset_backwards = DecodeVarintBits(reader) - current_bit_offset;
+    uint32_t byte_offset_backwards = BitsToBytesRoundUp(bit_offset_backwards);
+    BitMemoryReader reader2(data - byte_offset_backwards,
+                            byte_offset_backwards * kBitsPerByte - bit_offset_backwards);
+    table.Decode(reader2);
+  } else {
+    table.Decode(reader);
+  }
+}
+
 void CodeInfo::Decode(const uint8_t* data, DecodeFlags flags) {
   const uint8_t* begin = data;
   frame_size_in_bytes_ = DecodeUnsignedLeb128(&data);
@@ -38,17 +56,57 @@ void CodeInfo::Decode(const uint8_t* data, DecodeFlags flags) {
   fp_spill_mask_ = DecodeUnsignedLeb128(&data);
   number_of_dex_registers_ = DecodeUnsignedLeb128(&data);
   BitMemoryReader reader(data, /* bit_offset */ 0);
-  stack_maps_.Decode(reader);
-  inline_infos_.Decode(reader);
+  DecodeTable(stack_maps_, reader, data);
+  DecodeTable(inline_infos_, reader, data);
+  DecodeTable(method_infos_, reader, data);
   if (flags & DecodeFlags::InlineInfoOnly) {
     return;
   }
-  register_masks_.Decode(reader);
-  stack_masks_.Decode(reader);
-  dex_register_masks_.Decode(reader);
-  dex_register_maps_.Decode(reader);
-  dex_register_catalog_.Decode(reader);
+  DecodeTable(register_masks_, reader, data);
+  DecodeTable(stack_masks_, reader, data);
+  DecodeTable(dex_register_masks_, reader, data);
+  DecodeTable(dex_register_maps_, reader, data);
+  DecodeTable(dex_register_catalog_, reader, data);
   size_in_bits_ = (data - begin) * kBitsPerByte + reader.GetBitOffset();
+}
+
+template<typename Accessor>
+ALWAYS_INLINE static void DedupeTable(BitMemoryWriter<std::vector<uint8_t>>& writer,
+                                      BitMemoryReader& reader,
+                                      CodeInfo::DedupeMap* dedupe_map) {
+  bool is_deduped = reader.ReadBit();
+  DCHECK(!is_deduped);
+  BitTable<Accessor> bit_table(reader);
+  BitMemoryRegion region = reader.Tail(bit_table.BitSize());
+  auto it = dedupe_map->insert(std::make_pair(region, writer.GetBitOffset() + 1 /* dedupe bit */));
+  if (it.second /* new bit table */ || region.size_in_bits() < 32) {
+    writer.WriteBit(false);  // Is not deduped.
+    writer.WriteRegion(region);
+  } else {
+    writer.WriteBit(true);  // Is deduped.
+    EncodeVarintBits(writer, writer.GetBitOffset() - it.first->second);
+  }
+}
+
+size_t CodeInfo::Dedupe(std::vector<uint8_t>* out, const uint8_t* in, DedupeMap* dedupe_map) {
+  // Remember the current offset in the output buffer so that we can return it later.
+  const size_t result = out->size();
+  // Copy the header which encodes QuickMethodFrameInfo.
+  EncodeUnsignedLeb128(out, DecodeUnsignedLeb128(&in));
+  EncodeUnsignedLeb128(out, DecodeUnsignedLeb128(&in));
+  EncodeUnsignedLeb128(out, DecodeUnsignedLeb128(&in));
+  EncodeUnsignedLeb128(out, DecodeUnsignedLeb128(&in));
+  BitMemoryReader reader(in, /* bit_offset */ 0);
+  BitMemoryWriter<std::vector<uint8_t>> writer(out, /* bit_offset */ out->size() * kBitsPerByte);
+  DedupeTable<StackMap>(writer, reader, dedupe_map);
+  DedupeTable<InlineInfo>(writer, reader, dedupe_map);
+  DedupeTable<MethodInfo>(writer, reader, dedupe_map);
+  DedupeTable<RegisterMask>(writer, reader, dedupe_map);
+  DedupeTable<MaskInfo>(writer, reader, dedupe_map);
+  DedupeTable<MaskInfo>(writer, reader, dedupe_map);
+  DedupeTable<DexRegisterMapInfo>(writer, reader, dedupe_map);
+  DedupeTable<DexRegisterInfo>(writer, reader, dedupe_map);
+  return result;
 }
 
 BitTable<StackMap>::const_iterator CodeInfo::BinarySearchNativePc(uint32_t packed_pc) const {
@@ -155,9 +213,10 @@ void CodeInfo::AddSizeStats(/*out*/ Stats* parent) const {
   Stats* stats = parent->Child("CodeInfo");
   stats->AddBytes(Size());
   AddTableSizeStats<StackMap>("StackMaps", stack_maps_, stats);
+  AddTableSizeStats<InlineInfo>("InlineInfos", inline_infos_, stats);
+  AddTableSizeStats<MethodInfo>("MethodInfo", method_infos_, stats);
   AddTableSizeStats<RegisterMask>("RegisterMasks", register_masks_, stats);
   AddTableSizeStats<MaskInfo>("StackMasks", stack_masks_, stats);
-  AddTableSizeStats<InlineInfo>("InlineInfos", inline_infos_, stats);
   AddTableSizeStats<MaskInfo>("DexRegisterMasks", dex_register_masks_, stats);
   AddTableSizeStats<DexRegisterMapInfo>("DexRegisterMaps", dex_register_maps_, stats);
   AddTableSizeStats<DexRegisterInfo>("DexRegisterCatalog", dex_register_catalog_, stats);
@@ -215,17 +274,14 @@ static void DumpTable(VariableIndentationOutputStream* vios,
 void CodeInfo::Dump(VariableIndentationOutputStream* vios,
                     uint32_t code_offset,
                     bool verbose,
-                    InstructionSet instruction_set,
-                    const MethodInfo& method_info) const {
-  vios->Stream()
-      << "CodeInfo"
-      << " BitSize="  << size_in_bits_
-      << "\n";
+                    InstructionSet instruction_set) const {
+  vios->Stream() << "CodeInfo\n";
   ScopedIndentation indent1(vios);
   DumpTable<StackMap>(vios, "StackMaps", stack_maps_, verbose);
+  DumpTable<InlineInfo>(vios, "InlineInfos", inline_infos_, verbose);
+  DumpTable<MethodInfo>(vios, "MethodInfo", method_infos_, verbose);
   DumpTable<RegisterMask>(vios, "RegisterMasks", register_masks_, verbose);
   DumpTable<MaskInfo>(vios, "StackMasks", stack_masks_, verbose, true /* is_mask */);
-  DumpTable<InlineInfo>(vios, "InlineInfos", inline_infos_, verbose);
   DumpTable<MaskInfo>(vios, "DexRegisterMasks", dex_register_masks_, verbose, true /* is_mask */);
   DumpTable<DexRegisterMapInfo>(vios, "DexRegisterMaps", dex_register_maps_, verbose);
   DumpTable<DexRegisterInfo>(vios, "DexRegisterCatalog", dex_register_catalog_, verbose);
@@ -233,14 +289,13 @@ void CodeInfo::Dump(VariableIndentationOutputStream* vios,
   // Display stack maps along with (live) Dex register maps.
   if (verbose) {
     for (StackMap stack_map : stack_maps_) {
-      stack_map.Dump(vios, *this, method_info, code_offset, instruction_set);
+      stack_map.Dump(vios, *this, code_offset, instruction_set);
     }
   }
 }
 
 void StackMap::Dump(VariableIndentationOutputStream* vios,
                     const CodeInfo& code_info,
-                    const MethodInfo& method_info,
                     uint32_t code_offset,
                     InstructionSet instruction_set) const {
   const uint32_t pc_offset = GetNativePcOffset(instruction_set);
@@ -259,14 +314,13 @@ void StackMap::Dump(VariableIndentationOutputStream* vios,
   vios->Stream() << ")\n";
   code_info.GetDexRegisterMapOf(*this).Dump(vios);
   for (InlineInfo inline_info : code_info.GetInlineInfosOf(*this)) {
-    inline_info.Dump(vios, code_info, *this, method_info);
+    inline_info.Dump(vios, code_info, *this);
   }
 }
 
 void InlineInfo::Dump(VariableIndentationOutputStream* vios,
                       const CodeInfo& code_info,
-                      const StackMap& stack_map,
-                      const MethodInfo& method_info) const {
+                      const StackMap& stack_map) const {
   uint32_t depth = Row() - stack_map.GetInlineInfoIndex();
   vios->Stream()
       << "InlineInfo[" << Row() << "]"
@@ -279,7 +333,7 @@ void InlineInfo::Dump(VariableIndentationOutputStream* vios,
   } else {
     vios->Stream()
         << std::dec
-        << ", method_index=" << GetMethodIndex(method_info);
+        << ", method_index=" << code_info.GetMethodIndexOf(*this);
   }
   vios->Stream() << ")\n";
   code_info.GetInlineDexRegisterMapOf(stack_map, *this).Dump(vios);
