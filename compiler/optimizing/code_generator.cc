@@ -737,17 +737,15 @@ void CodeGenerator::CreateLoadClassRuntimeCallLocationSummary(HLoadClass* cls,
 
 void CodeGenerator::GenerateLoadClassRuntimeCall(HLoadClass* cls) {
   DCHECK_EQ(cls->GetLoadKind(), HLoadClass::LoadKind::kRuntimeCall);
+  DCHECK(!cls->MustGenerateClinitCheck());
   LocationSummary* locations = cls->GetLocations();
   MoveConstant(locations->GetTemp(0), cls->GetTypeIndex().index_);
   if (cls->NeedsAccessCheck()) {
-    CheckEntrypointTypes<kQuickInitializeTypeAndVerifyAccess, void*, uint32_t>();
-    InvokeRuntime(kQuickInitializeTypeAndVerifyAccess, cls, cls->GetDexPc());
-  } else if (cls->MustGenerateClinitCheck()) {
-    CheckEntrypointTypes<kQuickInitializeStaticStorage, void*, uint32_t>();
-    InvokeRuntime(kQuickInitializeStaticStorage, cls, cls->GetDexPc());
+    CheckEntrypointTypes<kQuickResolveTypeAndVerifyAccess, void*, uint32_t>();
+    InvokeRuntime(kQuickResolveTypeAndVerifyAccess, cls, cls->GetDexPc());
   } else {
-    CheckEntrypointTypes<kQuickInitializeType, void*, uint32_t>();
-    InvokeRuntime(kQuickInitializeType, cls, cls->GetDexPc());
+    CheckEntrypointTypes<kQuickResolveType, void*, uint32_t>();
+    InvokeRuntime(kQuickResolveType, cls, cls->GetDexPc());
   }
 }
 
@@ -963,12 +961,6 @@ CodeGenerator::CodeGenerator(HGraph* graph,
 
 CodeGenerator::~CodeGenerator() {}
 
-void CodeGenerator::ComputeStackMapSize(size_t* stack_map_size) {
-  DCHECK(stack_map_size != nullptr);
-  StackMapStream* stack_map_stream = GetStackMapStream();
-  *stack_map_size = stack_map_stream->PrepareForFillIn();
-}
-
 size_t CodeGenerator::GetNumberOfJitRoots() const {
   DCHECK(code_generation_data_ != nullptr);
   return code_generation_data_->GetNumberOfJitRoots();
@@ -1035,13 +1027,12 @@ static void CheckLoopEntriesCanBeUsedForOsr(const HGraph& graph,
   }
 }
 
-void CodeGenerator::BuildStackMaps(MemoryRegion stack_map_region,
-                                   const DexFile::CodeItem* code_item_for_osr_check) {
-  StackMapStream* stack_map_stream = GetStackMapStream();
-  stack_map_stream->FillInCodeInfo(stack_map_region);
-  if (kIsDebugBuild && code_item_for_osr_check != nullptr) {
-    CheckLoopEntriesCanBeUsedForOsr(*graph_, CodeInfo(stack_map_region), *code_item_for_osr_check);
+ScopedArenaVector<uint8_t> CodeGenerator::BuildStackMaps(const DexFile::CodeItem* code_item) {
+  ScopedArenaVector<uint8_t> stack_map = GetStackMapStream()->Encode();
+  if (kIsDebugBuild && code_item != nullptr) {
+    CheckLoopEntriesCanBeUsedForOsr(*graph_, CodeInfo(stack_map.data()), *code_item);
   }
+  return stack_map;
 }
 
 void CodeGenerator::RecordPcInfo(HInstruction* instruction,

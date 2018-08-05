@@ -164,6 +164,16 @@ Location InvokeRuntimeCallingConvention::GetReturnLocation(DataType::Type return
   return ARM64ReturnLocation(return_type);
 }
 
+static RegisterSet OneRegInReferenceOutSaveEverythingCallerSaves() {
+  InvokeRuntimeCallingConvention calling_convention;
+  RegisterSet caller_saves = RegisterSet::Empty();
+  caller_saves.Add(Location::RegisterLocation(calling_convention.GetRegisterAt(0).GetCode()));
+  DCHECK_EQ(calling_convention.GetRegisterAt(0).GetCode(),
+            RegisterFrom(calling_convention.GetReturnLocation(DataType::Type::kReference),
+                         DataType::Type::kReference).GetCode());
+  return caller_saves;
+}
+
 // NOLINT on __ macro to suppress wrong warning/fix (misc-macro-parentheses) from clang-tidy.
 #define __ down_cast<CodeGeneratorARM64*>(codegen)->GetVIXLAssembler()->  // NOLINT
 #define QUICK_ENTRY_POINT(x) QUICK_ENTRYPOINT_OFFSET(kArm64PointerSize, x).Int32Value()
@@ -307,35 +317,41 @@ class DivZeroCheckSlowPathARM64 : public SlowPathCodeARM64 {
 
 class LoadClassSlowPathARM64 : public SlowPathCodeARM64 {
  public:
-  LoadClassSlowPathARM64(HLoadClass* cls,
-                         HInstruction* at,
-                         uint32_t dex_pc,
-                         bool do_clinit)
-      : SlowPathCodeARM64(at),
-        cls_(cls),
-        dex_pc_(dex_pc),
-        do_clinit_(do_clinit) {
+  LoadClassSlowPathARM64(HLoadClass* cls, HInstruction* at)
+      : SlowPathCodeARM64(at), cls_(cls) {
     DCHECK(at->IsLoadClass() || at->IsClinitCheck());
+    DCHECK_EQ(instruction_->IsLoadClass(), cls_ == instruction_);
   }
 
   void EmitNativeCode(CodeGenerator* codegen) OVERRIDE {
     LocationSummary* locations = instruction_->GetLocations();
     Location out = locations->Out();
-    CodeGeneratorARM64* arm64_codegen = down_cast<CodeGeneratorARM64*>(codegen);
+    const uint32_t dex_pc = instruction_->GetDexPc();
+    bool must_resolve_type = instruction_->IsLoadClass() && cls_->MustResolveTypeOnSlowPath();
+    bool must_do_clinit = instruction_->IsClinitCheck() || cls_->MustGenerateClinitCheck();
 
+    CodeGeneratorARM64* arm64_codegen = down_cast<CodeGeneratorARM64*>(codegen);
     __ Bind(GetEntryLabel());
     SaveLiveRegisters(codegen, locations);
 
     InvokeRuntimeCallingConvention calling_convention;
-    dex::TypeIndex type_index = cls_->GetTypeIndex();
-    __ Mov(calling_convention.GetRegisterAt(0).W(), type_index.index_);
-    QuickEntrypointEnum entrypoint = do_clinit_ ? kQuickInitializeStaticStorage
-                                                : kQuickInitializeType;
-    arm64_codegen->InvokeRuntime(entrypoint, instruction_, dex_pc_, this);
-    if (do_clinit_) {
-      CheckEntrypointTypes<kQuickInitializeStaticStorage, void*, uint32_t>();
+    if (must_resolve_type) {
+      DCHECK(IsSameDexFile(cls_->GetDexFile(), arm64_codegen->GetGraph()->GetDexFile()));
+      dex::TypeIndex type_index = cls_->GetTypeIndex();
+      __ Mov(calling_convention.GetRegisterAt(0).W(), type_index.index_);
+      arm64_codegen->InvokeRuntime(kQuickResolveType, instruction_, dex_pc, this);
+      CheckEntrypointTypes<kQuickResolveType, void*, uint32_t>();
+      // If we also must_do_clinit, the resolved type is now in the correct register.
     } else {
-      CheckEntrypointTypes<kQuickInitializeType, void*, uint32_t>();
+      DCHECK(must_do_clinit);
+      Location source = instruction_->IsLoadClass() ? out : locations->InAt(0);
+      arm64_codegen->MoveLocation(LocationFrom(calling_convention.GetRegisterAt(0)),
+                                  source,
+                                  cls_->GetType());
+    }
+    if (must_do_clinit) {
+      arm64_codegen->InvokeRuntime(kQuickInitializeStaticStorage, instruction_, dex_pc, this);
+      CheckEntrypointTypes<kQuickInitializeStaticStorage, void*, mirror::Class*>();
     }
 
     // Move the class to the desired location.
@@ -353,12 +369,6 @@ class LoadClassSlowPathARM64 : public SlowPathCodeARM64 {
  private:
   // The class this slow path will load.
   HLoadClass* const cls_;
-
-  // The dex PC of `at_`.
-  const uint32_t dex_pc_;
-
-  // Whether to initialize the class.
-  const bool do_clinit_;
 
   DISALLOW_COPY_AND_ASSIGN(LoadClassSlowPathARM64);
 };
@@ -1403,7 +1413,9 @@ CodeGeneratorARM64::CodeGeneratorARM64(HGraph* graph,
       jit_string_patches_(StringReferenceValueComparator(),
                           graph->GetAllocator()->Adapter(kArenaAllocCodeGenerator)),
       jit_class_patches_(TypeReferenceValueComparator(),
-                         graph->GetAllocator()->Adapter(kArenaAllocCodeGenerator)) {
+                         graph->GetAllocator()->Adapter(kArenaAllocCodeGenerator)),
+      jit_baker_read_barrier_slow_paths_(std::less<uint32_t>(),
+                                         graph->GetAllocator()->Adapter(kArenaAllocCodeGenerator)) {
   // Save the link register (containing the return address) to mimic Quick.
   AddAllocatedRegister(LocationFrom(lr));
 }
@@ -1418,6 +1430,16 @@ void CodeGeneratorARM64::EmitJumpTables() {
 
 void CodeGeneratorARM64::Finalize(CodeAllocator* allocator) {
   EmitJumpTables();
+
+  // Emit JIT baker read barrier slow paths.
+  DCHECK(Runtime::Current()->UseJitCompilation() || jit_baker_read_barrier_slow_paths_.empty());
+  for (auto& entry : jit_baker_read_barrier_slow_paths_) {
+    uint32_t encoded_data = entry.first;
+    vixl::aarch64::Label* slow_path_entry = &entry.second.label;
+    __ Bind(slow_path_entry);
+    CompileBakerReadBarrierThunk(*GetAssembler(), encoded_data, /* debug_name */ nullptr);
+  }
+
   // Ensure we emit the literal pool.
   __ FinalizeCode();
 
@@ -3178,12 +3200,14 @@ void LocationsBuilderARM64::VisitClinitCheck(HClinitCheck* check) {
   if (check->HasUses()) {
     locations->SetOut(Location::SameAsFirstInput());
   }
+  // Rely on the type initialization to save everything we need.
+  locations->SetCustomSlowPathCallerSaves(OneRegInReferenceOutSaveEverythingCallerSaves());
 }
 
 void InstructionCodeGeneratorARM64::VisitClinitCheck(HClinitCheck* check) {
   // We assume the class is not null.
-  SlowPathCodeARM64* slow_path = new (codegen_->GetScopedAllocator()) LoadClassSlowPathARM64(
-      check->GetLoadClass(), check, check->GetDexPc(), true);
+  SlowPathCodeARM64* slow_path =
+      new (codegen_->GetScopedAllocator()) LoadClassSlowPathARM64(check->GetLoadClass(), check);
   codegen_->AddSlowPath(slow_path);
   GenerateClassInitializationCheck(slow_path, InputRegisterAt(check, 0));
 }
@@ -4734,9 +4758,18 @@ vixl::aarch64::Label* CodeGeneratorARM64::NewStringBssEntryPatch(
   return NewPcRelativePatch(&dex_file, string_index.index_, adrp_label, &string_bss_entry_patches_);
 }
 
-vixl::aarch64::Label* CodeGeneratorARM64::NewBakerReadBarrierPatch(uint32_t custom_data) {
-  baker_read_barrier_patches_.emplace_back(custom_data);
-  return &baker_read_barrier_patches_.back().label;
+void CodeGeneratorARM64::EmitBakerReadBarrierCbnz(uint32_t custom_data) {
+  ExactAssemblyScope guard(GetVIXLAssembler(), 1 * vixl::aarch64::kInstructionSize);
+  if (Runtime::Current()->UseJitCompilation()) {
+    auto it = jit_baker_read_barrier_slow_paths_.FindOrAdd(custom_data);
+    vixl::aarch64::Label* slow_path_entry = &it->second.label;
+    __ cbnz(mr, slow_path_entry);
+  } else {
+    baker_read_barrier_patches_.emplace_back(custom_data);
+    vixl::aarch64::Label* cbnz_label = &baker_read_barrier_patches_.back().label;
+    __ bind(cbnz_label);
+    __ cbnz(mr, static_cast<int64_t>(0));  // Placeholder, patched at link-time.
+  }
 }
 
 vixl::aarch64::Label* CodeGeneratorARM64::NewPcRelativePatch(
@@ -5053,13 +5086,7 @@ void LocationsBuilderARM64::VisitLoadClass(HLoadClass* cls) {
   if (cls->GetLoadKind() == HLoadClass::LoadKind::kBssEntry) {
     if (!kUseReadBarrier || kUseBakerReadBarrier) {
       // Rely on the type resolution or initialization and marking to save everything we need.
-      RegisterSet caller_saves = RegisterSet::Empty();
-      InvokeRuntimeCallingConvention calling_convention;
-      caller_saves.Add(Location::RegisterLocation(calling_convention.GetRegisterAt(0).GetCode()));
-      DCHECK_EQ(calling_convention.GetRegisterAt(0).GetCode(),
-                RegisterFrom(calling_convention.GetReturnLocation(DataType::Type::kReference),
-                             DataType::Type::kReference).GetCode());
-      locations->SetCustomSlowPathCallerSaves(caller_saves);
+      locations->SetCustomSlowPathCallerSaves(OneRegInReferenceOutSaveEverythingCallerSaves());
     } else {
       // For non-Baker read barrier we have a temp-clobbering call.
     }
@@ -5171,8 +5198,8 @@ void InstructionCodeGeneratorARM64::VisitLoadClass(HLoadClass* cls) NO_THREAD_SA
   bool do_clinit = cls->MustGenerateClinitCheck();
   if (generate_null_check || do_clinit) {
     DCHECK(cls->CanCallRuntime());
-    SlowPathCodeARM64* slow_path = new (codegen_->GetScopedAllocator()) LoadClassSlowPathARM64(
-        cls, cls, cls->GetDexPc(), do_clinit);
+    SlowPathCodeARM64* slow_path =
+        new (codegen_->GetScopedAllocator()) LoadClassSlowPathARM64(cls, cls);
     codegen_->AddSlowPath(slow_path);
     if (generate_null_check) {
       __ Cbz(out, slow_path->GetEntryLabel());
@@ -5257,13 +5284,7 @@ void LocationsBuilderARM64::VisitLoadString(HLoadString* load) {
     if (load->GetLoadKind() == HLoadString::LoadKind::kBssEntry) {
       if (!kUseReadBarrier || kUseBakerReadBarrier) {
         // Rely on the pResolveString and marking to save everything we need.
-        RegisterSet caller_saves = RegisterSet::Empty();
-        InvokeRuntimeCallingConvention calling_convention;
-        caller_saves.Add(Location::RegisterLocation(calling_convention.GetRegisterAt(0).GetCode()));
-        DCHECK_EQ(calling_convention.GetRegisterAt(0).GetCode(),
-                  RegisterFrom(calling_convention.GetReturnLocation(DataType::Type::kReference),
-                               DataType::Type::kReference).GetCode());
-        locations->SetCustomSlowPathCallerSaves(caller_saves);
+        locations->SetCustomSlowPathCallerSaves(OneRegInReferenceOutSaveEverythingCallerSaves());
       } else {
         // For non-Baker read barrier we have a temp-clobbering call.
       }
@@ -6255,14 +6276,14 @@ void CodeGeneratorARM64::GenerateGcRootFieldLoad(
     if (kUseBakerReadBarrier) {
       // Fast path implementation of art::ReadBarrier::BarrierForRoot when
       // Baker's read barrier are used.
-      if (kBakerReadBarrierLinkTimeThunksEnableForGcRoots &&
-          !Runtime::Current()->UseJitCompilation()) {
+      if (kBakerReadBarrierLinkTimeThunksEnableForGcRoots) {
         // Query `art::Thread::Current()->GetIsGcMarking()` (stored in
         // the Marking Register) to decide whether we need to enter
         // the slow path to mark the GC root.
         //
-        // We use link-time generated thunks for the slow path. That thunk
-        // checks the reference and jumps to the entrypoint if needed.
+        // We use shared thunks for the slow path; shared within the method
+        // for JIT, across methods for AOT. That thunk checks the reference
+        // and jumps to the entrypoint if needed.
         //
         //     lr = &return_address;
         //     GcRoot<mirror::Object> root = *(obj+offset);  // Original reference load.
@@ -6276,20 +6297,18 @@ void CodeGeneratorARM64::GenerateGcRootFieldLoad(
         DCHECK(temps.IsAvailable(ip1));
         temps.Exclude(ip0, ip1);
         uint32_t custom_data = EncodeBakerReadBarrierGcRootData(root_reg.GetCode());
-        vixl::aarch64::Label* cbnz_label = NewBakerReadBarrierPatch(custom_data);
 
-        EmissionCheckScope guard(GetVIXLAssembler(), 3 * vixl::aarch64::kInstructionSize);
+        ExactAssemblyScope guard(GetVIXLAssembler(), 3 * vixl::aarch64::kInstructionSize);
         vixl::aarch64::Label return_address;
         __ adr(lr, &return_address);
         if (fixup_label != nullptr) {
-          __ Bind(fixup_label);
+          __ bind(fixup_label);
         }
         static_assert(BAKER_MARK_INTROSPECTION_GC_ROOT_LDR_OFFSET == -8,
                       "GC root LDR must be 2 instruction (8B) before the return address label.");
         __ ldr(root_reg, MemOperand(obj.X(), offset));
-        __ Bind(cbnz_label);
-        __ cbnz(mr, static_cast<int64_t>(0));  // Placeholder, patched at link-time.
-        __ Bind(&return_address);
+        EmitBakerReadBarrierCbnz(custom_data);
+        __ bind(&return_address);
       } else {
         // Query `art::Thread::Current()->GetIsGcMarking()` (stored in
         // the Marking Register) to decide whether we need to enter
@@ -6361,18 +6380,17 @@ void CodeGeneratorARM64::GenerateFieldLoadWithBakerReadBarrier(HInstruction* ins
   DCHECK(kEmitCompilerReadBarrier);
   DCHECK(kUseBakerReadBarrier);
 
-  if (kBakerReadBarrierLinkTimeThunksEnableForFields &&
-      !use_load_acquire &&
-      !Runtime::Current()->UseJitCompilation()) {
+  if (kBakerReadBarrierLinkTimeThunksEnableForFields && !use_load_acquire) {
     // Query `art::Thread::Current()->GetIsGcMarking()` (stored in the
     // Marking Register) to decide whether we need to enter the slow
     // path to mark the reference. Then, in the slow path, check the
     // gray bit in the lock word of the reference's holder (`obj`) to
     // decide whether to mark `ref` or not.
     //
-    // We use link-time generated thunks for the slow path. That thunk checks
-    // the holder and jumps to the entrypoint if needed. If the holder is not
-    // gray, it creates a fake dependency and returns to the LDR instruction.
+    // We use shared thunks for the slow path; shared within the method
+    // for JIT, across methods for AOT. That thunk checks the holder
+    // and jumps to the entrypoint if needed. If the holder is not gray,
+    // it creates a fake dependency and returns to the LDR instruction.
     //
     //     lr = &gray_return_address;
     //     if (mr) {  // Thread::Current()->GetIsGcMarking()
@@ -6398,15 +6416,13 @@ void CodeGeneratorARM64::GenerateFieldLoadWithBakerReadBarrier(HInstruction* ins
     DCHECK(temps.IsAvailable(ip1));
     temps.Exclude(ip0, ip1);
     uint32_t custom_data = EncodeBakerReadBarrierFieldData(base.GetCode(), obj.GetCode());
-    vixl::aarch64::Label* cbnz_label = NewBakerReadBarrierPatch(custom_data);
 
     {
-      EmissionCheckScope guard(GetVIXLAssembler(),
+      ExactAssemblyScope guard(GetVIXLAssembler(),
                                (kPoisonHeapReferences ? 4u : 3u) * vixl::aarch64::kInstructionSize);
       vixl::aarch64::Label return_address;
       __ adr(lr, &return_address);
-      __ Bind(cbnz_label);
-      __ cbnz(mr, static_cast<int64_t>(0));  // Placeholder, patched at link-time.
+      EmitBakerReadBarrierCbnz(custom_data);
       static_assert(BAKER_MARK_INTROSPECTION_FIELD_LDR_OFFSET == (kPoisonHeapReferences ? -8 : -4),
                     "Field LDR must be 1 instruction (4B) before the return address label; "
                     " 2 instructions (8B) for heap poisoning.");
@@ -6415,8 +6431,12 @@ void CodeGeneratorARM64::GenerateFieldLoadWithBakerReadBarrier(HInstruction* ins
       if (needs_null_check) {
         MaybeRecordImplicitNullCheck(instruction);
       }
-      GetAssembler()->MaybeUnpoisonHeapReference(ref_reg);
-      __ Bind(&return_address);
+      // Unpoison the reference explicitly if needed. MaybeUnpoisonHeapReference() uses
+      // macro instructions disallowed in ExactAssemblyScope.
+      if (kPoisonHeapReferences) {
+        __ neg(ref_reg, Operand(ref_reg));
+      }
+      __ bind(&return_address);
     }
     MaybeGenerateMarkingRegisterCheck(/* code */ __LINE__, /* temp_loc */ LocationFrom(ip1));
     return;
@@ -6452,17 +6472,17 @@ void CodeGeneratorARM64::GenerateArrayLoadWithBakerReadBarrier(HInstruction* ins
       "art::mirror::HeapReference<art::mirror::Object> and int32_t have different sizes.");
   size_t scale_factor = DataType::SizeShift(DataType::Type::kReference);
 
-  if (kBakerReadBarrierLinkTimeThunksEnableForArrays &&
-      !Runtime::Current()->UseJitCompilation()) {
+  if (kBakerReadBarrierLinkTimeThunksEnableForArrays) {
     // Query `art::Thread::Current()->GetIsGcMarking()` (stored in the
     // Marking Register) to decide whether we need to enter the slow
     // path to mark the reference. Then, in the slow path, check the
     // gray bit in the lock word of the reference's holder (`obj`) to
     // decide whether to mark `ref` or not.
     //
-    // We use link-time generated thunks for the slow path. That thunk checks
-    // the holder and jumps to the entrypoint if needed. If the holder is not
-    // gray, it creates a fake dependency and returns to the LDR instruction.
+    // We use shared thunks for the slow path; shared within the method
+    // for JIT, across methods for AOT. That thunk checks the holder
+    // and jumps to the entrypoint if needed. If the holder is not gray,
+    // it creates a fake dependency and returns to the LDR instruction.
     //
     //     lr = &gray_return_address;
     //     if (mr) {  // Thread::Current()->GetIsGcMarking()
@@ -6483,23 +6503,25 @@ void CodeGeneratorARM64::GenerateArrayLoadWithBakerReadBarrier(HInstruction* ins
     DCHECK(temps.IsAvailable(ip1));
     temps.Exclude(ip0, ip1);
     uint32_t custom_data = EncodeBakerReadBarrierArrayData(temp.GetCode());
-    vixl::aarch64::Label* cbnz_label = NewBakerReadBarrierPatch(custom_data);
 
     __ Add(temp.X(), obj.X(), Operand(data_offset));
     {
-      EmissionCheckScope guard(GetVIXLAssembler(),
+      ExactAssemblyScope guard(GetVIXLAssembler(),
                                (kPoisonHeapReferences ? 4u : 3u) * vixl::aarch64::kInstructionSize);
       vixl::aarch64::Label return_address;
       __ adr(lr, &return_address);
-      __ Bind(cbnz_label);
-      __ cbnz(mr, static_cast<int64_t>(0));  // Placeholder, patched at link-time.
+      EmitBakerReadBarrierCbnz(custom_data);
       static_assert(BAKER_MARK_INTROSPECTION_ARRAY_LDR_OFFSET == (kPoisonHeapReferences ? -8 : -4),
                     "Array LDR must be 1 instruction (4B) before the return address label; "
                     " 2 instructions (8B) for heap poisoning.");
       __ ldr(ref_reg, MemOperand(temp.X(), index_reg.X(), LSL, scale_factor));
       DCHECK(!needs_null_check);  // The thunk cannot handle the null check.
-      GetAssembler()->MaybeUnpoisonHeapReference(ref_reg);
-      __ Bind(&return_address);
+      // Unpoison the reference explicitly if needed. MaybeUnpoisonHeapReference() uses
+      // macro instructions disallowed in ExactAssemblyScope.
+      if (kPoisonHeapReferences) {
+        __ neg(ref_reg, Operand(ref_reg));
+      }
+      __ bind(&return_address);
     }
     MaybeGenerateMarkingRegisterCheck(/* code */ __LINE__, /* temp_loc */ LocationFrom(ip1));
     return;
@@ -6988,7 +7010,12 @@ void CodeGeneratorARM64::CompileBakerReadBarrierThunk(Arm64Assembler& assembler,
       UNREACHABLE();
   }
 
-  if (GetCompilerOptions().GenerateAnyDebugInfo()) {
+  // For JIT, the slow path is considered part of the compiled method,
+  // so JIT should pass null as `debug_name`. Tests may not have a runtime.
+  DCHECK(Runtime::Current() == nullptr ||
+         !Runtime::Current()->UseJitCompilation() ||
+         debug_name == nullptr);
+  if (debug_name != nullptr && GetCompilerOptions().GenerateAnyDebugInfo()) {
     std::ostringstream oss;
     oss << "BakerReadBarrierThunk";
     switch (kind) {

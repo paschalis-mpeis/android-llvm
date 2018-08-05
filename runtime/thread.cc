@@ -3223,8 +3223,8 @@ void Thread::DumpThreadOffset(std::ostream& os, uint32_t offset) {
   QUICK_ENTRY_POINT_INFO(pInstanceofNonTrivial)
   QUICK_ENTRY_POINT_INFO(pCheckInstanceOf)
   QUICK_ENTRY_POINT_INFO(pInitializeStaticStorage)
-  QUICK_ENTRY_POINT_INFO(pInitializeTypeAndVerifyAccess)
-  QUICK_ENTRY_POINT_INFO(pInitializeType)
+  QUICK_ENTRY_POINT_INFO(pResolveTypeAndVerifyAccess)
+  QUICK_ENTRY_POINT_INFO(pResolveType)
   QUICK_ENTRY_POINT_INFO(pResolveString)
   QUICK_ENTRY_POINT_INFO(pSet8Instance)
   QUICK_ENTRY_POINT_INFO(pSet8Static)
@@ -3604,7 +3604,9 @@ class ReferenceMapVisitor : public StackVisitor {
       StackReference<mirror::Object>* vreg_base = reinterpret_cast<StackReference<mirror::Object>*>(
           reinterpret_cast<uintptr_t>(cur_quick_frame));
       uintptr_t native_pc_offset = method_header->NativeQuickPcOffset(GetCurrentQuickFramePc());
-      CodeInfo code_info(method_header);
+      CodeInfo code_info(method_header, kPrecise
+          ? CodeInfo::DecodeFlags::Default  // We will need dex register maps.
+          : CodeInfo::DecodeFlags::GcMasksOnly);
       StackMap map = code_info.GetStackMapForNativePcOffset(native_pc_offset);
       DCHECK(map.IsValid());
 
@@ -3621,7 +3623,7 @@ class ReferenceMapVisitor : public StackVisitor {
             vreg_info.VisitStack(&new_ref, i, this);
             if (ref != new_ref) {
               ref_addr->Assign(new_ref);
-           }
+            }
           }
         }
       }

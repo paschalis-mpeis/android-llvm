@@ -160,6 +160,14 @@ Location InvokeRuntimeCallingConvention::GetReturnLocation(DataType::Type type) 
   return MipsReturnLocation(type);
 }
 
+static RegisterSet OneRegInReferenceOutSaveEverythingCallerSaves() {
+  InvokeRuntimeCallingConvention calling_convention;
+  RegisterSet caller_saves = RegisterSet::Empty();
+  caller_saves.Add(Location::RegisterLocation(calling_convention.GetRegisterAt(0)));
+  // The reference is returned in the same register. This differs from the standard return location.
+  return caller_saves;
+}
+
 // NOLINT on __ macro to suppress wrong warning/fix (misc-macro-parentheses) from clang-tidy.
 #define __ down_cast<CodeGeneratorMIPS*>(codegen)->GetAssembler()->  // NOLINT
 #define QUICK_ENTRY_POINT(x) QUICK_ENTRYPOINT_OFFSET(kMipsPointerSize, x).Int32Value()
@@ -222,35 +230,41 @@ class DivZeroCheckSlowPathMIPS : public SlowPathCodeMIPS {
 
 class LoadClassSlowPathMIPS : public SlowPathCodeMIPS {
  public:
-  LoadClassSlowPathMIPS(HLoadClass* cls,
-                        HInstruction* at,
-                        uint32_t dex_pc,
-                        bool do_clinit)
-      : SlowPathCodeMIPS(at),
-        cls_(cls),
-        dex_pc_(dex_pc),
-        do_clinit_(do_clinit) {
+  LoadClassSlowPathMIPS(HLoadClass* cls, HInstruction* at)
+      : SlowPathCodeMIPS(at), cls_(cls) {
     DCHECK(at->IsLoadClass() || at->IsClinitCheck());
+    DCHECK_EQ(instruction_->IsLoadClass(), cls_ == instruction_);
   }
 
   void EmitNativeCode(CodeGenerator* codegen) OVERRIDE {
     LocationSummary* locations = instruction_->GetLocations();
     Location out = locations->Out();
+    const uint32_t dex_pc = instruction_->GetDexPc();
+    bool must_resolve_type = instruction_->IsLoadClass() && cls_->MustResolveTypeOnSlowPath();
+    bool must_do_clinit = instruction_->IsClinitCheck() || cls_->MustGenerateClinitCheck();
+
     CodeGeneratorMIPS* mips_codegen = down_cast<CodeGeneratorMIPS*>(codegen);
-    InvokeRuntimeCallingConvention calling_convention;
-    DCHECK_EQ(instruction_->IsLoadClass(), cls_ == instruction_);
     __ Bind(GetEntryLabel());
     SaveLiveRegisters(codegen, locations);
 
-    dex::TypeIndex type_index = cls_->GetTypeIndex();
-    __ LoadConst32(calling_convention.GetRegisterAt(0), type_index.index_);
-    QuickEntrypointEnum entrypoint = do_clinit_ ? kQuickInitializeStaticStorage
-                                                : kQuickInitializeType;
-    mips_codegen->InvokeRuntime(entrypoint, instruction_, dex_pc_, this);
-    if (do_clinit_) {
-      CheckEntrypointTypes<kQuickInitializeStaticStorage, void*, uint32_t>();
+    InvokeRuntimeCallingConvention calling_convention;
+    if (must_resolve_type) {
+      DCHECK(IsSameDexFile(cls_->GetDexFile(), mips_codegen->GetGraph()->GetDexFile()));
+      dex::TypeIndex type_index = cls_->GetTypeIndex();
+      __ LoadConst32(calling_convention.GetRegisterAt(0), type_index.index_);
+      mips_codegen->InvokeRuntime(kQuickResolveType, instruction_, dex_pc, this);
+      CheckEntrypointTypes<kQuickResolveType, void*, uint32_t>();
+      // If we also must_do_clinit, the resolved type is now in the correct register.
     } else {
-      CheckEntrypointTypes<kQuickInitializeType, void*, uint32_t>();
+      DCHECK(must_do_clinit);
+      Location source = instruction_->IsLoadClass() ? out : locations->InAt(0);
+      mips_codegen->MoveLocation(Location::RegisterLocation(calling_convention.GetRegisterAt(0)),
+                                 source,
+                                 cls_->GetType());
+    }
+    if (must_do_clinit) {
+      mips_codegen->InvokeRuntime(kQuickInitializeStaticStorage, instruction_, dex_pc, this);
+      CheckEntrypointTypes<kQuickInitializeStaticStorage, void*, mirror::Class*>();
     }
 
     // Move the class to the desired location.
@@ -271,12 +285,6 @@ class LoadClassSlowPathMIPS : public SlowPathCodeMIPS {
  private:
   // The class this slow path will load.
   HLoadClass* const cls_;
-
-  // The dex PC of `at_`.
-  const uint32_t dex_pc_;
-
-  // Whether to initialize the class.
-  const bool do_clinit_;
 
   DISALLOW_COPY_AND_ASSIGN(LoadClassSlowPathMIPS);
 };
@@ -3594,15 +3602,14 @@ void LocationsBuilderMIPS::VisitClinitCheck(HClinitCheck* check) {
   if (check->HasUses()) {
     locations->SetOut(Location::SameAsFirstInput());
   }
+  // Rely on the type initialization to save everything we need.
+  locations->SetCustomSlowPathCallerSaves(OneRegInReferenceOutSaveEverythingCallerSaves());
 }
 
 void InstructionCodeGeneratorMIPS::VisitClinitCheck(HClinitCheck* check) {
   // We assume the class is not null.
-  SlowPathCodeMIPS* slow_path = new (codegen_->GetScopedAllocator()) LoadClassSlowPathMIPS(
-      check->GetLoadClass(),
-      check,
-      check->GetDexPc(),
-      true);
+  SlowPathCodeMIPS* slow_path =
+      new (codegen_->GetScopedAllocator()) LoadClassSlowPathMIPS(check->GetLoadClass(), check);
   codegen_->AddSlowPath(slow_path);
   GenerateClassInitializationCheck(slow_path,
                                    check->GetLocations()->InAt(0).AsRegister<Register>());
@@ -8137,10 +8144,7 @@ void LocationsBuilderMIPS::VisitLoadClass(HLoadClass* cls) {
   if (load_kind == HLoadClass::LoadKind::kBssEntry) {
     if (!kUseReadBarrier || kUseBakerReadBarrier) {
       // Rely on the type resolution or initialization and marking to save everything we need.
-      RegisterSet caller_saves = RegisterSet::Empty();
-      InvokeRuntimeCallingConvention calling_convention;
-      caller_saves.Add(Location::RegisterLocation(calling_convention.GetRegisterAt(0)));
-      locations->SetCustomSlowPathCallerSaves(caller_saves);
+      locations->SetCustomSlowPathCallerSaves(OneRegInReferenceOutSaveEverythingCallerSaves());
     } else {
       // For non-Baker read barriers we have a temp-clobbering call.
     }
@@ -8277,8 +8281,8 @@ void InstructionCodeGeneratorMIPS::VisitLoadClass(HLoadClass* cls) NO_THREAD_SAF
 
   if (generate_null_check || cls->MustGenerateClinitCheck()) {
     DCHECK(cls->CanCallRuntime());
-    SlowPathCodeMIPS* slow_path = new (codegen_->GetScopedAllocator()) LoadClassSlowPathMIPS(
-        cls, cls, cls->GetDexPc(), cls->MustGenerateClinitCheck());
+    SlowPathCodeMIPS* slow_path =
+        new (codegen_->GetScopedAllocator()) LoadClassSlowPathMIPS(cls, cls);
     codegen_->AddSlowPath(slow_path);
     if (generate_null_check) {
       __ Beqz(out, slow_path->GetEntryLabel());
@@ -8371,10 +8375,7 @@ void LocationsBuilderMIPS::VisitLoadString(HLoadString* load) {
     if (load_kind == HLoadString::LoadKind::kBssEntry) {
       if (!kUseReadBarrier || kUseBakerReadBarrier) {
         // Rely on the pResolveString and marking to save everything we need.
-        RegisterSet caller_saves = RegisterSet::Empty();
-        InvokeRuntimeCallingConvention calling_convention;
-        caller_saves.Add(Location::RegisterLocation(calling_convention.GetRegisterAt(0)));
-        locations->SetCustomSlowPathCallerSaves(caller_saves);
+        locations->SetCustomSlowPathCallerSaves(OneRegInReferenceOutSaveEverythingCallerSaves());
       } else {
         // For non-Baker read barriers we have a temp-clobbering call.
       }

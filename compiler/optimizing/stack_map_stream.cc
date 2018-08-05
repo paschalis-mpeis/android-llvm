@@ -45,9 +45,10 @@ void StackMapStream::BeginMethod(size_t frame_size_in_bytes,
                                  uint32_t num_dex_registers) {
   DCHECK(!in_method_) << "Mismatched Begin/End calls";
   in_method_ = true;
-  DCHECK_EQ(frame_size_in_bytes_, 0u) << "BeginMethod was already called";
+  DCHECK_EQ(packed_frame_size_, 0u) << "BeginMethod was already called";
 
-  frame_size_in_bytes_ = frame_size_in_bytes;
+  DCHECK_ALIGNED(frame_size_in_bytes, kStackAlignment);
+  packed_frame_size_ = frame_size_in_bytes / kStackAlignment;
   core_spill_mask_ = core_spill_mask;
   fp_spill_mask_ = fp_spill_mask;
   num_dex_registers_ = num_dex_registers;
@@ -56,6 +57,15 @@ void StackMapStream::BeginMethod(size_t frame_size_in_bytes,
 void StackMapStream::EndMethod() {
   DCHECK(in_method_) << "Mismatched Begin/End calls";
   in_method_ = false;
+
+  // Read the stack masks now. The compiler might have updated them.
+  for (size_t i = 0; i < lazy_stack_masks_.size(); i++) {
+    BitVector* stack_mask = lazy_stack_masks_[i];
+    if (stack_mask != nullptr && stack_mask->GetNumberOfBits() != 0) {
+      stack_maps_[i][StackMap::kStackMaskIndex] =
+          stack_masks_.Dedup(stack_mask->GetRawStorage(), stack_mask->GetNumberOfBits());
+    }
+  }
 }
 
 void StackMapStream::BeginStackMapEntry(uint32_t dex_pc,
@@ -280,46 +290,28 @@ ALWAYS_INLINE static void EncodeTable(Writer& out, const Builder& bit_table) {
   bit_table.Encode(out);
 }
 
-size_t StackMapStream::PrepareForFillIn() {
-  DCHECK_EQ(out_.size(), 0u);
+ScopedArenaVector<uint8_t> StackMapStream::Encode() {
+  DCHECK(in_stack_map_ == false) << "Mismatched Begin/End calls";
+  DCHECK(in_inline_info_ == false) << "Mismatched Begin/End calls";
 
-  // Read the stack masks now. The compiler might have updated them.
-  for (size_t i = 0; i < lazy_stack_masks_.size(); i++) {
-    BitVector* stack_mask = lazy_stack_masks_[i];
-    if (stack_mask != nullptr && stack_mask->GetNumberOfBits() != 0) {
-      stack_maps_[i][StackMap::kStackMaskIndex] =
-        stack_masks_.Dedup(stack_mask->GetRawStorage(), stack_mask->GetNumberOfBits());
-    }
-  }
-
-  EncodeUnsignedLeb128(&out_, frame_size_in_bytes_);
-  EncodeUnsignedLeb128(&out_, core_spill_mask_);
-  EncodeUnsignedLeb128(&out_, fp_spill_mask_);
-  EncodeUnsignedLeb128(&out_, num_dex_registers_);
-  BitMemoryWriter<ScopedArenaVector<uint8_t>> out(&out_, out_.size() * kBitsPerByte);
+  ScopedArenaVector<uint8_t> buffer(allocator_->Adapter(kArenaAllocStackMapStream));
+  BitMemoryWriter<ScopedArenaVector<uint8_t>> out(&buffer);
+  EncodeVarintBits(out, packed_frame_size_);
+  EncodeVarintBits(out, core_spill_mask_);
+  EncodeVarintBits(out, fp_spill_mask_);
+  EncodeVarintBits(out, num_dex_registers_);
   EncodeTable(out, stack_maps_);
-  EncodeTable(out, inline_infos_);
-  EncodeTable(out, method_infos_);
   EncodeTable(out, register_masks_);
   EncodeTable(out, stack_masks_);
+  EncodeTable(out, inline_infos_);
+  EncodeTable(out, method_infos_);
   EncodeTable(out, dex_register_masks_);
   EncodeTable(out, dex_register_maps_);
   EncodeTable(out, dex_register_catalog_);
 
-  return out_.size();
-}
-
-void StackMapStream::FillInCodeInfo(MemoryRegion region) {
-  DCHECK(in_stack_map_ == false) << "Mismatched Begin/End calls";
-  DCHECK(in_inline_info_ == false) << "Mismatched Begin/End calls";
-  DCHECK_NE(0u, out_.size()) << "PrepareForFillIn not called before FillIn";
-  DCHECK_EQ(region.size(), out_.size());
-
-  region.CopyFromVector(0, out_);
-
   // Verify that we can load the CodeInfo and check some essentials.
-  CodeInfo code_info(region);
-  CHECK_EQ(code_info.Size(), out_.size());
+  CodeInfo code_info(buffer.data());
+  CHECK_EQ(code_info.Size(), buffer.size());
   CHECK_EQ(code_info.GetNumberOfStackMaps(), stack_maps_.size());
 
   // Verify all written data (usually only in debug builds).
@@ -328,6 +320,8 @@ void StackMapStream::FillInCodeInfo(MemoryRegion region) {
       dcheck(code_info);
     }
   }
+
+  return buffer;
 }
 
 }  // namespace art

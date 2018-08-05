@@ -34,10 +34,11 @@ namespace art {
  * Collects and builds stack maps for a method. All the stack maps
  * for a method are placed in a CodeInfo object.
  */
-class StackMapStream : public ValueObject {
+class StackMapStream : public DeletableArenaObject<kArenaAllocStackMapStream> {
  public:
   explicit StackMapStream(ScopedArenaAllocator* allocator, InstructionSet instruction_set)
-      : instruction_set_(instruction_set),
+      : allocator_(allocator),
+        instruction_set_(instruction_set),
         stack_maps_(allocator),
         inline_infos_(allocator),
         method_infos_(allocator),
@@ -46,13 +47,13 @@ class StackMapStream : public ValueObject {
         dex_register_masks_(allocator),
         dex_register_maps_(allocator),
         dex_register_catalog_(allocator),
-        out_(allocator->Adapter(kArenaAllocStackMapStream)),
         lazy_stack_masks_(allocator->Adapter(kArenaAllocStackMapStream)),
         current_stack_map_(),
         current_inline_infos_(allocator->Adapter(kArenaAllocStackMapStream)),
         current_dex_registers_(allocator->Adapter(kArenaAllocStackMapStream)),
         previous_dex_registers_(allocator->Adapter(kArenaAllocStackMapStream)),
         dex_register_timestamp_(allocator->Adapter(kArenaAllocStackMapStream)),
+        expected_num_dex_registers_(0u),
         temp_dex_register_mask_(allocator, 32, true, kArenaAllocStackMapStream),
         temp_dex_register_map_(allocator->Adapter(kArenaAllocStackMapStream)) {
   }
@@ -87,18 +88,18 @@ class StackMapStream : public ValueObject {
   uint32_t GetStackMapNativePcOffset(size_t i);
   void SetStackMapNativePcOffset(size_t i, uint32_t native_pc_offset);
 
-  // Prepares the stream to fill in a memory region. Must be called before FillIn.
-  // Returns the size (in bytes) needed to store this stream.
-  size_t PrepareForFillIn();
-  void FillInCodeInfo(MemoryRegion region);
+  // Encode all stack map data.
+  // The returned vector is allocated using the allocator passed to the StackMapStream.
+  ScopedArenaVector<uint8_t> Encode();
 
  private:
   static constexpr uint32_t kNoValue = -1;
 
   void CreateDexRegisterMap();
 
+  ScopedArenaAllocator* allocator_;
   const InstructionSet instruction_set_;
-  uint32_t frame_size_in_bytes_ = 0;
+  uint32_t packed_frame_size_ = 0;
   uint32_t core_spill_mask_ = 0;
   uint32_t fp_spill_mask_ = 0;
   uint32_t num_dex_registers_ = 0;
@@ -110,7 +111,6 @@ class StackMapStream : public ValueObject {
   BitmapTableBuilder dex_register_masks_;
   BitTableBuilder<MaskInfo> dex_register_maps_;
   BitTableBuilder<DexRegisterInfo> dex_register_catalog_;
-  ScopedArenaVector<uint8_t> out_;
 
   ScopedArenaVector<BitVector*> lazy_stack_masks_;
 

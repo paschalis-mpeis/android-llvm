@@ -271,17 +271,15 @@ class CodeInfo {
  public:
   enum DecodeFlags {
     Default = 0,
+    // Limits the decoding only to the data needed by GC.
+    GcMasksOnly = 1,
     // Limits the decoding only to the main stack map table and inline info table.
     // This is sufficient for many use cases and makes the header decoding faster.
-    InlineInfoOnly = 1,
+    InlineInfoOnly = 2,
   };
 
   explicit CodeInfo(const uint8_t* data, DecodeFlags flags = DecodeFlags::Default) {
     Decode(reinterpret_cast<const uint8_t*>(data), flags);
-  }
-
-  explicit CodeInfo(MemoryRegion region) : CodeInfo(region.begin()) {
-    DCHECK_EQ(Size(), region.size());
   }
 
   explicit CodeInfo(const OatQuickMethodHeader* header, DecodeFlags flags = DecodeFlags::Default);
@@ -416,10 +414,11 @@ class CodeInfo {
   void AddSizeStats(/*out*/ Stats* parent) const;
 
   ALWAYS_INLINE static QuickMethodFrameInfo DecodeFrameInfo(const uint8_t* data) {
+    BitMemoryReader reader(data);
     return QuickMethodFrameInfo(
-        DecodeUnsignedLeb128(&data),
-        DecodeUnsignedLeb128(&data),
-        DecodeUnsignedLeb128(&data));
+        DecodeVarintBits(reader) * kStackAlignment,  // Decode packed_frame_size_ and unpack.
+        DecodeVarintBits(reader),  // core_spill_mask_.
+        DecodeVarintBits(reader));  // fp_spill_mask_.
   }
 
   typedef std::map<BitMemoryRegion, uint32_t, BitMemoryRegion::Less> DedupeMap;
@@ -444,15 +443,15 @@ class CodeInfo {
 
   void Decode(const uint8_t* data, DecodeFlags flags);
 
-  uint32_t frame_size_in_bytes_;
+  uint32_t packed_frame_size_;  // Frame size in kStackAlignment units.
   uint32_t core_spill_mask_;
   uint32_t fp_spill_mask_;
   uint32_t number_of_dex_registers_;
   BitTable<StackMap> stack_maps_;
-  BitTable<InlineInfo> inline_infos_;
-  BitTable<MethodInfo> method_infos_;
   BitTable<RegisterMask> register_masks_;
   BitTable<MaskInfo> stack_masks_;
+  BitTable<InlineInfo> inline_infos_;
+  BitTable<MethodInfo> method_infos_;
   BitTable<MaskInfo> dex_register_masks_;
   BitTable<DexRegisterMapInfo> dex_register_maps_;
   BitTable<DexRegisterInfo> dex_register_catalog_;
