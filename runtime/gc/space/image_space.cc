@@ -1594,15 +1594,10 @@ class ImageSpace::BootImageLoader {
     }
     const OatHeader& oat_header = oat_file->GetOatHeader();
     const char* boot_classpath = oat_header.GetStoreValueByKey(OatHeader::kBootClassPathKey);
-    if (boot_classpath == nullptr || boot_classpath[0] == 0) {
-      *error_msg = StringPrintf("No boot class path in oat file '%s' for image file %s",
-                                oat_filename.c_str(),
-                                image_filename.c_str());
-      return false;
-    }
-
     all_locations->push_back(image_location);
-    ExtractMultiImageLocations(image_location, boot_classpath, all_locations);
+    if (boot_classpath != nullptr && boot_classpath[0] != 0) {
+      ExtractMultiImageLocations(image_location, boot_classpath, all_locations);
+    }
     return true;
   }
 
