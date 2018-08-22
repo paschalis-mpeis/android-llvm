@@ -16,91 +16,46 @@
 
 package com.android.class2greylist;
 
-import com.google.common.annotations.VisibleForTesting;
-
-import org.apache.bcel.Const;
 import org.apache.bcel.classfile.AnnotationEntry;
 import org.apache.bcel.classfile.DescendingVisitor;
-import org.apache.bcel.classfile.ElementValuePair;
 import org.apache.bcel.classfile.EmptyVisitor;
 import org.apache.bcel.classfile.Field;
 import org.apache.bcel.classfile.FieldOrMethod;
 import org.apache.bcel.classfile.JavaClass;
 import org.apache.bcel.classfile.Method;
 
-import java.util.Locale;
-import java.util.Set;
-import java.util.function.Predicate;
+import java.util.Map;
 
 /**
- * Visits a JavaClass instance and pulls out all members annotated with a
- * specific annotation. The signatures of such members are passed to {@link
- * Status#greylistEntry(String)}. Any errors result in a call to {@link
- * Status#error(String)}.
- *
- * If the annotation has a property "expectedSignature" the generated signature
- * will be verified against the one specified there. If it differs, an error
- * will be generated.
+ * Visits a JavaClass instance and passes any annotated members to a {@link AnnotationHandler}
+ * according to the map provided.
  */
 public class AnnotationVisitor extends EmptyVisitor {
 
-    private static final String EXPECTED_SIGNATURE = "expectedSignature";
-
     private final JavaClass mClass;
-    private final String mAnnotationType;
-    private final Predicate<Member> mMemberFilter;
     private final Status mStatus;
     private final DescendingVisitor mDescendingVisitor;
+    private final Map<String, AnnotationHandler> mAnnotationHandlers;
 
     /**
-     * Represents a member of a class file (a field or method).
+     * Creates a visitor for a class.
+     *
+     * @param clazz Class to visit
+     * @param status For reporting debug information
+     * @param handlers Map of {@link AnnotationHandler}. The keys should be annotation names, as
+     *                 class descriptors.
      */
-    @VisibleForTesting
-    public static class Member {
-
-        /**
-         * Signature of this member.
-         */
-        public final String signature;
-        /**
-         * Indicates if this is a synthetic bridge method.
-         */
-        public final boolean bridge;
-
-        public Member(String signature, boolean bridge) {
-            this.signature = signature;
-            this.bridge = bridge;
-        }
-    }
-
-    public AnnotationVisitor(
-            JavaClass clazz, String annotation, Set<String> publicApis, Status status) {
-        this(clazz,
-                annotation,
-                member -> !(member.bridge && publicApis.contains(member.signature)),
-                status);
-    }
-
-    @VisibleForTesting
-    public AnnotationVisitor(
-            JavaClass clazz, String annotation, Predicate<Member> memberFilter, Status status) {
+    public AnnotationVisitor(JavaClass clazz, Status status,
+            Map<String, AnnotationHandler> handlers) {
         mClass = clazz;
-        mAnnotationType = annotation;
-        mMemberFilter = memberFilter;
         mStatus = status;
+        mAnnotationHandlers = handlers;
         mDescendingVisitor = new DescendingVisitor(clazz, this);
     }
 
     public void visit() {
         mStatus.debug("Visit class %s", mClass.getClassName());
         mDescendingVisitor.visit();
-    }
-
-    private static String getClassDescriptor(JavaClass clazz) {
-        // JavaClass.getName() returns the Java-style name (with . not /), so we must fetch
-        // the original class name from the constant pool.
-        return clazz.getConstantPool().getConstantString(
-                clazz.getClassNameIndex(), Const.CONSTANT_Class);
     }
 
     @Override
@@ -114,51 +69,15 @@ public class AnnotationVisitor extends EmptyVisitor {
     }
 
     private void visitMember(FieldOrMethod member, String signatureFormatString) {
-        JavaClass definingClass = (JavaClass) mDescendingVisitor.predecessor();
         mStatus.debug("Visit member %s : %s", member.getName(), member.getSignature());
+        AnnotationContext context = new AnnotationContext(mStatus, member,
+                (JavaClass) mDescendingVisitor.predecessor(), signatureFormatString);
         for (AnnotationEntry a : member.getAnnotationEntries()) {
-            if (mAnnotationType.equals(a.getAnnotationType())) {
-                mStatus.debug("Member has annotation %s", mAnnotationType);
-                // For fields, the same access flag means volatile, so only check for methods.
-                boolean bridge = (member instanceof Method)
-                        && (member.getAccessFlags() & Const.ACC_BRIDGE) != 0;
-                if (bridge) {
-                    mStatus.debug("Member is a bridge", mAnnotationType);
-                }
-                String signature = String.format(Locale.US, signatureFormatString,
-                        getClassDescriptor(definingClass), member.getName(), member.getSignature());
-                for (ElementValuePair property : a.getElementValuePairs()) {
-                    switch (property.getNameString()) {
-                        case EXPECTED_SIGNATURE:
-                            String expected = property.getValue().stringifyValue();
-                            // Don't enforce for bridge methods; they're generated so won't match.
-                            if (!bridge && !signature.equals(expected)) {
-                                error(definingClass, member,
-                                        "Expected signature does not match generated:\n"
-                                                + "Expected:  %s\n"
-                                                + "Generated: %s", expected, signature);
-                            }
-                            break;
-                    }
-                }
-                if (mMemberFilter.test(new Member(signature, bridge))) {
-                    mStatus.greylistEntry(signature);
-                }
+            if (mAnnotationHandlers.containsKey(a.getAnnotationType())) {
+                mStatus.debug("Member has annotation %s for which we have a handler",
+                        a.getAnnotationType());
+                mAnnotationHandlers.get(a.getAnnotationType()).handleAnnotation(a, context);
             }
         }
     }
-
-    private void error(JavaClass clazz, FieldOrMethod member, String message, Object... args) {
-        StringBuilder error = new StringBuilder();
-        error.append(clazz.getSourceFileName())
-                .append(": ")
-                .append(clazz.getClassName())
-                .append(".")
-                .append(member.getName())
-                .append(": ")
-                .append(String.format(Locale.US, message, args));
-
-        mStatus.error(error.toString());
-    }
-
 }

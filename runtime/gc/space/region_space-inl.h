@@ -355,6 +355,10 @@ inline mirror::Object* RegionSpace::AllocLargeInRange(size_t begin,
       // We make 'top' all usable bytes, as the caller of this
       // allocation may use all of 'usable_size' (see mirror::Array::Alloc).
       first_reg->SetTop(first_reg->Begin() + allocated);
+      if (!kForEvac) {
+        // Evac doesn't count as newly allocated.
+        first_reg->SetNewlyAllocated();
+      }
       for (size_t p = left + 1; p < right; ++p) {
         DCHECK_LT(p, num_regions_);
         DCHECK(regions_[p].IsFree());
@@ -363,6 +367,10 @@ inline mirror::Object* RegionSpace::AllocLargeInRange(size_t begin,
           ++num_evac_regions_;
         } else {
           ++num_non_free_regions_;
+        }
+        if (!kForEvac) {
+          // Evac doesn't count as newly allocated.
+          regions_[p].SetNewlyAllocated();
         }
       }
       *bytes_allocated = allocated;
@@ -407,7 +415,7 @@ inline void RegionSpace::FreeLarge(mirror::Object* large_obj, size_t bytes_alloc
       --num_non_free_regions_;
     }
   }
-  if (end_addr < Limit()) {
+  if (kIsDebugBuild && end_addr < Limit()) {
     // If we aren't at the end of the space, check that the next region is not a large tail.
     Region* following_reg = RefToRegionLocked(reinterpret_cast<mirror::Object*>(end_addr));
     DCHECK(!following_reg->IsLargeTail());

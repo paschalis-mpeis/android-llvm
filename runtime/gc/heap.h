@@ -709,8 +709,15 @@ class Heap {
     return zygote_space_ != nullptr;
   }
 
+  // Returns the active concurrent copying collector.
   collector::ConcurrentCopying* ConcurrentCopyingCollector() {
-    return concurrent_copying_collector_;
+    if (kEnableGenerationalConcurrentCopyingCollection) {
+      DCHECK((active_concurrent_copying_collector_ == concurrent_copying_collector_) ||
+             (active_concurrent_copying_collector_ == young_concurrent_copying_collector_));
+    } else {
+      DCHECK_EQ(active_concurrent_copying_collector_, concurrent_copying_collector_);
+    }
+    return active_concurrent_copying_collector_;
   }
 
   CollectorType CurrentCollectorType() {
@@ -835,8 +842,10 @@ class Heap {
   void FinishGC(Thread* self, collector::GcType gc_type) REQUIRES(!*gc_complete_lock_);
 
   // Create a mem map with a preferred base address.
-  static MemMap* MapAnonymousPreferredAddress(const char* name, uint8_t* request_begin,
-                                              size_t capacity, std::string* out_error_str);
+  static MemMap MapAnonymousPreferredAddress(const char* name,
+                                             uint8_t* request_begin,
+                                             size_t capacity,
+                                             std::string* out_error_str);
 
   bool SupportHSpaceCompaction() const {
     // Returns true if we can do hspace compaction
@@ -979,13 +988,13 @@ class Heap {
   collector::GarbageCollector* FindCollectorByGcType(collector::GcType gc_type);
 
   // Create the main free list malloc space, either a RosAlloc space or DlMalloc space.
-  void CreateMainMallocSpace(MemMap* mem_map,
+  void CreateMainMallocSpace(MemMap&& mem_map,
                              size_t initial_size,
                              size_t growth_limit,
                              size_t capacity);
 
   // Create a malloc space based on a mem map. Does not set the space as default.
-  space::MallocSpace* CreateMallocSpaceFromMemMap(MemMap* mem_map,
+  space::MallocSpace* CreateMallocSpaceFromMemMap(MemMap&& mem_map,
                                                   size_t initial_size,
                                                   size_t growth_limit,
                                                   size_t capacity,
@@ -1335,6 +1344,8 @@ class Heap {
 
   std::vector<collector::GarbageCollector*> garbage_collectors_;
   collector::SemiSpace* semi_space_collector_;
+  collector::ConcurrentCopying* active_concurrent_copying_collector_;
+  collector::ConcurrentCopying* young_concurrent_copying_collector_;
   collector::ConcurrentCopying* concurrent_copying_collector_;
 
   const bool is_running_on_memory_tool_;
