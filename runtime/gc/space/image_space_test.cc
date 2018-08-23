@@ -159,13 +159,23 @@ class NoAccessAndroidDataTest : public ImageSpaceLoadingTest<false, true, false,
     bad_android_data_ = old_android_data_ + "/no-android-data";
     int result = setenv("ANDROID_DATA", bad_android_data_.c_str(), /* replace */ 1);
     CHECK_EQ(result, 0) << strerror(errno);
-    result = mkdir(bad_android_data_.c_str(), /* no access */ 0);
+    result = mkdir(bad_android_data_.c_str(), /* mode */ 0700);
+    CHECK_EQ(result, 0) << strerror(errno);
+    // Create a regular file "dalvik_cache". GetDalvikCache() shall get EEXIST
+    // when trying to create a directory with the same name and creating a
+    // subdirectory for a particular architecture shall fail.
+    bad_dalvik_cache_ = bad_android_data_ + "/dalvik-cache";
+    int fd = creat(bad_dalvik_cache_.c_str(), /* mode */ 0);
+    CHECK_NE(fd, -1) << strerror(errno);
+    result = close(fd);
     CHECK_EQ(result, 0) << strerror(errno);
     ImageSpaceLoadingTest<false, true, false, true>::SetUpRuntimeOptions(options);
   }
 
   void TearDown() OVERRIDE {
-    int result = rmdir(bad_android_data_.c_str());
+    int result = unlink(bad_dalvik_cache_.c_str());
+    CHECK_EQ(result, 0) << strerror(errno);
+    result = rmdir(bad_android_data_.c_str());
     CHECK_EQ(result, 0) << strerror(errno);
     result = setenv("ANDROID_DATA", old_android_data_.c_str(), /* replace */ 1);
     CHECK_EQ(result, 0) << strerror(errno);
@@ -175,6 +185,7 @@ class NoAccessAndroidDataTest : public ImageSpaceLoadingTest<false, true, false,
  private:
   std::string old_android_data_;
   std::string bad_android_data_;
+  std::string bad_dalvik_cache_;
 };
 
 TEST_F(NoAccessAndroidDataTest, Test) {

@@ -60,6 +60,8 @@ static constexpr bool kDisallowReadBarrierDuringScan = kIsDebugBuild;
 // Slow path mark stack size, increase this if the stack is getting full and it is causing
 // performance problems.
 static constexpr size_t kReadBarrierMarkStackSize = 512 * KB;
+// Size (in the number of objects) of the sweep array free buffer.
+static constexpr size_t kSweepArrayChunkFreeSize = 1024;
 // Verify that there are no missing card marks.
 static constexpr bool kVerifyNoMissingCardMarks = kIsDebugBuild;
 
@@ -127,6 +129,20 @@ ConcurrentCopying::ConcurrentCopying(Heap* heap,
               "thread local mark stack", kMarkStackSize, kMarkStackSize);
       pooled_mark_stacks_.push_back(mark_stack);
     }
+  }
+  if (kEnableGenerationalConcurrentCopyingCollection) {
+    // Allocate sweep array free buffer.
+    std::string error_msg;
+    sweep_array_free_buffer_mem_map_ = MemMap::MapAnonymous(
+        "concurrent copying sweep array free buffer",
+        /* addr */ nullptr,
+        RoundUp(kSweepArrayChunkFreeSize * sizeof(mirror::Object*), kPageSize),
+        PROT_READ | PROT_WRITE,
+        /* low_4gb */ false,
+        /* reuse */ false,
+        &error_msg);
+    CHECK(sweep_array_free_buffer_mem_map_.IsValid())
+        << "Couldn't allocate sweep array free buffer: " << error_msg;
   }
 }
 
@@ -351,11 +367,12 @@ void ConcurrentCopying::InitializePhase() {
     }
   }
   if (kEnableGenerationalConcurrentCopyingCollection) {
-    done_scanning_.store(false, std::memory_order_relaxed);
+    done_scanning_.store(false, std::memory_order_release);
   }
   BindBitmaps();
   if (kVerboseMode) {
-    LOG(INFO) << "force_evacuate_all=" << force_evacuate_all_;
+    LOG(INFO) << "young_gen=" << std::boolalpha << young_gen_ << std::noboolalpha;
+    LOG(INFO) << "force_evacuate_all=" << std::boolalpha << force_evacuate_all_ << std::noboolalpha;
     LOG(INFO) << "Largest immune region: " << immune_spaces_.GetLargestImmuneRegion().Begin()
               << "-" << immune_spaces_.GetLargestImmuneRegion().End();
     for (space::ContinuousSpace* space : immune_spaces_.GetSpaces()) {
@@ -856,9 +873,12 @@ void ConcurrentCopying::MarkingPhase() {
     gc_grays_immune_objects_ = false;
   }
   if (kEnableGenerationalConcurrentCopyingCollection && young_gen_) {
+    if (kVerboseMode) {
+      LOG(INFO) << "GC ScanCardsForSpace";
+    }
     TimingLogger::ScopedTiming split2("ScanCardsForSpace", GetTimings());
     WriterMutexLock rmu(Thread::Current(), *Locks::heap_bitmap_lock_);
-    CHECK_EQ(done_scanning_.load(std::memory_order_relaxed), false);
+    CHECK(!done_scanning_.load(std::memory_order_relaxed));
     if (kIsDebugBuild) {
       // Leave some time for mutators to race ahead to try and find races between the GC card
       // scanning and mutators reading references.
@@ -892,7 +912,10 @@ void ConcurrentCopying::MarkingPhase() {
           accounting::CardTable::kCardDirty - 1);
     }
     // Done scanning unevac space.
-    done_scanning_.store(true, std::memory_order_seq_cst);
+    done_scanning_.store(true, std::memory_order_release);
+    if (kVerboseMode) {
+      LOG(INFO) << "GC end of ScanCardsForSpace";
+    }
   }
   {
     // For a sticky-bit collection, this phase needs to be after the card scanning since the
@@ -1790,29 +1813,126 @@ void ConcurrentCopying::SweepSystemWeaks(Thread* self) {
 }
 
 void ConcurrentCopying::Sweep(bool swap_bitmaps) {
-  {
-    TimingLogger::ScopedTiming t("MarkStackAsLive", GetTimings());
-    accounting::ObjectStack* live_stack = heap_->GetLiveStack();
-    if (kEnableFromSpaceAccountingCheck) {
-      CHECK_GE(live_stack_freeze_size_, live_stack->Size());
+  if (kEnableGenerationalConcurrentCopyingCollection && young_gen_) {
+    // Only sweep objects on the live stack.
+    SweepArray(heap_->GetLiveStack(), /* swap_bitmaps */ false);
+  } else {
+    {
+      TimingLogger::ScopedTiming t("MarkStackAsLive", GetTimings());
+      accounting::ObjectStack* live_stack = heap_->GetLiveStack();
+      if (kEnableFromSpaceAccountingCheck) {
+        // Ensure that nobody inserted items in the live stack after we swapped the stacks.
+        CHECK_GE(live_stack_freeze_size_, live_stack->Size());
+      }
+      heap_->MarkAllocStackAsLive(live_stack);
+      live_stack->Reset();
     }
-    heap_->MarkAllocStackAsLive(live_stack);
-    live_stack->Reset();
+    CheckEmptyMarkStack();
+    TimingLogger::ScopedTiming split("Sweep", GetTimings());
+    for (const auto& space : GetHeap()->GetContinuousSpaces()) {
+      if (space->IsContinuousMemMapAllocSpace()) {
+        space::ContinuousMemMapAllocSpace* alloc_space = space->AsContinuousMemMapAllocSpace();
+        if (space == region_space_ || immune_spaces_.ContainsSpace(space)) {
+          continue;
+        }
+        TimingLogger::ScopedTiming split2(
+            alloc_space->IsZygoteSpace() ? "SweepZygoteSpace" : "SweepAllocSpace", GetTimings());
+        RecordFree(alloc_space->Sweep(swap_bitmaps));
+      }
+    }
+    SweepLargeObjects(swap_bitmaps);
   }
+}
+
+// Copied and adapted from MarkSweep::SweepArray.
+void ConcurrentCopying::SweepArray(accounting::ObjectStack* allocations, bool swap_bitmaps) {
+  // This method is only used when Generational CC collection is enabled.
+  DCHECK(kEnableGenerationalConcurrentCopyingCollection);
   CheckEmptyMarkStack();
-  TimingLogger::ScopedTiming split("Sweep", GetTimings());
-  for (const auto& space : GetHeap()->GetContinuousSpaces()) {
-    if (space->IsContinuousMemMapAllocSpace()) {
-      space::ContinuousMemMapAllocSpace* alloc_space = space->AsContinuousMemMapAllocSpace();
-      if (space == region_space_ || immune_spaces_.ContainsSpace(space)) {
+  TimingLogger::ScopedTiming t("SweepArray", GetTimings());
+  Thread* self = Thread::Current();
+  mirror::Object** chunk_free_buffer = reinterpret_cast<mirror::Object**>(
+      sweep_array_free_buffer_mem_map_.BaseBegin());
+  size_t chunk_free_pos = 0;
+  ObjectBytePair freed;
+  ObjectBytePair freed_los;
+  // How many objects are left in the array, modified after each space is swept.
+  StackReference<mirror::Object>* objects = allocations->Begin();
+  size_t count = allocations->Size();
+  // Start by sweeping the continuous spaces.
+  for (space::ContinuousSpace* space : heap_->GetContinuousSpaces()) {
+    if (!space->IsAllocSpace() ||
+        space == region_space_ ||
+        immune_spaces_.ContainsSpace(space) ||
+        space->GetLiveBitmap() == nullptr) {
+      continue;
+    }
+    space::AllocSpace* alloc_space = space->AsAllocSpace();
+    accounting::ContinuousSpaceBitmap* live_bitmap = space->GetLiveBitmap();
+    accounting::ContinuousSpaceBitmap* mark_bitmap = space->GetMarkBitmap();
+    if (swap_bitmaps) {
+      std::swap(live_bitmap, mark_bitmap);
+    }
+    StackReference<mirror::Object>* out = objects;
+    for (size_t i = 0; i < count; ++i) {
+      mirror::Object* const obj = objects[i].AsMirrorPtr();
+      if (kUseThreadLocalAllocationStack && obj == nullptr) {
         continue;
       }
-      TimingLogger::ScopedTiming split2(
-          alloc_space->IsZygoteSpace() ? "SweepZygoteSpace" : "SweepAllocSpace", GetTimings());
-      RecordFree(alloc_space->Sweep(swap_bitmaps));
+      if (space->HasAddress(obj)) {
+        // This object is in the space, remove it from the array and add it to the sweep buffer
+        // if needed.
+        if (!mark_bitmap->Test(obj)) {
+          if (chunk_free_pos >= kSweepArrayChunkFreeSize) {
+            TimingLogger::ScopedTiming t2("FreeList", GetTimings());
+            freed.objects += chunk_free_pos;
+            freed.bytes += alloc_space->FreeList(self, chunk_free_pos, chunk_free_buffer);
+            chunk_free_pos = 0;
+          }
+          chunk_free_buffer[chunk_free_pos++] = obj;
+        }
+      } else {
+        (out++)->Assign(obj);
+      }
+    }
+    if (chunk_free_pos > 0) {
+      TimingLogger::ScopedTiming t2("FreeList", GetTimings());
+      freed.objects += chunk_free_pos;
+      freed.bytes += alloc_space->FreeList(self, chunk_free_pos, chunk_free_buffer);
+      chunk_free_pos = 0;
+    }
+    // All of the references which space contained are no longer in the allocation stack, update
+    // the count.
+    count = out - objects;
+  }
+  // Handle the large object space.
+  space::LargeObjectSpace* large_object_space = GetHeap()->GetLargeObjectsSpace();
+  if (large_object_space != nullptr) {
+    accounting::LargeObjectBitmap* large_live_objects = large_object_space->GetLiveBitmap();
+    accounting::LargeObjectBitmap* large_mark_objects = large_object_space->GetMarkBitmap();
+    if (swap_bitmaps) {
+      std::swap(large_live_objects, large_mark_objects);
+    }
+    for (size_t i = 0; i < count; ++i) {
+      mirror::Object* const obj = objects[i].AsMirrorPtr();
+      // Handle large objects.
+      if (kUseThreadLocalAllocationStack && obj == nullptr) {
+        continue;
+      }
+      if (!large_mark_objects->Test(obj)) {
+        ++freed_los.objects;
+        freed_los.bytes += large_object_space->Free(self, obj);
+      }
     }
   }
-  SweepLargeObjects(swap_bitmaps);
+  {
+    TimingLogger::ScopedTiming t2("RecordFree", GetTimings());
+    RecordFree(freed);
+    RecordFreeLOS(freed_los);
+    t2.NewTiming("ResetStack");
+    allocations->Reset();
+  }
+  sweep_array_free_buffer_mem_map_.MadviseDontNeedAndZero();
 }
 
 void ConcurrentCopying::MarkZygoteLargeObjects() {
@@ -1922,7 +2042,7 @@ void ConcurrentCopying::ReclaimPhase() {
 
   {
     WriterMutexLock mu(self, *Locks::heap_bitmap_lock_);
-    Sweep(false);
+    Sweep(/* swap_bitmaps */ false);
     SwapBitmaps();
     heap_->UnBindBitmaps();
 
@@ -2007,15 +2127,27 @@ void ConcurrentCopying::AssertToSpaceInvariant(mirror::Object* obj,
         LOG(FATAL_WITHOUT_ABORT) << DumpHeapReference(obj, offset, ref);
         if (obj != nullptr) {
           LogFromSpaceRefHolder(obj, offset);
-          LOG(ERROR) << "UNEVAC " << region_space_->IsInUnevacFromSpace(obj) << " "
-                     << obj << " " << obj->GetMarkBit();
+          LOG(FATAL_WITHOUT_ABORT) << "UNEVAC " << region_space_->IsInUnevacFromSpace(obj) << " "
+                                   << obj << " " << obj->GetMarkBit();
           if (region_space_->HasAddress(obj)) {
-            region_space_->DumpRegionForObject(LOG_STREAM(ERROR), obj);
+            region_space_->DumpRegionForObject(LOG_STREAM(FATAL_WITHOUT_ABORT), obj);
           }
-          LOG(ERROR) << "CARD " << static_cast<size_t>(
+          LOG(FATAL_WITHOUT_ABORT) << "CARD " << static_cast<size_t>(
               *Runtime::Current()->GetHeap()->GetCardTable()->CardFromAddr(
                   reinterpret_cast<uint8_t*>(obj)));
-          LOG(ERROR) << "BITMAP " << region_space_bitmap_->Test(obj);
+          if (region_space_->HasAddress(obj)) {
+            LOG(FATAL_WITHOUT_ABORT) << "BITMAP " << region_space_bitmap_->Test(obj);
+          } else {
+            accounting::ContinuousSpaceBitmap* mark_bitmap =
+                heap_mark_bitmap_->GetContinuousSpaceBitmap(obj);
+            if (mark_bitmap != nullptr) {
+              LOG(FATAL_WITHOUT_ABORT) << "BITMAP " << mark_bitmap->Test(obj);
+            } else {
+              accounting::LargeObjectBitmap* los_bitmap =
+                  heap_mark_bitmap_->GetLargeObjectBitmap(obj);
+              LOG(FATAL_WITHOUT_ABORT) << "BITMAP " << los_bitmap->Test(obj);
+            }
+          }
         }
         ref->GetLockWord(false).Dump(LOG_STREAM(FATAL_WITHOUT_ABORT));
         LOG(FATAL_WITHOUT_ABORT) << "Non-free regions:";
@@ -2758,10 +2890,12 @@ mirror::Object* ConcurrentCopying::MarkNonMoving(Thread* const self,
       heap_mark_bitmap_->GetLargeObjectBitmap(ref);
   bool is_los = mark_bitmap == nullptr;
   if (kEnableGenerationalConcurrentCopyingCollection && young_gen_) {
+    // The sticky-bit CC collector is only compatible with Baker-style read barriers.
+    DCHECK(kUseBakerReadBarrier);
     // Not done scanning, use AtomicSetReadBarrierPointer.
-    if (!done_scanning_) {
+    if (!done_scanning_.load(std::memory_order_acquire)) {
       // Since the mark bitmap is still filled in from last GC, we can not use that or else the
-      // mutator may see references to the from space. Instead, use the baker pointer itself as
+      // mutator may see references to the from space. Instead, use the Baker pointer itself as
       // the mark bit.
       if (ref->AtomicSetReadBarrierState(ReadBarrier::NonGrayState(), ReadBarrier::GrayState())) {
         // TODO: We don't actually need to scan this object later, we just need to clear the gray
