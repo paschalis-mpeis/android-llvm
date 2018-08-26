@@ -409,7 +409,6 @@ Heap::Heap(size_t initial_size,
                                             capacity_,
                                             PROT_READ | PROT_WRITE,
                                             /* low_4gb */ true,
-                                            /* reuse */ false,
                                             &error_str);
     }
     CHECK(main_mem_map_1.IsValid()) << error_str;
@@ -643,7 +642,7 @@ Heap::Heap(size_t initial_size,
     bool no_gap = MemMap::CheckNoGaps(*first_space->GetMemMap(), *non_moving_space_->GetMemMap());
     if (!no_gap) {
       PrintFileToLog("/proc/self/maps", LogSeverity::ERROR);
-      MemMap::DumpMaps(LOG_STREAM(ERROR), true);
+      MemMap::DumpMaps(LOG_STREAM(ERROR), /* terse */ true);
       LOG(FATAL) << "There's a gap between the image space and the non-moving space";
     }
   }
@@ -669,7 +668,6 @@ MemMap Heap::MapAnonymousPreferredAddress(const char* name,
                                       capacity,
                                       PROT_READ | PROT_WRITE,
                                       /* low_4gb*/ true,
-                                      /* reuse */ false,
                                       out_error_str);
     if (map.IsValid() || request_begin == nullptr) {
       return map;

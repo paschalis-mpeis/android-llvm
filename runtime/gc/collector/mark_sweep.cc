@@ -109,7 +109,6 @@ MarkSweep::MarkSweep(Heap* heap, bool is_concurrent, const std::string& name_pre
       RoundUp(kSweepArrayChunkFreeSize * sizeof(mirror::Object*), kPageSize),
       PROT_READ | PROT_WRITE,
       /* low_4gb */ false,
-      /* reuse */ false,
       &error_msg);
   CHECK(sweep_array_free_buffer_mem_map_.IsValid())
       << "Couldn't allocate sweep array free buffer: " << error_msg;
@@ -447,7 +446,7 @@ class MarkSweep::MarkObjectSlowPath {
                      !large_object_space->Contains(obj)))) {
       // Lowest priority logging first:
       PrintFileToLog("/proc/self/maps", LogSeverity::FATAL_WITHOUT_ABORT);
-      MemMap::DumpMaps(LOG_STREAM(FATAL_WITHOUT_ABORT), true);
+      MemMap::DumpMaps(LOG_STREAM(FATAL_WITHOUT_ABORT), /* terse */ true);
       // Buffer the output in the string stream since it is more important than the stack traces
       // and we want it to have log priority. The stack traces are printed from Runtime::Abort
       // which is called from LOG(FATAL) but before the abort message.

@@ -429,6 +429,8 @@ ENTRY ExecuteMterpImpl
 
 /* File: arm64/instruction_start.S */
 
+    .type artMterpAsmInstructionStart, #object
+    .hidden artMterpAsmInstructionStart
     .global artMterpAsmInstructionStart
 artMterpAsmInstructionStart = .L_op_nop
     .text
@@ -2192,7 +2194,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w1, w1                        // w1<- fp[B], the object pointer
     ldr      x2, [xFP, #OFF_FP_METHOD]     // w2<- referrer
     mov      x3, xSELF                     // w3<- self
-    bl       artGet32InstanceFromMterp
+    bl       MterpIGetU32
     ldr      x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     
     ubfx     w2, wINST, #8, #4             // w2<- A
@@ -2222,7 +2224,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w1, w1                        // w1<- fp[B], the object pointer
     ldr      x2, [xFP, #OFF_FP_METHOD]     // w2<- referrer
     mov      x3, xSELF                     // w3<- self
-    bl       artGet64InstanceFromMterp
+    bl       MterpIGetU64
     ldr      x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     ubfx     w2, wINST, #8, #4             // w2<- A
     PREFETCH_INST 2
@@ -2249,7 +2251,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w1, w1                        // w1<- fp[B], the object pointer
     ldr      x2, [xFP, #OFF_FP_METHOD]     // w2<- referrer
     mov      x3, xSELF                     // w3<- self
-    bl       artGetObjInstanceFromMterp
+    bl       MterpIGetObj
     ldr      x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     
     ubfx     w2, wINST, #8, #4             // w2<- A
@@ -2281,7 +2283,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w1, w1                        // w1<- fp[B], the object pointer
     ldr      x2, [xFP, #OFF_FP_METHOD]     // w2<- referrer
     mov      x3, xSELF                     // w3<- self
-    bl       artGetBooleanInstanceFromMterp
+    bl       MterpIGetU8
     ldr      x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     uxtb w0, w0
     ubfx     w2, wINST, #8, #4             // w2<- A
@@ -2313,7 +2315,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w1, w1                        // w1<- fp[B], the object pointer
     ldr      x2, [xFP, #OFF_FP_METHOD]     // w2<- referrer
     mov      x3, xSELF                     // w3<- self
-    bl       artGetByteInstanceFromMterp
+    bl       MterpIGetI8
     ldr      x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     sxtb w0, w0
     ubfx     w2, wINST, #8, #4             // w2<- A
@@ -2345,7 +2347,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w1, w1                        // w1<- fp[B], the object pointer
     ldr      x2, [xFP, #OFF_FP_METHOD]     // w2<- referrer
     mov      x3, xSELF                     // w3<- self
-    bl       artGetCharInstanceFromMterp
+    bl       MterpIGetU16
     ldr      x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     uxth w0, w0
     ubfx     w2, wINST, #8, #4             // w2<- A
@@ -2377,7 +2379,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w1, w1                        // w1<- fp[B], the object pointer
     ldr      x2, [xFP, #OFF_FP_METHOD]     // w2<- referrer
     mov      x3, xSELF                     // w3<- self
-    bl       artGetShortInstanceFromMterp
+    bl       MterpIGetI16
     ldr      x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     sxth w0, w0
     ubfx     w2, wINST, #8, #4             // w2<- A
@@ -2403,7 +2405,7 @@ artMterpAsmInstructionStart = .L_op_nop
      * for: iput, iput-object, iput-boolean, iput-byte, iput-char, iput-short
      */
     /* op vA, vB, field//CCCC */
-    .extern artSet32InstanceFromMterp
+    .extern MterpIPutU32
     EXPORT_PC
     FETCH    w0, 1                      // w0<- field ref CCCC
     lsr      w1, wINST, #12             // w1<- B
@@ -2412,7 +2414,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w2, w2                     // w2<- fp[A]
     ldr      x3, [xFP, #OFF_FP_METHOD]  // w3<- referrer
     PREFETCH_INST 2
-    bl       artSet32InstanceFromMterp
+    bl       MterpIPutU32
     cbnz     w0, MterpPossibleException
     ADVANCE  2                          // advance rPC
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2423,7 +2425,7 @@ artMterpAsmInstructionStart = .L_op_nop
 .L_op_iput_wide: /* 0x5a */
 /* File: arm64/op_iput_wide.S */
     /* iput-wide vA, vB, field//CCCC */
-    .extern artSet64InstanceFromMterp
+    .extern MterpIPutU64
     EXPORT_PC
     FETCH    w0, 1                      // w0<- field ref CCCC
     lsr      w1, wINST, #12             // w1<- B
@@ -2432,7 +2434,7 @@ artMterpAsmInstructionStart = .L_op_nop
     VREG_INDEX_TO_ADDR x2, x2           // w2<- &fp[A]
     ldr      x3, [xFP, #OFF_FP_METHOD]  // w3<- referrer
     PREFETCH_INST 2
-    bl       artSet64InstanceFromMterp
+    bl       MterpIPutU64
     cbnz     w0, MterpPossibleException
     ADVANCE  2                          // advance rPC
     GET_INST_OPCODE ip                  // extract opcode from wINST
@@ -2447,7 +2449,7 @@ artMterpAsmInstructionStart = .L_op_nop
     mov     x1, xPC
     mov     w2, wINST
     mov     x3, xSELF
-    bl      MterpIputObject
+    bl      MterpIPutObj
     cbz     w0, MterpException
     FETCH_ADVANCE_INST 2                // advance rPC, load rINST
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2464,7 +2466,7 @@ artMterpAsmInstructionStart = .L_op_nop
      * for: iput, iput-object, iput-boolean, iput-byte, iput-char, iput-short
      */
     /* op vA, vB, field//CCCC */
-    .extern artSet8InstanceFromMterp
+    .extern MterpIPutU8
     EXPORT_PC
     FETCH    w0, 1                      // w0<- field ref CCCC
     lsr      w1, wINST, #12             // w1<- B
@@ -2473,7 +2475,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w2, w2                     // w2<- fp[A]
     ldr      x3, [xFP, #OFF_FP_METHOD]  // w3<- referrer
     PREFETCH_INST 2
-    bl       artSet8InstanceFromMterp
+    bl       MterpIPutU8
     cbnz     w0, MterpPossibleException
     ADVANCE  2                          // advance rPC
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2491,7 +2493,7 @@ artMterpAsmInstructionStart = .L_op_nop
      * for: iput, iput-object, iput-boolean, iput-byte, iput-char, iput-short
      */
     /* op vA, vB, field//CCCC */
-    .extern artSet8InstanceFromMterp
+    .extern MterpIPutI8
     EXPORT_PC
     FETCH    w0, 1                      // w0<- field ref CCCC
     lsr      w1, wINST, #12             // w1<- B
@@ -2500,7 +2502,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w2, w2                     // w2<- fp[A]
     ldr      x3, [xFP, #OFF_FP_METHOD]  // w3<- referrer
     PREFETCH_INST 2
-    bl       artSet8InstanceFromMterp
+    bl       MterpIPutI8
     cbnz     w0, MterpPossibleException
     ADVANCE  2                          // advance rPC
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2518,7 +2520,7 @@ artMterpAsmInstructionStart = .L_op_nop
      * for: iput, iput-object, iput-boolean, iput-byte, iput-char, iput-short
      */
     /* op vA, vB, field//CCCC */
-    .extern artSet16InstanceFromMterp
+    .extern MterpIPutU16
     EXPORT_PC
     FETCH    w0, 1                      // w0<- field ref CCCC
     lsr      w1, wINST, #12             // w1<- B
@@ -2527,7 +2529,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w2, w2                     // w2<- fp[A]
     ldr      x3, [xFP, #OFF_FP_METHOD]  // w3<- referrer
     PREFETCH_INST 2
-    bl       artSet16InstanceFromMterp
+    bl       MterpIPutU16
     cbnz     w0, MterpPossibleException
     ADVANCE  2                          // advance rPC
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2545,7 +2547,7 @@ artMterpAsmInstructionStart = .L_op_nop
      * for: iput, iput-object, iput-boolean, iput-byte, iput-char, iput-short
      */
     /* op vA, vB, field//CCCC */
-    .extern artSet16InstanceFromMterp
+    .extern MterpIPutI16
     EXPORT_PC
     FETCH    w0, 1                      // w0<- field ref CCCC
     lsr      w1, wINST, #12             // w1<- B
@@ -2554,7 +2556,7 @@ artMterpAsmInstructionStart = .L_op_nop
     GET_VREG w2, w2                     // w2<- fp[A]
     ldr      x3, [xFP, #OFF_FP_METHOD]  // w3<- referrer
     PREFETCH_INST 2
-    bl       artSet16InstanceFromMterp
+    bl       MterpIPutI16
     cbnz     w0, MterpPossibleException
     ADVANCE  2                          // advance rPC
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2572,12 +2574,12 @@ artMterpAsmInstructionStart = .L_op_nop
      */
     /* op vAA, field//BBBB */
 
-    .extern MterpGet32Static
+    .extern MterpSGetU32
     EXPORT_PC
     FETCH w0, 1                         // w0<- field ref BBBB
     ldr   x1, [xFP, #OFF_FP_METHOD]
     mov   x2, xSELF
-    bl    MterpGet32Static
+    bl    MterpSGetU32
     ldr   x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     lsr   w2, wINST, #8                 // w2<- AA
     
@@ -2607,7 +2609,7 @@ artMterpAsmInstructionStart = .L_op_nop
     FETCH w0, 1                         // w0<- field ref BBBB
     ldr   x1, [xFP, #OFF_FP_METHOD]
     mov   x2, xSELF
-    bl    MterpGet64Static
+    bl    MterpSGetU64
     ldr   x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     lsr   w4, wINST, #8                 // w4<- AA
     cbnz  x3, MterpException            // bail out
@@ -2628,12 +2630,12 @@ artMterpAsmInstructionStart = .L_op_nop
      */
     /* op vAA, field//BBBB */
 
-    .extern MterpGetObjStatic
+    .extern MterpSGetObj
     EXPORT_PC
     FETCH w0, 1                         // w0<- field ref BBBB
     ldr   x1, [xFP, #OFF_FP_METHOD]
     mov   x2, xSELF
-    bl    MterpGetObjStatic
+    bl    MterpSGetObj
     ldr   x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     lsr   w2, wINST, #8                 // w2<- AA
     
@@ -2661,12 +2663,12 @@ artMterpAsmInstructionStart = .L_op_nop
      */
     /* op vAA, field//BBBB */
 
-    .extern MterpGetBooleanStatic
+    .extern MterpSGetU8
     EXPORT_PC
     FETCH w0, 1                         // w0<- field ref BBBB
     ldr   x1, [xFP, #OFF_FP_METHOD]
     mov   x2, xSELF
-    bl    MterpGetBooleanStatic
+    bl    MterpSGetU8
     ldr   x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     lsr   w2, wINST, #8                 // w2<- AA
     uxtb w0, w0
@@ -2694,12 +2696,12 @@ artMterpAsmInstructionStart = .L_op_nop
      */
     /* op vAA, field//BBBB */
 
-    .extern MterpGetByteStatic
+    .extern MterpSGetI8
     EXPORT_PC
     FETCH w0, 1                         // w0<- field ref BBBB
     ldr   x1, [xFP, #OFF_FP_METHOD]
     mov   x2, xSELF
-    bl    MterpGetByteStatic
+    bl    MterpSGetI8
     ldr   x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     lsr   w2, wINST, #8                 // w2<- AA
     sxtb w0, w0
@@ -2727,12 +2729,12 @@ artMterpAsmInstructionStart = .L_op_nop
      */
     /* op vAA, field//BBBB */
 
-    .extern MterpGetCharStatic
+    .extern MterpSGetU16
     EXPORT_PC
     FETCH w0, 1                         // w0<- field ref BBBB
     ldr   x1, [xFP, #OFF_FP_METHOD]
     mov   x2, xSELF
-    bl    MterpGetCharStatic
+    bl    MterpSGetU16
     ldr   x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     lsr   w2, wINST, #8                 // w2<- AA
     uxth w0, w0
@@ -2760,12 +2762,12 @@ artMterpAsmInstructionStart = .L_op_nop
      */
     /* op vAA, field//BBBB */
 
-    .extern MterpGetShortStatic
+    .extern MterpSGetI16
     EXPORT_PC
     FETCH w0, 1                         // w0<- field ref BBBB
     ldr   x1, [xFP, #OFF_FP_METHOD]
     mov   x2, xSELF
-    bl    MterpGetShortStatic
+    bl    MterpSGetI16
     ldr   x3, [xSELF, #THREAD_EXCEPTION_OFFSET]
     lsr   w2, wINST, #8                 // w2<- AA
     sxth w0, w0
@@ -2798,7 +2800,7 @@ artMterpAsmInstructionStart = .L_op_nop
     ldr     x2, [xFP, #OFF_FP_METHOD]
     mov     x3, xSELF
     PREFETCH_INST 2                     // Get next inst, but don't advance rPC
-    bl      MterpSet32Static
+    bl      MterpSPutU32
     cbnz    w0, MterpException          // 0 on success
     ADVANCE 2                           // Past exception point - now advance rPC
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2813,7 +2815,7 @@ artMterpAsmInstructionStart = .L_op_nop
      *
      */
     /* sput-wide vAA, field//BBBB */
-    .extern MterpSet64Static
+    .extern MterpSPutU64
     EXPORT_PC
     FETCH   w0, 1                       // w0<- field ref BBBB
     lsr     w1, wINST, #8               // w1<- AA
@@ -2821,7 +2823,7 @@ artMterpAsmInstructionStart = .L_op_nop
     ldr     x2, [xFP, #OFF_FP_METHOD]
     mov     x3, xSELF
     PREFETCH_INST 2                     // Get next inst, but don't advance rPC
-    bl      MterpSet64Static
+    bl      MterpSPutU64
     cbnz    w0, MterpException          // 0 on success, -1 on failure
     ADVANCE 2                           // Past exception point - now advance rPC
     GET_INST_OPCODE ip                  // extract opcode from wINST
@@ -2836,7 +2838,7 @@ artMterpAsmInstructionStart = .L_op_nop
     mov     x1, xPC
     mov     x2, xINST
     mov     x3, xSELF
-    bl      MterpSputObject
+    bl      MterpSPutObj
     cbz     w0, MterpException
     FETCH_ADVANCE_INST 2                // advance rPC, load rINST
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2860,7 +2862,7 @@ artMterpAsmInstructionStart = .L_op_nop
     ldr     x2, [xFP, #OFF_FP_METHOD]
     mov     x3, xSELF
     PREFETCH_INST 2                     // Get next inst, but don't advance rPC
-    bl      MterpSetBooleanStatic
+    bl      MterpSPutU8
     cbnz    w0, MterpException          // 0 on success
     ADVANCE 2                           // Past exception point - now advance rPC
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2885,7 +2887,7 @@ artMterpAsmInstructionStart = .L_op_nop
     ldr     x2, [xFP, #OFF_FP_METHOD]
     mov     x3, xSELF
     PREFETCH_INST 2                     // Get next inst, but don't advance rPC
-    bl      MterpSetByteStatic
+    bl      MterpSPutI8
     cbnz    w0, MterpException          // 0 on success
     ADVANCE 2                           // Past exception point - now advance rPC
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2910,7 +2912,7 @@ artMterpAsmInstructionStart = .L_op_nop
     ldr     x2, [xFP, #OFF_FP_METHOD]
     mov     x3, xSELF
     PREFETCH_INST 2                     // Get next inst, but don't advance rPC
-    bl      MterpSetCharStatic
+    bl      MterpSPutU16
     cbnz    w0, MterpException          // 0 on success
     ADVANCE 2                           // Past exception point - now advance rPC
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -2935,7 +2937,7 @@ artMterpAsmInstructionStart = .L_op_nop
     ldr     x2, [xFP, #OFF_FP_METHOD]
     mov     x3, xSELF
     PREFETCH_INST 2                     // Get next inst, but don't advance rPC
-    bl      MterpSetShortStatic
+    bl      MterpSPutI16
     cbnz    w0, MterpException          // 0 on success
     ADVANCE 2                           // Past exception point - now advance rPC
     GET_INST_OPCODE ip                  // extract opcode from rINST
@@ -7078,6 +7080,8 @@ artMterpAsmInstructionStart = .L_op_nop
     .balign 128
 /* File: arm64/instruction_end.S */
 
+    .type artMterpAsmInstructionEnd, #object
+    .hidden artMterpAsmInstructionEnd
     .global artMterpAsmInstructionEnd
 artMterpAsmInstructionEnd:
 
@@ -7089,6 +7093,8 @@ artMterpAsmInstructionEnd:
  */
 /* File: arm64/instruction_start_sister.S */
 
+    .type artMterpAsmSisterStart, #object
+    .hidden artMterpAsmSisterStart
     .global artMterpAsmSisterStart
     .text
     .balign 4
@@ -7096,6 +7102,8 @@ artMterpAsmSisterStart:
 
 /* File: arm64/instruction_end_sister.S */
 
+    .type artMterpAsmSisterEnd, #object
+    .hidden artMterpAsmSisterEnd
     .global artMterpAsmSisterEnd
 artMterpAsmSisterEnd:
 
@@ -7409,6 +7417,8 @@ MterpProfileActive:
 
 /* File: arm64/instruction_start_alt.S */
 
+    .type artMterpAsmAltInstructionStart, #object
+    .hidden artMterpAsmAltInstructionStart
     .global artMterpAsmAltInstructionStart
 artMterpAsmAltInstructionStart = .L_ALT_op_nop
     .text
@@ -11768,6 +11778,8 @@ artMterpAsmAltInstructionStart = .L_ALT_op_nop
     .balign 128
 /* File: arm64/instruction_end_alt.S */
 
+    .type artMterpAsmAltInstructionEnd, #object
+    .hidden artMterpAsmAltInstructionEnd
     .global artMterpAsmAltInstructionEnd
 artMterpAsmAltInstructionEnd:
 
