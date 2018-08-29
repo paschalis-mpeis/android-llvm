@@ -25,6 +25,12 @@
 #include <sys/resource.h>
 #include <sys/time.h>
 
+#if __has_feature(hwaddress_sanitizer)
+#include <sanitizer/hwasan_interface.h>
+#else
+#define __hwasan_tag_pointer(p, t) (p)
+#endif
+
 #include <algorithm>
 #include <bitset>
 #include <cerrno>
@@ -623,7 +629,9 @@ void Thread::InstallImplicitProtection() {
 #endif
       volatile char space[kPageSize - (kAsanMultiplier * 256)];
       char sink ATTRIBUTE_UNUSED = space[zero];  // NOLINT
-      if (reinterpret_cast<uintptr_t>(space) >= target + kPageSize) {
+      // Remove tag from the pointer. Nop in non-hwasan builds.
+      uintptr_t addr = reinterpret_cast<uintptr_t>(__hwasan_tag_pointer(space, 0));
+      if (addr >= target + kPageSize) {
         Touch(target);
       }
       zero *= 2;  // Try to avoid tail recursion.
@@ -1486,7 +1494,7 @@ class BarrierClosure : public Closure {
  public:
   explicit BarrierClosure(Closure* wrapped) : wrapped_(wrapped), barrier_(0) {}
 
-  void Run(Thread* self) OVERRIDE {
+  void Run(Thread* self) override {
     wrapped_->Run(self);
     barrier_.Pass(self);
   }
@@ -1844,7 +1852,7 @@ struct StackDumpVisitor : public MonitorObjectsStackVisitor {
   static constexpr size_t kMaxRepetition = 3u;
 
   VisitMethodResult StartMethod(ArtMethod* m, size_t frame_nr ATTRIBUTE_UNUSED)
-      OVERRIDE
+      override
       REQUIRES_SHARED(Locks::mutator_lock_) {
     m = m->GetInterfaceMethodIfProxy(kRuntimePointerSize);
     ObjPtr<mirror::Class> c = m->GetDeclaringClass();
@@ -1883,24 +1891,24 @@ struct StackDumpVisitor : public MonitorObjectsStackVisitor {
     return VisitMethodResult::kContinueMethod;
   }
 
-  VisitMethodResult EndMethod(ArtMethod* m ATTRIBUTE_UNUSED) OVERRIDE {
+  VisitMethodResult EndMethod(ArtMethod* m ATTRIBUTE_UNUSED) override {
     return VisitMethodResult::kContinueMethod;
   }
 
   void VisitWaitingObject(mirror::Object* obj, ThreadState state ATTRIBUTE_UNUSED)
-      OVERRIDE
+      override
       REQUIRES_SHARED(Locks::mutator_lock_) {
     PrintObject(obj, "  - waiting on ", ThreadList::kInvalidThreadId);
   }
   void VisitSleepingObject(mirror::Object* obj)
-      OVERRIDE
+      override
       REQUIRES_SHARED(Locks::mutator_lock_) {
     PrintObject(obj, "  - sleeping on ", ThreadList::kInvalidThreadId);
   }
   void VisitBlockedOnObject(mirror::Object* obj,
                             ThreadState state,
                             uint32_t owner_tid)
-      OVERRIDE
+      override
       REQUIRES_SHARED(Locks::mutator_lock_) {
     const char* msg;
     switch (state) {
@@ -1919,7 +1927,7 @@ struct StackDumpVisitor : public MonitorObjectsStackVisitor {
     PrintObject(obj, msg, owner_tid);
   }
   void VisitLockedObject(mirror::Object* obj)
-      OVERRIDE
+      override
       REQUIRES_SHARED(Locks::mutator_lock_) {
     PrintObject(obj, "  - locked ", ThreadList::kInvalidThreadId);
   }
@@ -2216,7 +2224,7 @@ class MonitorExitVisitor : public SingleRootVisitor {
 
   // NO_THREAD_SAFETY_ANALYSIS due to MonitorExit.
   void VisitRoot(mirror::Object* entered_monitor, const RootInfo& info ATTRIBUTE_UNUSED)
-      OVERRIDE NO_THREAD_SAFETY_ANALYSIS {
+      override NO_THREAD_SAFETY_ANALYSIS {
     if (self_->HoldsLock(entered_monitor)) {
       LOG(WARNING) << "Calling MonitorExit on object "
                    << entered_monitor << " (" << entered_monitor->PrettyTypeOf() << ")"
@@ -2845,7 +2853,7 @@ jobjectArray Thread::CreateAnnotatedStackTrace(const ScopedObjectAccessAlreadyRu
 
    protected:
     VisitMethodResult StartMethod(ArtMethod* m, size_t frame_nr ATTRIBUTE_UNUSED)
-        OVERRIDE
+        override
         REQUIRES_SHARED(Locks::mutator_lock_) {
       ObjPtr<mirror::StackTraceElement> obj = CreateStackTraceElement(
           soaa_, m, GetDexPc(/* abort on error */ false));
@@ -2856,7 +2864,7 @@ jobjectArray Thread::CreateAnnotatedStackTrace(const ScopedObjectAccessAlreadyRu
       return VisitMethodResult::kContinueMethod;
     }
 
-    VisitMethodResult EndMethod(ArtMethod* m ATTRIBUTE_UNUSED) OVERRIDE {
+    VisitMethodResult EndMethod(ArtMethod* m ATTRIBUTE_UNUSED) override {
       lock_objects_.push_back({});
       lock_objects_[lock_objects_.size() - 1].swap(frame_lock_objects_);
 
@@ -2866,24 +2874,24 @@ jobjectArray Thread::CreateAnnotatedStackTrace(const ScopedObjectAccessAlreadyRu
     }
 
     void VisitWaitingObject(mirror::Object* obj, ThreadState state ATTRIBUTE_UNUSED)
-        OVERRIDE
+        override
         REQUIRES_SHARED(Locks::mutator_lock_) {
       wait_jobject_.reset(soaa_.AddLocalReference<jobject>(obj));
     }
     void VisitSleepingObject(mirror::Object* obj)
-        OVERRIDE
+        override
         REQUIRES_SHARED(Locks::mutator_lock_) {
       wait_jobject_.reset(soaa_.AddLocalReference<jobject>(obj));
     }
     void VisitBlockedOnObject(mirror::Object* obj,
                               ThreadState state ATTRIBUTE_UNUSED,
                               uint32_t owner_tid ATTRIBUTE_UNUSED)
-        OVERRIDE
+        override
         REQUIRES_SHARED(Locks::mutator_lock_) {
       block_jobject_.reset(soaa_.AddLocalReference<jobject>(obj));
     }
     void VisitLockedObject(mirror::Object* obj)
-        OVERRIDE
+        override
         REQUIRES_SHARED(Locks::mutator_lock_) {
       frame_lock_objects_.emplace_back(soaa_.Env(), soaa_.AddLocalReference<jobject>(obj));
     }
@@ -3450,7 +3458,7 @@ Context* Thread::GetLongJumpContext() {
 
 // Note: this visitor may return with a method set, but dex_pc_ being DexFile:kDexNoIndex. This is
 //       so we don't abort in a special situation (thinlocked monitor) when dumping the Java stack.
-struct CurrentMethodVisitor FINAL : public StackVisitor {
+struct CurrentMethodVisitor final : public StackVisitor {
   CurrentMethodVisitor(Thread* thread, Context* context, bool check_suspended, bool abort_on_error)
       REQUIRES_SHARED(Locks::mutator_lock_)
       : StackVisitor(thread,
@@ -3461,7 +3469,7 @@ struct CurrentMethodVisitor FINAL : public StackVisitor {
         method_(nullptr),
         dex_pc_(0),
         abort_on_error_(abort_on_error) {}
-  bool VisitFrame() OVERRIDE REQUIRES_SHARED(Locks::mutator_lock_) {
+  bool VisitFrame() override REQUIRES_SHARED(Locks::mutator_lock_) {
     ArtMethod* m = GetMethod();
     if (m->IsRuntimeMethod()) {
       // Continue if this is a runtime method.
@@ -3857,7 +3865,7 @@ void Thread::VisitRoots(RootVisitor* visitor, VisitRootFlags flags) {
 class VerifyRootVisitor : public SingleRootVisitor {
  public:
   void VisitRoot(mirror::Object* root, const RootInfo& info ATTRIBUTE_UNUSED)
-      OVERRIDE REQUIRES_SHARED(Locks::mutator_lock_) {
+      override REQUIRES_SHARED(Locks::mutator_lock_) {
     VerifyObject(root);
   }
 };

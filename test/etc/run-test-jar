@@ -549,6 +549,7 @@ if [ "$HAVE_IMAGE" = "n" ]; then
     fi
     bpath="${framework}/core-libart${bpath_suffix}.jar"
     bpath="${bpath}:${framework}/core-oj${bpath_suffix}.jar"
+    bpath="${bpath}:${framework}/core-simple${bpath_suffix}.jar"
     bpath="${bpath}:${framework}/conscrypt${bpath_suffix}.jar"
     bpath="${bpath}:${framework}/okhttp${bpath_suffix}.jar"
     bpath="${bpath}:${framework}/bouncycastle${bpath_suffix}.jar"
@@ -588,7 +589,7 @@ if [ "$USE_GDB" = "y" ]; then
 fi
 
 if [ "$INTERPRETER" = "y" ]; then
-    INT_OPTS="-Xint"
+    INT_OPTS="${INT_OPTS} -Xint"
     if [ "$VERIFY" = "y" ] ; then
       INT_OPTS="${INT_OPTS} -Xcompiler-option --compiler-filter=quicken"
       COMPILE_FLAGS="${COMPILE_FLAGS} --compiler-filter=quicken"
@@ -604,7 +605,7 @@ if [ "$INTERPRETER" = "y" ]; then
 fi
 
 if [ "$JIT" = "y" ]; then
-    INT_OPTS="-Xusejit:true"
+    INT_OPTS="${INT_OPTS} -Xusejit:true"
     if [ "$VERIFY" = "y" ] ; then
       INT_OPTS="${INT_OPTS} -Xcompiler-option --compiler-filter=quicken"
       COMPILE_FLAGS="${COMPILE_FLAGS} --compiler-filter=quicken"
@@ -613,6 +614,8 @@ if [ "$JIT" = "y" ]; then
       COMPILE_FLAGS="${COMPILE_FLAGS} --compiler-filter=assume-verified"
       DEX_VERIFY="${DEX_VERIFY} -Xverify:none"
     fi
+else
+    INT_OPTS="${INT_OPTS} -Xusejit:false"
 fi
 
 JNI_OPTS="-Xjnigreflimit:512 -Xcheck:jni"
