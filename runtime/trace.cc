@@ -383,9 +383,6 @@ void Trace::Start(std::unique_ptr<File>&& trace_file_in,
     }
   };
   std::unique_ptr<File, decltype(deleter)> trace_file(trace_file_in.release(), deleter);
-  if (trace_file != nullptr) {
-    trace_file->DisableAutoClose();
-  }
 
   Thread* self = Thread::Current();
   {
@@ -420,7 +417,7 @@ void Trace::Start(std::unique_ptr<File>&& trace_file_in,
     if (the_trace_ != nullptr) {
       LOG(ERROR) << "Trace already in progress, ignoring this request";
     } else {
-      enable_stats = (flags && kTraceCountAllocs) != 0;
+      enable_stats = (flags & kTraceCountAllocs) != 0;
       the_trace_ = new Trace(trace_file.release(), buffer_size, flags, output_mode, trace_mode);
       if (trace_mode == TraceMode::kSampling) {
         CHECK_PTHREAD_CALL(pthread_create, (&sampling_pthread_, nullptr, &RunSamplingThread,
@@ -608,7 +605,7 @@ void Trace::Resume() {
   Runtime* runtime = Runtime::Current();
 
   // Enable count of allocs if specified in the flags.
-  bool enable_stats = (the_trace->flags_ && kTraceCountAllocs) != 0;
+  bool enable_stats = (the_trace->flags_ & kTraceCountAllocs) != 0;
 
   {
     gc::ScopedGCCriticalSection gcs(self,

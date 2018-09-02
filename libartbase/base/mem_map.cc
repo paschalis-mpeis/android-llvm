@@ -23,18 +23,16 @@
 #include <sys/resource.h>
 #endif
 
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
+
 #include <map>
 #include <memory>
 #include <sstream>
 
 #include "android-base/stringprintf.h"
 #include "android-base/unique_fd.h"
-
-#if !defined(__Fuchsia__)
-#include "cutils/ashmem.h"
-#else
-#include "fuchsia_compat.h"
-#endif
 
 #include "allocator.h"
 #include "bit_utils.h"
@@ -60,6 +58,9 @@ using Maps = AllocationTrackingMultiMap<void*, MemMap*, kAllocatorTagMaps>;
 
 // All the non-empty MemMaps. Use a multimap as we do a reserve-and-divide (eg ElfMap::Load()).
 static Maps* gMaps GUARDED_BY(MemMap::GetMemMapsLock()) = nullptr;
+
+// A map containing unique strings used for indentifying anonymous mappings
+static std::map<std::string, int> debugStrMap GUARDED_BY(MemMap::GetMemMapsLock());
 
 // Retrieve iterator to a `gMaps` entry that is known to exist.
 Maps::iterator GetGMapsEntry(const MemMap& map) REQUIRES(MemMap::GetMemMapsLock()) {
@@ -226,6 +227,33 @@ bool MemMap::CheckMapRequest(uint8_t* expected_ptr, void* actual_ptr, size_t byt
   return false;
 }
 
+bool MemMap::CheckReservation(uint8_t* expected_ptr,
+                              size_t byte_count,
+                              const char* name,
+                              const MemMap& reservation,
+                              /*out*/std::string* error_msg) {
+  if (!reservation.IsValid()) {
+    *error_msg = StringPrintf("Invalid reservation for %s", name);
+    return false;
+  }
+  DCHECK_ALIGNED(reservation.Begin(), kPageSize);
+  if (reservation.Begin() != expected_ptr) {
+    *error_msg = StringPrintf("Bad image reservation start for %s: %p instead of %p",
+                              name,
+                              reservation.Begin(),
+                              expected_ptr);
+    return false;
+  }
+  if (byte_count > reservation.Size()) {
+    *error_msg = StringPrintf("Insufficient reservation, required %zu, available %zu",
+                              byte_count,
+                              reservation.Size());
+    return false;
+  }
+  return true;
+}
+
+
 #if USE_ART_LOW_4G_ALLOCATOR
 void* MemMap::TryMemMapLow4GB(void* ptr,
                                     size_t page_aligned_byte_count,
@@ -246,18 +274,45 @@ void* MemMap::TryMemMapLow4GB(void* ptr,
 }
 #endif
 
+void MemMap::SetDebugName(void* map_ptr, const char* name, size_t size) {
+  // Debug naming is only used for Android target builds. For Linux targets,
+  // we'll still call prctl but it wont do anything till we upstream the prctl.
+  if (kIsTargetFuchsia || !kIsTargetBuild) {
+    return;
+  }
+
+  // lock as std::map is not thread-safe
+  std::lock_guard<std::mutex> mu(*mem_maps_lock_);
+
+  std::string debug_friendly_name("dalvik-");
+  debug_friendly_name += name;
+  auto it = debugStrMap.find(debug_friendly_name);
+
+  if (it == debugStrMap.end()) {
+    it = debugStrMap.insert(std::make_pair(std::move(debug_friendly_name), 1)).first;
+  }
+
+  DCHECK(it != debugStrMap.end());
+#if defined(PR_SET_VMA) && defined(__linux__)
+  prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, map_ptr, size, it->first.c_str());
+#else
+  // Prevent variable unused compiler errors.
+  UNUSED(map_ptr, size);
+#endif
+}
+
 MemMap MemMap::MapAnonymous(const char* name,
                             uint8_t* addr,
                             size_t byte_count,
                             int prot,
                             bool low_4gb,
                             bool reuse,
-                            std::string* error_msg,
-                            bool use_ashmem) {
+                            /*inout*/MemMap* reservation,
+                            /*out*/std::string* error_msg,
+                            bool use_debug_name) {
 #ifndef __LP64__
   UNUSED(low_4gb);
 #endif
-  use_ashmem = use_ashmem && !kIsTargetLinux && !kIsTargetFuchsia;
   if (byte_count == 0) {
     *error_msg = "Empty MemMap requested.";
     return Invalid();
@@ -269,45 +324,19 @@ MemMap MemMap::MapAnonymous(const char* name,
     // reuse means it is okay that it overlaps an existing page mapping.
     // Only use this if you actually made the page reservation yourself.
     CHECK(addr != nullptr);
+    DCHECK(reservation == nullptr);
 
     DCHECK(ContainedWithinExistingMap(addr, byte_count, error_msg)) << *error_msg;
     flags |= MAP_FIXED;
-  }
-
-  if (use_ashmem) {
-    if (!kIsTargetBuild) {
-      // When not on Android (either host or assuming a linux target) ashmem is faked using
-      // files in /tmp. Ensure that such files won't fail due to ulimit restrictions. If they
-      // will then use a regular mmap.
-      struct rlimit rlimit_fsize;
-      CHECK_EQ(getrlimit(RLIMIT_FSIZE, &rlimit_fsize), 0);
-      use_ashmem = (rlimit_fsize.rlim_cur == RLIM_INFINITY) ||
-        (page_aligned_byte_count < rlimit_fsize.rlim_cur);
+  } else if (reservation != nullptr) {
+    CHECK(addr != nullptr);
+    if (!CheckReservation(addr, byte_count, name, *reservation, error_msg)) {
+      return MemMap::Invalid();
     }
+    flags |= MAP_FIXED;
   }
 
   unique_fd fd;
-
-
-  if (use_ashmem) {
-    // android_os_Debug.cpp read_mapinfo assumes all ashmem regions associated with the VM are
-    // prefixed "dalvik-".
-    std::string debug_friendly_name("dalvik-");
-    debug_friendly_name += name;
-    fd.reset(ashmem_create_region(debug_friendly_name.c_str(), page_aligned_byte_count));
-
-    if (fd.get() == -1) {
-      // We failed to create the ashmem region. Print a warning, but continue
-      // anyway by creating a true anonymous mmap with an fd of -1. It is
-      // better to use an unlabelled anonymous map than to fail to create a
-      // map at all.
-      PLOG(WARNING) << "ashmem_create_region failed for '" << name << "'";
-    } else {
-      // We succeeded in creating the ashmem region. Use the created ashmem
-      // region as backing for the mmap.
-      flags &= ~MAP_ANONYMOUS;
-    }
-  }
 
   // We need to store and potentially set an error number for pretty printing of errors
   int saved_errno = 0;
@@ -340,6 +369,16 @@ MemMap MemMap::MapAnonymous(const char* name,
   }
   if (!CheckMapRequest(addr, actual, page_aligned_byte_count, error_msg)) {
     return Invalid();
+  }
+
+  if (use_debug_name) {
+    SetDebugName(actual, name, page_aligned_byte_count);
+  }
+
+  if (reservation != nullptr) {
+    // Re-mapping was successful, transfer the ownership of the memory to the new MemMap.
+    DCHECK_EQ(actual, reservation->Begin());
+    reservation->ReleaseReservedMemory(byte_count);
   }
   return MemMap(name,
                 reinterpret_cast<uint8_t*>(actual),
@@ -446,21 +485,29 @@ MemMap MemMap::MapFileAtAddress(uint8_t* expected_ptr,
                                 int fd,
                                 off_t start,
                                 bool low_4gb,
-                                bool reuse,
                                 const char* filename,
-                                std::string* error_msg) {
+                                bool reuse,
+                                /*inout*/MemMap* reservation,
+                                /*out*/std::string* error_msg) {
   CHECK_NE(0, prot);
   CHECK_NE(0, flags & (MAP_SHARED | MAP_PRIVATE));
 
-  // Note that we do not allow MAP_FIXED unless reuse == true, i.e we
-  // expect his mapping to be contained within an existing map.
+  // Note that we do not allow MAP_FIXED unless reuse == true or we have an existing
+  // reservation, i.e we expect this mapping to be contained within an existing map.
   if (reuse) {
     // reuse means it is okay that it overlaps an existing page mapping.
     // Only use this if you actually made the page reservation yourself.
     CHECK(expected_ptr != nullptr);
+    DCHECK(reservation == nullptr);
     DCHECK(error_msg != nullptr);
     DCHECK(ContainedWithinExistingMap(expected_ptr, byte_count, error_msg))
         << ((error_msg != nullptr) ? *error_msg : std::string());
+    flags |= MAP_FIXED;
+  } else if (reservation != nullptr) {
+    DCHECK(error_msg != nullptr);
+    if (!CheckReservation(expected_ptr, byte_count, filename, *reservation, error_msg)) {
+      return Invalid();
+    }
     flags |= MAP_FIXED;
   } else {
     CHECK_EQ(0, flags & MAP_FIXED);
@@ -523,6 +570,11 @@ MemMap MemMap::MapFileAtAddress(uint8_t* expected_ptr,
     page_aligned_byte_count -= redzone_size;
   }
 
+  if (reservation != nullptr) {
+    // Re-mapping was successful, transfer the ownership of the memory to the new MemMap.
+    DCHECK_EQ(actual, reservation->Begin());
+    reservation->ReleaseReservedMemory(byte_count);
+  }
   return MemMap(filename,
                 actual + page_offset,
                 byte_count,
@@ -639,8 +691,7 @@ MemMap MemMap::RemapAtEnd(uint8_t* new_end,
                           const char* tail_name,
                           int tail_prot,
                           std::string* error_msg,
-                          bool use_ashmem) {
-  use_ashmem = use_ashmem && !kIsTargetLinux && !kIsTargetFuchsia;
+                          bool use_debug_name) {
   DCHECK_GE(new_end, Begin());
   DCHECK_LE(new_end, End());
   DCHECK_LE(begin_ + size_, reinterpret_cast<uint8_t*>(base_begin_) + base_size_);
@@ -666,19 +717,6 @@ MemMap MemMap::RemapAtEnd(uint8_t* new_end,
 
   unique_fd fd;
   int flags = MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS;
-  if (use_ashmem) {
-    // android_os_Debug.cpp read_mapinfo assumes all ashmem regions associated with the VM are
-    // prefixed "dalvik-".
-    std::string debug_friendly_name("dalvik-");
-    debug_friendly_name += tail_name;
-    fd.reset(ashmem_create_region(debug_friendly_name.c_str(), tail_base_size));
-    flags = MAP_PRIVATE | MAP_FIXED;
-    if (fd.get() == -1) {
-      *error_msg = StringPrintf("ashmem_create_region failed for '%s': %s",
-                                tail_name, strerror(errno));
-      return Invalid();
-    }
-  }
 
   MEMORY_TOOL_MAKE_UNDEFINED(tail_base_begin, tail_base_size);
   // Note: Do not explicitly unmap the tail region, mmap() with MAP_FIXED automatically
@@ -703,10 +741,54 @@ MemMap MemMap::RemapAtEnd(uint8_t* new_end,
     auto it = GetGMapsEntry(*this);
     gMaps->erase(it);
   }
+
+  if (use_debug_name) {
+    SetDebugName(actual, tail_name, tail_base_size);
+  }
+
   size_ = new_size;
   base_size_ = new_base_size;
   // Return the new mapping.
   return MemMap(tail_name, actual, tail_size, actual, tail_base_size, tail_prot, false);
+}
+
+MemMap MemMap::TakeReservedMemory(size_t byte_count) {
+  uint8_t* begin = Begin();
+  ReleaseReservedMemory(byte_count);  // Performs necessary DCHECK()s on this reservation.
+  size_t base_size = RoundUp(byte_count, kPageSize);
+  return MemMap(name_, begin, byte_count, begin, base_size, prot_, /* reuse */ false);
+}
+
+void MemMap::ReleaseReservedMemory(size_t byte_count) {
+  // Check the reservation mapping.
+  DCHECK(IsValid());
+  DCHECK(!reuse_);
+  DCHECK(!already_unmapped_);
+  DCHECK_EQ(redzone_size_, 0u);
+  DCHECK_EQ(begin_, base_begin_);
+  DCHECK_EQ(size_, base_size_);
+  DCHECK_ALIGNED(begin_, kPageSize);
+  DCHECK_ALIGNED(size_, kPageSize);
+
+  // Check and round up the `byte_count`.
+  DCHECK_NE(byte_count, 0u);
+  DCHECK_LE(byte_count, size_);
+  byte_count = RoundUp(byte_count, kPageSize);
+
+  if (byte_count == size_) {
+    Invalidate();
+  } else {
+    // Shrink the reservation MemMap and update its `gMaps` entry.
+    std::lock_guard<std::mutex> mu(*mem_maps_lock_);
+    auto it = GetGMapsEntry(*this);
+    // TODO: When C++17 becomes available, use std::map<>::extract(), modify, insert.
+    gMaps->erase(it);
+    begin_ += byte_count;
+    size_ -= byte_count;
+    base_begin_ = begin_;
+    base_size_ = size_;
+    gMaps->emplace(base_begin_, this);
+  }
 }
 
 void MemMap::MadviseDontNeedAndZero() {

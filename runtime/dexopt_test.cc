@@ -20,6 +20,8 @@
 #include <backtrace/BacktraceMap.h>
 #include <gtest/gtest.h>
 
+#include "android-base/stringprintf.h"
+#include "android-base/strings.h"
 #include "base/file_utils.h"
 #include "base/mem_map.h"
 #include "common_runtime_test.h"
@@ -27,6 +29,7 @@
 #include "dex2oat_environment_test.h"
 #include "dexopt_test.h"
 #include "gc/space/image_space.h"
+#include "hidden_api.h"
 
 namespace art {
 void DexoptTest::SetUp() {
@@ -43,6 +46,46 @@ void DexoptTest::PreRuntimeCreate() {
 
 void DexoptTest::PostRuntimeCreate() {
   ReserveImageSpace();
+}
+
+static std::string ImageLocation() {
+  Runtime* runtime = Runtime::Current();
+  const std::vector<gc::space::ImageSpace*>& image_spaces =
+      runtime->GetHeap()->GetBootImageSpaces();
+  if (image_spaces.empty()) {
+    return "";
+  }
+  return image_spaces[0]->GetImageLocation();
+}
+
+bool DexoptTest::Dex2Oat(const std::vector<std::string>& args, std::string* error_msg) {
+  Runtime* runtime = Runtime::Current();
+
+  std::vector<std::string> argv;
+  argv.push_back(runtime->GetCompilerExecutable());
+  if (runtime->IsJavaDebuggable()) {
+    argv.push_back("--debuggable");
+  }
+  runtime->AddCurrentRuntimeFeaturesAsDex2OatArguments(&argv);
+
+  if (runtime->GetHiddenApiEnforcementPolicy() != hiddenapi::EnforcementPolicy::kNoChecks) {
+    argv.push_back("--runtime-arg");
+    argv.push_back("-Xhidden-api-checks");
+  }
+
+  if (!kIsTargetBuild) {
+    argv.push_back("--host");
+  }
+
+  argv.push_back("--boot-image=" + ImageLocation());
+
+  std::vector<std::string> compiler_options = runtime->GetCompilerOptions();
+  argv.insert(argv.end(), compiler_options.begin(), compiler_options.end());
+
+  argv.insert(argv.end(), args.begin(), args.end());
+
+  std::string command_line(android::base::Join(argv, ' '));
+  return Exec(argv, error_msg);
 }
 
 void DexoptTest::GenerateOatForTest(const std::string& dex_location,
@@ -96,7 +139,7 @@ void DexoptTest::GenerateOatForTest(const std::string& dex_location,
   }
 
   std::string error_msg;
-  ASSERT_TRUE(OatFileAssistant::Dex2Oat(args, &error_msg)) << error_msg;
+  ASSERT_TRUE(Dex2Oat(args, &error_msg)) << error_msg;
 
   if (!relocate) {
     // Restore the dalvik cache if needed.
@@ -108,11 +151,11 @@ void DexoptTest::GenerateOatForTest(const std::string& dex_location,
   std::unique_ptr<OatFile> odex_file(OatFile::Open(/* zip_fd */ -1,
                                                    oat_location.c_str(),
                                                    oat_location.c_str(),
-                                                   nullptr,
-                                                   nullptr,
-                                                   false,
-                                                   /*low_4gb*/false,
+                                                   /* requested_base */ nullptr,
+                                                   /* executable */ false,
+                                                   /* low_4gb */ false,
                                                    dex_location.c_str(),
+                                                   /* reservation */ nullptr,
                                                    &error_msg));
   ASSERT_TRUE(odex_file.get() != nullptr) << error_msg;
   EXPECT_EQ(pic, odex_file->IsPic());

@@ -44,8 +44,9 @@ class ImageSpace : public MemMapSpace {
   static bool LoadBootImage(
       const std::string& image_location,
       const InstructionSet image_isa,
-      /*out*/ std::vector<std::unique_ptr<space::ImageSpace>>* boot_image_spaces,
-      /*out*/ uint8_t** oat_file_end) REQUIRES_SHARED(Locks::mutator_lock_);
+      size_t extra_reservation_size,
+      /*out*/std::vector<std::unique_ptr<space::ImageSpace>>* boot_image_spaces,
+      /*out*/MemMap* extra_reservation) REQUIRES_SHARED(Locks::mutator_lock_);
 
   // Try to open an existing app image space.
   static std::unique_ptr<ImageSpace> CreateFromAppImage(const char* image,
@@ -183,7 +184,7 @@ class ImageSpace : public MemMapSpace {
   ImageSpace(const std::string& name,
              const char* image_location,
              MemMap&& mem_map,
-             accounting::ContinuousSpaceBitmap* live_bitmap,
+             std::unique_ptr<accounting::ContinuousSpaceBitmap> live_bitmap,
              uint8_t* end);
 
   // The OatFile associated with the image during early startup to
