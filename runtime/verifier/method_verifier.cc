@@ -4562,7 +4562,7 @@ ArtField* MethodVerifier::GetStaticField(int field_idx) {
   }
   if (klass_type.IsUnresolvedTypes()) {
     // Accessibility checks depend on resolved fields.
-    DCHECK(klass_type.Equals(GetDeclaringClass()) || !failures_.empty());
+    DCHECK(klass_type.Equals(GetDeclaringClass()) || !failures_.empty() || api_level_ < 28u);
 
     return nullptr;  // Can't resolve Class so no more to do here, will do checking at runtime.
   }
@@ -4603,7 +4603,7 @@ ArtField* MethodVerifier::GetInstanceField(const RegType& obj_type, int field_id
   }
   if (klass_type.IsUnresolvedTypes()) {
     // Accessibility checks depend on resolved fields.
-    DCHECK(klass_type.Equals(GetDeclaringClass()) || !failures_.empty());
+    DCHECK(klass_type.Equals(GetDeclaringClass()) || !failures_.empty() || api_level_ < 28u);
 
     return nullptr;  // Can't resolve Class so no more to do here
   }
