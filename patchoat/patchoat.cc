@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "android-base/file.h"
+#include <android-base/parseint.h>
 #include "android-base/stringprintf.h"
 #include "android-base/strings.h"
 
@@ -630,7 +631,7 @@ bool PatchOat::Patch(const std::string& image_location,
       std::string image_relocation_filename =
           output_image_relocation_directory
               + (android::base::StartsWith(original_image_filename, "/") ? "" : "/")
-              + original_image_filename.substr(original_image_filename.find_last_of("/"));
+              + original_image_filename.substr(original_image_filename.find_last_of('/'));
       int64_t input_image_size = input_image->GetLength();
       if (input_image_size < 0) {
         LOG(ERROR) << "Error while getting input image size";
@@ -1272,7 +1273,7 @@ static int patchoat(int argc, char **argv) {
     } else if (option.starts_with("--base-offset-delta=")) {
       const char* base_delta_str = option.substr(strlen("--base-offset-delta=")).data();
       base_delta_set = true;
-      if (!ParseInt(base_delta_str, &base_delta)) {
+      if (!android::base::ParseInt(base_delta_str, &base_delta)) {
         Usage("Failed to parse --base-offset-delta argument '%s' as an off_t", base_delta_str);
       }
     } else if (option == "--dump-timings") {

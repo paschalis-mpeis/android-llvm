@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "android-base/logging.h"
+#include "android-base/parseint.h"
 #include "android-base/stringprintf.h"
 #include "android-base/strings.h"
 
@@ -3380,7 +3381,7 @@ struct OatdumpArgs : public CmdlineArgs {
     } else if (option.starts_with("--export-dex-to=")) {
       export_dex_location_ = option.substr(strlen("--export-dex-to=")).data();
     } else if (option.starts_with("--addr2instr=")) {
-      if (!ParseUint(option.substr(strlen("--addr2instr=")).data(), &addr2instr_)) {
+      if (!android::base::ParseUint(option.substr(strlen("--addr2instr=")).data(), &addr2instr_)) {
         *error_msg = "Address conversion failed";
         return kParseError;
       }
@@ -3423,7 +3424,7 @@ struct OatdumpArgs : public CmdlineArgs {
     return kParseOk;
   }
 
-  virtual std::string GetUsage() const {
+  std::string GetUsage() const override {
     std::string usage;
 
     usage +=
@@ -3577,7 +3578,7 @@ struct OatdumpMain : public CmdlineMain<OatdumpArgs> {
     }
   }
 
-  virtual bool ExecuteWithRuntime(Runtime* runtime) {
+  bool ExecuteWithRuntime(Runtime* runtime) override {
     CHECK(args_ != nullptr);
 
     if (!args_->imt_dump_.empty() || args_->imt_stat_dump_) {

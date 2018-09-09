@@ -450,6 +450,7 @@ Heap::Heap(size_t initial_size,
     // Non moving space is always dlmalloc since we currently don't have support for multiple
     // active rosalloc spaces.
     const size_t size = non_moving_space_mem_map.Size();
+    const void* non_moving_space_mem_map_begin = non_moving_space_mem_map.Begin();
     non_moving_space_ = space::DlMallocSpace::CreateFromMemMap(std::move(non_moving_space_mem_map),
                                                                "zygote / non moving space",
                                                                kDefaultStartingSize,
@@ -457,9 +458,9 @@ Heap::Heap(size_t initial_size,
                                                                size,
                                                                size,
                                                                /* can_move_objects */ false);
-    non_moving_space_->SetFootprintLimit(non_moving_space_->Capacity());
     CHECK(non_moving_space_ != nullptr) << "Failed creating non moving space "
-        << non_moving_space_mem_map.Begin();
+        << non_moving_space_mem_map_begin;
+    non_moving_space_->SetFootprintLimit(non_moving_space_->Capacity());
     AddSpace(non_moving_space_);
   }
   // Create other spaces based on whether or not we have a moving GC.
@@ -2279,13 +2280,13 @@ class ZygoteCompactingCollector final : public collector::SemiSpace {
     }
   }
 
-  virtual bool ShouldSweepSpace(space::ContinuousSpace* space ATTRIBUTE_UNUSED) const {
+  bool ShouldSweepSpace(space::ContinuousSpace* space ATTRIBUTE_UNUSED) const override {
     // Don't sweep any spaces since we probably blasted the internal accounting of the free list
     // allocator.
     return false;
   }
 
-  virtual mirror::Object* MarkNonForwardedObject(mirror::Object* obj)
+  mirror::Object* MarkNonForwardedObject(mirror::Object* obj) override
       REQUIRES(Locks::heap_bitmap_lock_, Locks::mutator_lock_) {
     size_t obj_size = obj->SizeOf<kDefaultVerifyFlags>();
     size_t alloc_size = RoundUp(obj_size, kObjectAlignment);
