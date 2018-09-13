@@ -7085,9 +7085,12 @@ void ClassLinker::LinkInterfaceMethodsHelper::ReallocMethods() {
       // mark this as a default, non-abstract method, since thats what it is. Also clear the
       // kAccSkipAccessChecks bit since this class hasn't been verified yet it shouldn't have
       // methods that are skipping access checks.
+      // Also clear potential kAccSingleImplementation to avoid CHA trying to inline
+      // the default method.
       DCHECK_EQ(new_method.GetAccessFlags() & kAccNative, 0u);
       constexpr uint32_t kSetFlags = kAccDefault | kAccDefaultConflict | kAccCopied;
-      constexpr uint32_t kMaskFlags = ~(kAccAbstract | kAccSkipAccessChecks);
+      constexpr uint32_t kMaskFlags =
+          ~(kAccAbstract | kAccSkipAccessChecks | kAccSingleImplementation);
       new_method.SetAccessFlags((new_method.GetAccessFlags() | kSetFlags) & kMaskFlags);
       DCHECK(new_method.IsDefaultConflicting());
       // The actual method might or might not be marked abstract since we just copied it from a
@@ -8594,6 +8597,49 @@ void ClassLinker::DumpForSigQuit(std::ostream& os) {
   ReaderMutexLock mu(soa.Self(), *Locks::classlinker_classes_lock_);
   os << "Zygote loaded classes=" << NumZygoteClasses() << " post zygote classes="
      << NumNonZygoteClasses() << "\n";
+  ReaderMutexLock mu2(soa.Self(), *Locks::dex_lock_);
+  os << "Dumping registered class loaders\n";
+  size_t class_loader_index = 0;
+  for (const ClassLoaderData& class_loader : class_loaders_) {
+    ObjPtr<mirror::ClassLoader> loader =
+        ObjPtr<mirror::ClassLoader>::DownCast(soa.Self()->DecodeJObject(class_loader.weak_root));
+    if (loader != nullptr) {
+      os << "#" << class_loader_index++ << " " << loader->GetClass()->PrettyDescriptor() << ": [";
+      bool saw_one_dex_file = false;
+      for (const DexCacheData& dex_cache : dex_caches_) {
+        if (dex_cache.IsValid() && dex_cache.class_table == class_loader.class_table) {
+          if (saw_one_dex_file) {
+            os << ":";
+          }
+          saw_one_dex_file = true;
+          os << dex_cache.dex_file->GetLocation();
+        }
+      }
+      os << "]";
+      bool found_parent = false;
+      if (loader->GetParent() != nullptr) {
+        size_t parent_index = 0;
+        for (const ClassLoaderData& class_loader2 : class_loaders_) {
+          ObjPtr<mirror::ClassLoader> loader2 = ObjPtr<mirror::ClassLoader>::DownCast(
+              soa.Self()->DecodeJObject(class_loader2.weak_root));
+          if (loader2 == loader->GetParent()) {
+            os << ", parent #" << parent_index;
+            found_parent = true;
+            break;
+          }
+          parent_index++;
+        }
+        if (!found_parent) {
+          os << ", unregistered parent of type "
+             << loader->GetParent()->GetClass()->PrettyDescriptor();
+        }
+      } else {
+        os << ", no parent";
+      }
+      os << "\n";
+    }
+  }
+  os << "Done dumping class loaders\n";
 }
 
 class CountClassesVisitor : public ClassLoaderVisitor {
