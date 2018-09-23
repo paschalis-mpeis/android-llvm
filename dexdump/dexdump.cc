@@ -331,7 +331,7 @@ static char* createAccessFlagStr(u4 flags, AccessFor forWhat) {
  * NULL-terminated.
  */
 static void asciify(char* out, const unsigned char* data, size_t len) {
-  while (len--) {
+  for (; len != 0u; --len) {
     if (*data < 0x20) {
       // Could do more here, but we don't need them yet.
       switch (*data) {
@@ -1800,18 +1800,18 @@ static void processDexFile(const char* fileName,
   // Iterate over all classes.
   char* package = nullptr;
   const u4 classDefsSize = pDexFile->GetHeader().class_defs_size_;
-  for (u4 i = 0; i < classDefsSize; i++) {
-    dumpClass(pDexFile, i, &package);
+  for (u4 j = 0; j < classDefsSize; j++) {
+    dumpClass(pDexFile, j, &package);
   }  // for
 
   // Iterate over all method handles.
-  for (u4 i = 0; i < pDexFile->NumMethodHandles(); ++i) {
-    dumpMethodHandle(pDexFile, i);
+  for (u4 j = 0; j < pDexFile->NumMethodHandles(); ++j) {
+    dumpMethodHandle(pDexFile, j);
   }  // for
 
   // Iterate over all call site ids.
-  for (u4 i = 0; i < pDexFile->NumCallSiteIds(); ++i) {
-    dumpCallSite(pDexFile, i);
+  for (u4 j = 0; j < pDexFile->NumCallSiteIds(); ++j) {
+    dumpCallSite(pDexFile, j);
   }  // for
 
   // Free the last package allocated.

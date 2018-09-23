@@ -216,16 +216,6 @@
   names: ["libcore.javax.crypto.spec.AlgorithmParametersTestGCM#testEncoding"]
 },
 {
-  description: "Tests fail because mockito can not read android.os.Build$VERSION",
-  result: EXEC_FAILED,
-  bug: 111704422,
-  names: ["libcore.java.lang.ThreadTest#testUncaughtExceptionPreHandler_calledBeforeDefaultHandler",
-          "libcore.java.lang.ThreadTest#testUncaughtExceptionPreHandler_noDefaultHandler",
-          "libcore.javax.crypto.CipherInputStreamTest#testCloseTwice",
-          "libcore.libcore.io.BlockGuardOsTest#test_android_getaddrinfo_networkPolicy",
-          "libcore.libcore.io.BlockGuardOsTest#test_checkNewMethodsInPosix"]
-},
-{
   description: "fdsan doesn't exist on the host",
   result: EXEC_FAILED,
   modes: [host],
@@ -233,6 +223,8 @@
   names: ["libcore.libcore.io.FdsanTest#testFileInputStream",
           "libcore.libcore.io.FdsanTest#testFileOutputStream",
           "libcore.libcore.io.FdsanTest#testRandomAccessFile",
-          "libcore.libcore.io.FdsanTest#testParcelFileDescriptor"]
+          "libcore.libcore.io.FdsanTest#testParcelFileDescriptor",
+          "libcore.libcore.io.FdsanTest#testDatagramSocket",
+          "libcore.libcore.io.FdsanTest#testSocket"]
 }
 ]

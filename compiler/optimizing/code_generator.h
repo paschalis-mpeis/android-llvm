@@ -356,8 +356,8 @@ class CodeGenerator : public DeletableArenaObject<kArenaAllocCodeGenerator> {
   // Fills the `literals` array with literals collected during code generation.
   // Also emits literal patches.
   void EmitJitRoots(uint8_t* code,
-                    Handle<mirror::ObjectArray<mirror::Object>> roots,
-                    const uint8_t* roots_data)
+                    const uint8_t* roots_data,
+                    /*out*/std::vector<Handle<mirror::Object>>* roots)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   bool IsLeafMethod() const {
@@ -622,7 +622,7 @@ class CodeGenerator : public DeletableArenaObject<kArenaAllocCodeGenerator> {
   // otherwise return a fall-back info that should be used instead.
   virtual HInvokeStaticOrDirect::DispatchInfo GetSupportedInvokeStaticOrDirectDispatch(
       const HInvokeStaticOrDirect::DispatchInfo& desired_dispatch_info,
-      HInvokeStaticOrDirect* invoke) = 0;
+      ArtMethod* method) = 0;
 
   // Generate a call to a static or direct method.
   virtual void GenerateStaticOrDirectCall(

@@ -23,6 +23,7 @@
 #include "base/enums.h"
 #include "base/histogram-inl.h"
 #include "base/logging.h"  // For VLOG.
+#include "base/membarrier.h"
 #include "base/mem_map.h"
 #include "base/quasi_atomic.h"
 #include "base/stl_util.h"
@@ -185,6 +186,11 @@ JitCodeCache* JitCodeCache::Create(size_t initial_capacity,
         << PrettySize(max_capacity) << " is too big";
     *error_msg = oss.str();
     return nullptr;
+  }
+
+  // Register for membarrier expedited sync core if JIT will be generating code.
+  if (!used_only_for_profile_data) {
+    art::membarrier(art::MembarrierCommand::kRegisterPrivateExpeditedSyncCore);
   }
 
   // Decide how we should map the code and data sections.
@@ -411,7 +417,7 @@ uint8_t* JitCodeCache::CommitCode(Thread* self,
                                   size_t code_size,
                                   size_t data_size,
                                   bool osr,
-                                  Handle<mirror::ObjectArray<mirror::Object>> roots,
+                                  const std::vector<Handle<mirror::Object>>& roots,
                                   bool has_should_deoptimize_flag,
                                   const ArenaSet<ArtMethod*>& cha_single_implementation_list) {
   uint8_t* result = CommitCodeInternal(self,
@@ -477,18 +483,16 @@ static const uint8_t* FromStackMapToRoots(const uint8_t* stack_map_data) {
   return stack_map_data - ComputeRootTableSize(GetNumberOfRoots(stack_map_data));
 }
 
-static void DCheckRootsAreValid(Handle<mirror::ObjectArray<mirror::Object>> roots)
+static void DCheckRootsAreValid(const std::vector<Handle<mirror::Object>>& roots)
     REQUIRES(!Locks::intern_table_lock_) REQUIRES_SHARED(Locks::mutator_lock_) {
   if (!kIsDebugBuild) {
     return;
   }
-  const uint32_t length = roots->GetLength();
   // Put all roots in `roots_data`.
-  for (uint32_t i = 0; i < length; ++i) {
-    ObjPtr<mirror::Object> object = roots->Get(i);
+  for (Handle<mirror::Object> object : roots) {
     // Ensure the string is strongly interned. b/32995596
     if (object->IsString()) {
-      ObjPtr<mirror::String> str = ObjPtr<mirror::String>::DownCast(object);
+      ObjPtr<mirror::String> str = object->AsString();
       ClassLinker* class_linker = Runtime::Current()->GetClassLinker();
       CHECK(class_linker->GetInternTable()->LookupStrong(Thread::Current(), str) != nullptr);
     }
@@ -496,12 +500,12 @@ static void DCheckRootsAreValid(Handle<mirror::ObjectArray<mirror::Object>> root
 }
 
 void JitCodeCache::FillRootTable(uint8_t* roots_data,
-                                 Handle<mirror::ObjectArray<mirror::Object>> roots) {
+                                 const std::vector<Handle<mirror::Object>>& roots) {
   GcRoot<mirror::Object>* gc_roots = reinterpret_cast<GcRoot<mirror::Object>*>(roots_data);
-  const uint32_t length = roots->GetLength();
+  const uint32_t length = roots.size();
   // Put all roots in `roots_data`.
   for (uint32_t i = 0; i < length; ++i) {
-    ObjPtr<mirror::Object> object = roots->Get(i);
+    ObjPtr<mirror::Object> object = roots[i].Get();
     gc_roots[i] = GcRoot<mirror::Object>(object);
   }
 }
@@ -757,7 +761,7 @@ uint8_t* JitCodeCache::CommitCodeInternal(Thread* self,
                                           size_t code_size,
                                           size_t data_size,
                                           bool osr,
-                                          Handle<mirror::ObjectArray<mirror::Object>> roots,
+                                          const std::vector<Handle<mirror::Object>>& roots,
                                           bool has_should_deoptimize_flag,
                                           const ArenaSet<ArtMethod*>&
                                               cha_single_implementation_list) {
@@ -809,9 +813,8 @@ uint8_t* JitCodeCache::CommitCodeInternal(Thread* self,
     // shootdown (incidentally invalidating the CPU pipelines by sending an IPI to all cores to
     // notify them of the TLB invalidation). Some architectures, notably ARM and ARM64, have
     // hardware support that broadcasts TLB invalidations and so their kernels have no software
-    // based TLB shootdown. FlushInstructionPipeline() is a wrapper around the Linux
-    // membarrier(MEMBARRIER_CMD_PRIVATE_EXPEDITED) syscall which does the appropriate flushing.
-    FlushInstructionPipeline();
+    // based TLB shootdown.
+    art::membarrier(art::MembarrierCommand::kPrivateExpeditedSyncCore);
 
     DCHECK(!Runtime::Current()->IsAotCompiler());
     if (has_should_deoptimize_flag) {
