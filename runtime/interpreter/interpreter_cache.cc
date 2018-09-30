@@ -14,15 +14,19 @@
  * limitations under the License.
  */
 
-#ifndef ART_LIBARTBASE_BASE_MEMFD_H_
-#define ART_LIBARTBASE_BASE_MEMFD_H_
+#include "interpreter_cache.h"
+#include "thread-inl.h"
 
 namespace art {
 
-// Call memfd(2) if available on platform and return result. This call also makes a kernel version
-// check for safety on older kernels (b/116769556)..
-int memfd_create(const char* name, unsigned int flags);
+void InterpreterCache::Clear(Thread* owning_thread) {
+  DCHECK(owning_thread->GetInterpreterCache() == this);
+  DCHECK(owning_thread == Thread::Current() || owning_thread->IsSuspended());
+  data_.fill(Entry{});
+}
+
+bool InterpreterCache::IsCalledFromOwningThread() {
+  return Thread::Current()->GetInterpreterCache() == this;
+}
 
 }  // namespace art
-
-#endif  // ART_LIBARTBASE_BASE_MEMFD_H_
