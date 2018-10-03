@@ -68,8 +68,8 @@ class MemMap {
     return MemMap();
   }
 
-  MemMap(MemMap&& other) REQUIRES(!MemMap::mem_maps_lock_);
-  MemMap& operator=(MemMap&& other) REQUIRES(!MemMap::mem_maps_lock_) {
+  MemMap(MemMap&& other) noexcept REQUIRES(!MemMap::mem_maps_lock_);
+  MemMap& operator=(MemMap&& other) noexcept REQUIRES(!MemMap::mem_maps_lock_) {
     Reset();
     swap(other);
     return *this;
@@ -258,6 +258,16 @@ class MemMap {
   MemMap RemapAtEnd(uint8_t* new_end,
                     const char* tail_name,
                     int tail_prot,
+                    std::string* error_msg,
+                    bool use_debug_name = true);
+
+  // Unmap the pages of a file at end and remap them to create another memory map.
+  MemMap RemapAtEnd(uint8_t* new_end,
+                    const char* tail_name,
+                    int tail_prot,
+                    int tail_flags,
+                    int fd,
+                    off_t offset,
                     std::string* error_msg,
                     bool use_debug_name = true);
 
