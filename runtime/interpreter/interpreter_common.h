@@ -136,11 +136,34 @@ static ALWAYS_INLINE bool DoInvoke(Thread* self,
   }
   const uint32_t method_idx = (is_range) ? inst->VRegB_3rc() : inst->VRegB_35c();
   const uint32_t vregC = (is_range) ? inst->VRegC_3rc() : inst->VRegC_35c();
+  ArtMethod* sf_method = shadow_frame.GetMethod();
+
+  // Try to find the method in small thread-local cache first.
+  InterpreterCache* tls_cache = self->GetInterpreterCache();
+  size_t tls_value;
+  ArtMethod* resolved_method;
+  if (LIKELY(tls_cache->Get(inst, &tls_value))) {
+    resolved_method = reinterpret_cast<ArtMethod*>(tls_value);
+  } else {
+    ClassLinker* const class_linker = Runtime::Current()->GetClassLinker();
+    constexpr ClassLinker::ResolveMode resolve_mode =
+        do_access_check ? ClassLinker::ResolveMode::kCheckICCEAndIAE
+                        : ClassLinker::ResolveMode::kNoChecks;
+    resolved_method = class_linker->ResolveMethod<resolve_mode>(self, method_idx, sf_method, type);
+    if (UNLIKELY(resolved_method == nullptr)) {
+      CHECK(self->IsExceptionPending());
+      result->SetJ(0);
+      return false;
+    }
+    tls_cache->Set(inst, reinterpret_cast<size_t>(resolved_method));
+  }
+
+  // Null pointer check and virtual method resolution.
   ObjPtr<mirror::Object> receiver =
       (type == kStatic) ? nullptr : shadow_frame.GetVRegReference(vregC);
-  ArtMethod* sf_method = shadow_frame.GetMethod();
-  ArtMethod* const called_method = FindMethodFromCode<type, do_access_check>(
-      method_idx, &receiver, sf_method, self);
+  ArtMethod* const called_method = FindMethodToCall<type, do_access_check>(
+      method_idx, resolved_method, &receiver, sf_method, self);
+
   // The shadow frame should already be pushed, so we don't need to update it.
   if (UNLIKELY(called_method == nullptr)) {
     CHECK(self->IsExceptionPending());
@@ -163,15 +186,6 @@ static ALWAYS_INLINE bool DoInvoke(Thread* self,
         if (MterpHandleIntrinsic(&shadow_frame, called_method, inst, inst_data,
                                  shadow_frame.GetResultRegister())) {
           return !self->IsExceptionPending();
-        }
-      }
-    } else {
-      // TODO: Remove the InvokeVirtualOrInterface instrumentation, as it was only used by the JIT.
-      if (type == kVirtual || type == kInterface) {
-        instrumentation::Instrumentation* instrumentation = Runtime::Current()->GetInstrumentation();
-        if (UNLIKELY(instrumentation->HasInvokeVirtualOrInterfaceListeners())) {
-          instrumentation->InvokeVirtualOrInterface(
-              self, receiver.Ptr(), sf_method, shadow_frame.GetDexPC(), called_method);
         }
       }
     }
@@ -276,12 +290,6 @@ static inline bool DoInvokeVirtualQuick(Thread* self, ShadowFrame& shadow_frame,
       jit->InvokeVirtualOrInterface(
           receiver, shadow_frame.GetMethod(), shadow_frame.GetDexPC(), called_method);
       jit->AddSamples(self, shadow_frame.GetMethod(), 1, /*with_backedges*/false);
-    }
-    instrumentation::Instrumentation* instrumentation = Runtime::Current()->GetInstrumentation();
-    // TODO: Remove the InvokeVirtualOrInterface instrumentation, as it was only used by the JIT.
-    if (UNLIKELY(instrumentation->HasInvokeVirtualOrInterfaceListeners())) {
-      instrumentation->InvokeVirtualOrInterface(
-          self, receiver.Ptr(), shadow_frame.GetMethod(), shadow_frame.GetDexPC(), called_method);
     }
     // No need to check since we've been quickened.
     return DoCall<is_range, false>(called_method, self, shadow_frame, inst, inst_data, result);

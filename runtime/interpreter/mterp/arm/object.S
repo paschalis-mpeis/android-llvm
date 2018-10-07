@@ -43,7 +43,8 @@
    mov      r2, rINST, lsr #12            @ B
    GET_VREG r2, r2                        @ object we're operating on
    cmp      r0, rPC
-   bne      .L_${opcode}_slow_path        @ cache miss
+%  slow_path_label = add_helper("slow_path", lambda: field(helper))
+   bne      ${slow_path_label}            @ cache miss
    cmp      r2, #0
    beq      common_errNullObject          @ null object
 %  if is_wide:
@@ -52,12 +53,17 @@
      ${load}  r0, [r2, r1]                @ r0 <- obj.field
 %  #endif
 %  if is_object:
+     UNPOISON_HEAP_REF r0
+#if defined(USE_READ_BARRIER)
+# if defined(USE_BAKER_READ_BARRIER)
      ldr    ip, [rSELF, #THREAD_IS_GC_MARKING_OFFSET]
      cmp    ip, #0
-     beq    .L_${opcode}_gc_not_marking   @ GC is not active
-     // TODO: This is UNLIKELY. Move this block at the end.
+     bne    .L_${opcode}_mark             @ GC is active
+.L_${opcode}_marked:
+# else
      bl artReadBarrierMark                @ r0 <- artReadBarrierMark(r0)
-.L_${opcode}_gc_not_marking:
+# endif
+#endif
 %  #endif
    ubfx     r2, rINST, #8, #4             @ A
    FETCH_ADVANCE_INST 2                   @ advance rPC, load rINST
@@ -70,8 +76,13 @@
 %  #endif
    GET_INST_OPCODE ip                     @ extract opcode from rINST
    GOTO_OPCODE ip                         @ jump to next instruction
-.L_${opcode}_slow_path:
-%  field(helper=helper)
+%  if is_object:
+#if defined(USE_READ_BARRIER) && defined(USE_BAKER_READ_BARRIER)
+.L_${opcode}_mark:
+     bl artReadBarrierMark                @ r0 <- artReadBarrierMark(r0)
+     b .L_${opcode}_marked
+#endif
+%  #endif
 
 %def op_iget_boolean():
 %  op_iget(load="ldrb", helper="MterpIGetU8")

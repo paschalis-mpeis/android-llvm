@@ -316,6 +316,13 @@ unspecified registers or condition codes.
     .size \name, .-\name
 .endm
 
+// Macro to unpoison (negate) the reference for heap poisoning.
+.macro UNPOISON_HEAP_REF rRef
+#ifdef USE_HEAP_POISONING
+    rsb \rRef, \rRef, #0
+#endif  // USE_HEAP_POISONING
+.endm
+
 %def entry():
 /*
  * Copyright (C) 2016 The Android Open Source Project
@@ -419,8 +426,6 @@ ENTRY ExecuteMterpImpl
 
 %def helpers():
     ENTRY MterpHelpers
-%  op_float_to_long_helper_code()
-%  op_double_to_long_helper_code()
 
 %def footer():
 /*
@@ -755,3 +760,7 @@ artMterpAsmAltInstructionStart = .L_ALT_op_nop
     ENTRY Mterp_${opcode}
 %def opcode_end():
     END Mterp_${opcode}
+%def helper_start(name):
+    ENTRY ${name}
+%def helper_end(name):
+    END ${name}
