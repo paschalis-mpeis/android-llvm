@@ -153,8 +153,8 @@ def gather_test_info():
   VARIANT_TYPE_DICT['address_sizes'] = {'64', '32'}
   VARIANT_TYPE_DICT['jvmti'] = {'no-jvmti', 'jvmti-stress', 'redefine-stress', 'trace-stress',
                                 'field-stress', 'step-stress'}
-  VARIANT_TYPE_DICT['compiler'] = {'interp-ac', 'interpreter', 'jit', 'optimizing',
-                                   'regalloc_gc', 'speed-profile'}
+  VARIANT_TYPE_DICT['compiler'] = {'interp-ac', 'interpreter', 'jit', 'jit-on-first-use',
+                                   'optimizing', 'regalloc_gc', 'speed-profile'}
 
   for v_type in VARIANT_TYPE_DICT:
     TOTAL_VARIANTS_SET = TOTAL_VARIANTS_SET.union(VARIANT_TYPE_DICT.get(v_type))
@@ -433,6 +433,8 @@ def run_tests(tests):
         options_test += ' --interpreter --verify-soft-fail'
       elif compiler == 'jit':
         options_test += ' --jit'
+      elif compiler == 'jit-on-first-use':
+        options_test += ' --jit --runtime-option -Xjitthreshold:0'
       elif compiler == 'speed-profile':
         options_test += ' --random-profile'
 
@@ -1019,10 +1021,8 @@ def main():
       build_targets += 'test-art-target-run-test-dependencies '
     if 'jvm' in _user_input_variants['target']:
       build_targets += 'test-art-host-run-test-dependencies '
-    build_command = 'make'
+    build_command = 'build/soong/soong_ui.bash --make-mode'
     build_command += ' DX='
-    build_command += ' -j'
-    build_command += ' -C ' + env.ANDROID_BUILD_TOP
     build_command += ' ' + build_targets
     if subprocess.call(build_command.split()):
       # Debugging for b/62653020
