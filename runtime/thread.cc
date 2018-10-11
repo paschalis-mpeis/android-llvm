@@ -3368,51 +3368,22 @@ void Thread::QuickDeliverException() {
     HandleWrapperObjPtr<mirror::Throwable> h_exception(hs.NewHandleWrapper(&exception));
     instrumentation->ExceptionThrownEvent(this, exception.Ptr());
   }
-  // Does instrumentation need to deoptimize the stack or otherwise go to interpreter for something?
-  // Note: we do this *after* reporting the exception to instrumentation in case it now requires
-  // deoptimization. It may happen if a debugger is attached and requests new events (single-step,
-  // breakpoint, ...) when the exception is reported.
-  ShadowFrame* cf;
-  bool force_frame_pop = false;
-  {
-    NthCallerVisitor visitor(this, 0, false);
-    visitor.WalkStack();
-    cf = visitor.GetCurrentShadowFrame();
-    if (cf == nullptr) {
-      cf = FindDebuggerShadowFrame(visitor.GetFrameId());
-    }
-    force_frame_pop = cf != nullptr && cf->GetForcePopFrame();
-    if (kIsDebugBuild && force_frame_pop) {
-      NthCallerVisitor penultimate_visitor(this, 1, false);
-      penultimate_visitor.WalkStack();
-      ShadowFrame* penultimate_frame = penultimate_visitor.GetCurrentShadowFrame();
-      if (penultimate_frame == nullptr) {
-        penultimate_frame = FindDebuggerShadowFrame(penultimate_visitor.GetFrameId());
-      }
-      DCHECK(penultimate_frame != nullptr &&
-             penultimate_frame->GetForceRetryInstruction())
-          << "Force pop frame without retry instruction found. penultimate frame is null: "
-          << (penultimate_frame == nullptr ? "true" : "false");
-    }
-  }
-  if (Dbg::IsForcedInterpreterNeededForException(this) || force_frame_pop) {
+  // Does instrumentation need to deoptimize the stack?
+  // Note: we do this *after* reporting the exception to instrumentation in case it
+  // now requires deoptimization. It may happen if a debugger is attached and requests
+  // new events (single-step, breakpoint, ...) when the exception is reported.
+  if (Dbg::IsForcedInterpreterNeededForException(this)) {
     NthCallerVisitor visitor(this, 0, false);
     visitor.WalkStack();
     if (Runtime::Current()->IsAsyncDeoptimizeable(visitor.caller_pc)) {
-      VLOG(deopt) << "Deopting " << cf->GetMethod()->PrettyMethod() << " for frame-pop";
       // method_type shouldn't matter due to exception handling.
       const DeoptimizationMethodType method_type = DeoptimizationMethodType::kDefault;
       // Save the exception into the deoptimization context so it can be restored
       // before entering the interpreter.
-      if (force_frame_pop) {
-        DCHECK(Runtime::Current()->AreNonStandardExitsEnabled());
-        // Get rid of the exception since we are doing a framepop instead.
-        ClearException();
-      }
       PushDeoptimizationContext(
           JValue(),
           false /* is_reference */,
-          (force_frame_pop ? nullptr : exception),
+          exception,
           false /* from_code */,
           method_type);
       artDeoptimize(this);
@@ -3451,45 +3422,37 @@ Context* Thread::GetLongJumpContext() {
   return result;
 }
 
-// Note: this visitor may return with a method set, but dex_pc_ being DexFile:kDexNoIndex. This is
-//       so we don't abort in a special situation (thinlocked monitor) when dumping the Java stack.
-struct CurrentMethodVisitor final : public StackVisitor {
-  CurrentMethodVisitor(Thread* thread, Context* context, bool check_suspended, bool abort_on_error)
-      REQUIRES_SHARED(Locks::mutator_lock_)
-      : StackVisitor(thread,
-                     context,
-                     StackVisitor::StackWalkKind::kIncludeInlinedFrames,
-                     check_suspended),
-        this_object_(nullptr),
-        method_(nullptr),
-        dex_pc_(0),
-        abort_on_error_(abort_on_error) {}
-  bool VisitFrame() override REQUIRES_SHARED(Locks::mutator_lock_) {
-    ArtMethod* m = GetMethod();
-    if (m->IsRuntimeMethod()) {
-      // Continue if this is a runtime method.
-      return true;
-    }
-    if (context_ != nullptr) {
-      this_object_ = GetThisObject();
-    }
-    method_ = m;
-    dex_pc_ = GetDexPc(abort_on_error_);
-    return false;
-  }
-  ObjPtr<mirror::Object> this_object_;
-  ArtMethod* method_;
-  uint32_t dex_pc_;
-  const bool abort_on_error_;
-};
-
 ArtMethod* Thread::GetCurrentMethod(uint32_t* dex_pc,
                                     bool check_suspended,
                                     bool abort_on_error) const {
-  CurrentMethodVisitor visitor(const_cast<Thread*>(this),
-                               nullptr,
-                               check_suspended,
-                               abort_on_error);
+  // Note: this visitor may return with a method set, but dex_pc_ being DexFile:kDexNoIndex. This is
+  //       so we don't abort in a special situation (thinlocked monitor) when dumping the Java
+  //       stack.
+  struct CurrentMethodVisitor final : public StackVisitor {
+    CurrentMethodVisitor(Thread* thread, bool check_suspended, bool abort_on_error)
+        REQUIRES_SHARED(Locks::mutator_lock_)
+        : StackVisitor(thread,
+                       /* context= */nullptr,
+            StackVisitor::StackWalkKind::kIncludeInlinedFrames,
+            check_suspended),
+            method_(nullptr),
+            dex_pc_(0),
+            abort_on_error_(abort_on_error) {}
+    bool VisitFrame() override REQUIRES_SHARED(Locks::mutator_lock_) {
+      ArtMethod* m = GetMethod();
+      if (m->IsRuntimeMethod()) {
+        // Continue if this is a runtime method.
+        return true;
+      }
+      method_ = m;
+      dex_pc_ = GetDexPc(abort_on_error_);
+      return false;
+    }
+    ArtMethod* method_;
+    uint32_t dex_pc_;
+    const bool abort_on_error_;
+  };
+  CurrentMethodVisitor visitor(const_cast<Thread*>(this), check_suspended, abort_on_error);
   visitor.WalkStack(false);
   if (dex_pc != nullptr) {
     *dex_pc = visitor.dex_pc_;
