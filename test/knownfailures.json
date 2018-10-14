@@ -947,6 +947,7 @@
           "676-resolve-field-type",
           "685-deoptimizeable",
           "685-shifts",
+          "686-get-this",
           "706-checker-scheduler",
           "707-checker-invalid-profile",
           "714-invoke-custom-lambda-metafactory",
@@ -1089,6 +1090,14 @@
         "description": ["We do not inline with debuggable."]
     },
     {
+        "tests": ["1955-pop-frame-jit-called", "1956-pop-frame-jit-calling"],
+        "variant": "jit-on-first-use",
+        "description": [
+          "These tests directly set -Xjitthreshold:1000 to prevent the jit from compiling any",
+          "extra methods. jit-at-first-use would disrupt this."
+        ]
+    },
+    {
         "tests": ["135-MirandaDispatch"],
         "variant": "interp-ac & 32 & host",
         "env_vars": {"SANITIZE_HOST": "address"},
@@ -1099,5 +1108,17 @@
         "tests": ["454-get-vreg", "457-regs"],
         "variant": "baseline",
         "description": ["Tests are expected to fail with baseline."]
+    },
+    {
+        "tests": ["050-sync-test"],
+        "variant": "target & gcstress & debug",
+        "bug": "b/117597114",
+        "description": ["Looks timing dependent"]
+    },
+    {
+        "tests": ["920-objects"],
+        "variant": "jit-on-first-use",
+        "bug": "b/117638896",
+        "description": ["SIGSEGVs on jit-on-first-use configuration."]
     }
 ]

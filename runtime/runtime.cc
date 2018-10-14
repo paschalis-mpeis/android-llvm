@@ -49,7 +49,6 @@
 #include "art_field-inl.h"
 #include "art_method-inl.h"
 #include "asm_support.h"
-#include "asm_support_check.h"
 #include "base/aborting.h"
 #include "base/arena_allocator.h"
 #include "base/atomic.h"
@@ -257,6 +256,7 @@ Runtime::Runtime()
       is_native_bridge_loaded_(false),
       is_native_debuggable_(false),
       async_exceptions_thrown_(false),
+      non_standard_exits_enabled_(false),
       is_java_debuggable_(false),
       zygote_max_failed_boots_(0),
       experimental_flags_(ExperimentalFlags::kNone),
@@ -277,7 +277,6 @@ Runtime::Runtime()
   static_assert(Runtime::kCalleeSaveSize ==
                     static_cast<uint32_t>(CalleeSaveType::kLastCalleeSaveType), "Unexpected size");
 
-  CheckAsmSupportOffsetsAndSizes();
   std::fill(callee_save_methods_, callee_save_methods_ + arraysize(callee_save_methods_), 0u);
   interpreter::CheckInterpreterAsmConstants();
   callbacks_.reset(new RuntimeCallbacks());
