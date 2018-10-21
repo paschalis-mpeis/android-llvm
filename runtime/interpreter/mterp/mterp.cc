@@ -34,11 +34,11 @@ namespace interpreter {
 void CheckMterpAsmConstants() {
   /*
    * If we're using computed goto instruction transitions, make sure
-   * none of the handlers overflows the 128-byte limit.  This won't tell
+   * none of the handlers overflows the byte limit.  This won't tell
    * which one did, but if any one is too big the total size will
    * overflow.
    */
-  const int width = 128;
+  const int width = kMterpHandlerSize;
   int interp_size = (uintptr_t) artMterpAsmInstructionEnd -
                     (uintptr_t) artMterpAsmInstructionStart;
   if ((interp_size == 0) || (interp_size != (art::kNumPackedOpcodes * width))) {
@@ -48,11 +48,7 @@ void CheckMterpAsmConstants() {
 }
 
 void InitMterpTls(Thread* self) {
-  self->SetMterpDefaultIBase(artMterpAsmInstructionStart);
-  self->SetMterpAltIBase(artMterpAsmAltInstructionStart);
-  self->SetMterpCurrentIBase((kTraceExecutionEnabled || kTestExportPC) ?
-                             artMterpAsmAltInstructionStart :
-                             artMterpAsmInstructionStart);
+  self->SetMterpCurrentIBase(artMterpAsmInstructionStart);
 }
 
 /*
@@ -177,7 +173,7 @@ extern "C" size_t MterpInvokeVirtual(Thread* self,
     REQUIRES_SHARED(Locks::mutator_lock_) {
   JValue* result_register = shadow_frame->GetResultRegister();
   const Instruction* inst = Instruction::At(dex_pc_ptr);
-  return DoInvoke<kVirtual, /*is_range*/ false, /*access_check*/ false, /*fast_invoke*/ true>(
+  return DoInvoke<kVirtual, /*is_range=*/ false, /*do_access_check=*/ false, /*is_mterp=*/ true>(
       self, *shadow_frame, inst, inst_data, result_register);
 }
 
@@ -188,7 +184,7 @@ extern "C" size_t MterpInvokeSuper(Thread* self,
     REQUIRES_SHARED(Locks::mutator_lock_) {
   JValue* result_register = shadow_frame->GetResultRegister();
   const Instruction* inst = Instruction::At(dex_pc_ptr);
-  return DoInvoke<kSuper, /*is_range*/ false, /*access_check*/ false>(
+  return DoInvoke<kSuper, /*is_range=*/ false, /*do_access_check=*/ false, /*is_mterp=*/ true>(
       self, *shadow_frame, inst, inst_data, result_register);
 }
 
@@ -199,7 +195,7 @@ extern "C" size_t MterpInvokeInterface(Thread* self,
     REQUIRES_SHARED(Locks::mutator_lock_) {
   JValue* result_register = shadow_frame->GetResultRegister();
   const Instruction* inst = Instruction::At(dex_pc_ptr);
-  return DoInvoke<kInterface, /*is_range*/ false, /*access_check*/ false>(
+  return DoInvoke<kInterface, /*is_range=*/ false, /*do_access_check=*/ false, /*is_mterp=*/ true>(
       self, *shadow_frame, inst, inst_data, result_register);
 }
 
@@ -210,7 +206,7 @@ extern "C" size_t MterpInvokeDirect(Thread* self,
     REQUIRES_SHARED(Locks::mutator_lock_) {
   JValue* result_register = shadow_frame->GetResultRegister();
   const Instruction* inst = Instruction::At(dex_pc_ptr);
-  return DoInvoke<kDirect, /*is_range*/ false, /*access_check*/ false, /*fast_invoke*/ true>(
+  return DoInvoke<kDirect, /*is_range=*/ false, /*do_access_check=*/ false, /*is_mterp=*/ true>(
       self, *shadow_frame, inst, inst_data, result_register);
 }
 
@@ -221,7 +217,7 @@ extern "C" size_t MterpInvokeStatic(Thread* self,
     REQUIRES_SHARED(Locks::mutator_lock_) {
   JValue* result_register = shadow_frame->GetResultRegister();
   const Instruction* inst = Instruction::At(dex_pc_ptr);
-  return DoInvoke<kStatic, /*is_range*/ false, /*access_check*/ false, /*fast_invoke*/ true>(
+  return DoInvoke<kStatic, /*is_range=*/ false, /*do_access_check=*/ false, /*is_mterp=*/ true>(
       self, *shadow_frame, inst, inst_data, result_register);
 }
 
@@ -254,7 +250,7 @@ extern "C" size_t MterpInvokeVirtualRange(Thread* self,
     REQUIRES_SHARED(Locks::mutator_lock_) {
   JValue* result_register = shadow_frame->GetResultRegister();
   const Instruction* inst = Instruction::At(dex_pc_ptr);
-  return DoInvoke<kVirtual, /*is_range*/ true, /*access_check*/ false>(
+  return DoInvoke<kVirtual, /*is_range=*/ true, /*do_access_check=*/ false, /*is_mterp=*/ true>(
       self, *shadow_frame, inst, inst_data, result_register);
 }
 
@@ -265,7 +261,7 @@ extern "C" size_t MterpInvokeSuperRange(Thread* self,
     REQUIRES_SHARED(Locks::mutator_lock_) {
   JValue* result_register = shadow_frame->GetResultRegister();
   const Instruction* inst = Instruction::At(dex_pc_ptr);
-  return DoInvoke<kSuper, /*is_range*/ true, /*access_check*/ false>(
+  return DoInvoke<kSuper, /*is_range=*/ true, /*do_access_check=*/ false, /*is_mterp=*/ true>(
       self, *shadow_frame, inst, inst_data, result_register);
 }
 
@@ -276,7 +272,7 @@ extern "C" size_t MterpInvokeInterfaceRange(Thread* self,
     REQUIRES_SHARED(Locks::mutator_lock_) {
   JValue* result_register = shadow_frame->GetResultRegister();
   const Instruction* inst = Instruction::At(dex_pc_ptr);
-  return DoInvoke<kInterface, /*is_range*/ true, /*access_check*/ false>(
+  return DoInvoke<kInterface, /*is_range=*/ true, /*do_access_check=*/ false, /*is_mterp=*/ true>(
       self, *shadow_frame, inst, inst_data, result_register);
 }
 
@@ -287,7 +283,7 @@ extern "C" size_t MterpInvokeDirectRange(Thread* self,
     REQUIRES_SHARED(Locks::mutator_lock_) {
   JValue* result_register = shadow_frame->GetResultRegister();
   const Instruction* inst = Instruction::At(dex_pc_ptr);
-  return DoInvoke<kDirect, /*is_range*/ true, /*access_check*/ false>(
+  return DoInvoke<kDirect, /*is_range=*/ true, /*do_access_check=*/ false, /*is_mterp=*/ true>(
       self, *shadow_frame, inst, inst_data, result_register);
 }
 
@@ -298,7 +294,7 @@ extern "C" size_t MterpInvokeStaticRange(Thread* self,
     REQUIRES_SHARED(Locks::mutator_lock_) {
   JValue* result_register = shadow_frame->GetResultRegister();
   const Instruction* inst = Instruction::At(dex_pc_ptr);
-  return DoInvoke<kStatic, /*is_range*/ true, /*access_check*/ false>(
+  return DoInvoke<kStatic, /*is_range=*/ true, /*do_access_check=*/ false, /*is_mterp=*/ true>(
       self, *shadow_frame, inst, inst_data, result_register);
 }
 

@@ -273,47 +273,47 @@ unspecified registers or condition codes.
 #define VREG_REF_HIGH_ADDRESS(_vreg) 4(rREFS,_vreg,4)
 
 .macro GET_VREG _reg _vreg
-    movl    (rFP,\_vreg,4), \_reg
+    movl    VREG_ADDRESS(\_vreg), \_reg
 .endm
 
 /* Read wide value to xmm. */
 .macro GET_WIDE_FP_VREG _reg _vreg
-    movq    (rFP,\_vreg,4), \_reg
+    movq    VREG_ADDRESS(\_vreg), \_reg
 .endm
 
 .macro SET_VREG _reg _vreg
-    movl    \_reg, (rFP,\_vreg,4)
-    movl    MACRO_LITERAL(0), (rREFS,\_vreg,4)
+    movl    \_reg, VREG_ADDRESS(\_vreg)
+    movl    MACRO_LITERAL(0), VREG_REF_ADDRESS(\_vreg)
 .endm
 
 /* Write wide value from xmm. xmm is clobbered. */
 .macro SET_WIDE_FP_VREG _reg _vreg
-    movq    \_reg, (rFP,\_vreg,4)
+    movq    \_reg, VREG_ADDRESS(\_vreg)
     pxor    \_reg, \_reg
-    movq    \_reg, (rREFS,\_vreg,4)
+    movq    \_reg, VREG_REF_ADDRESS(\_vreg)
 .endm
 
 .macro SET_VREG_OBJECT _reg _vreg
-    movl    \_reg, (rFP,\_vreg,4)
-    movl    \_reg, (rREFS,\_vreg,4)
+    movl    \_reg, VREG_ADDRESS(\_vreg)
+    movl    \_reg, VREG_REF_ADDRESS(\_vreg)
 .endm
 
 .macro GET_VREG_HIGH _reg _vreg
-    movl    4(rFP,\_vreg,4), \_reg
+    movl    VREG_HIGH_ADDRESS(\_vreg), \_reg
 .endm
 
 .macro SET_VREG_HIGH _reg _vreg
-    movl    \_reg, 4(rFP,\_vreg,4)
-    movl    MACRO_LITERAL(0), 4(rREFS,\_vreg,4)
+    movl    \_reg, VREG_HIGH_ADDRESS(\_vreg)
+    movl    MACRO_LITERAL(0), VREG_REF_HIGH_ADDRESS(\_vreg)
 .endm
 
 .macro CLEAR_REF _vreg
-    movl    MACRO_LITERAL(0),  (rREFS,\_vreg,4)
+    movl    MACRO_LITERAL(0), VREG_REF_ADDRESS(\_vreg)
 .endm
 
 .macro CLEAR_WIDE_REF _vreg
-    movl    MACRO_LITERAL(0),  (rREFS,\_vreg,4)
-    movl    MACRO_LITERAL(0), 4(rREFS,\_vreg,4)
+    movl    MACRO_LITERAL(0), VREG_REF_ADDRESS(\_vreg)
+    movl    MACRO_LITERAL(0), VREG_REF_HIGH_ADDRESS(\_vreg)
 .endm
 
 /*
@@ -410,26 +410,24 @@ ENTRY ExecuteMterpImpl
     // cfi info continues, and covers the whole mterp implementation.
     END ExecuteMterpImpl
 
-%def alt_stub():
-/*
- * Inter-instruction transfer stub.  Call out to MterpCheckBefore to handle
- * any interesting requests and then jump to the real instruction
- * handler.  Unlike the Arm handler, we can't do this as a tail call
- * because rIBASE is caller save and we need to reload it.
- *
- * Note that unlike in the Arm implementation, we should never arrive
- * here with a zero breakFlag because we always refresh rIBASE on
- * return.
- */
+%def dchecks_before_helper():
+    // Call C++ to do debug checks and return to the handler using tail call.
     .extern MterpCheckBefore
+    popl    %eax                     # Return address (the instuction handler).
     movl    rSELF, %ecx
     movl    %ecx, OUT_ARG0(%esp)
-    leal    OFF_FP_SHADOWFRAME(rFP), %eax
-    movl    %eax, OUT_ARG1(%esp)
+    leal    OFF_FP_SHADOWFRAME(rFP), %ecx
+    movl    %ecx, OUT_ARG1(%esp)
     movl    rPC, OUT_ARG2(%esp)
-    call    SYMBOL(MterpCheckBefore)        # (self, shadow_frame, dex_pc_ptr)
+    pushl   %eax                     # Return address for the tail call.
+    jmp     SYMBOL(MterpCheckBefore) # (self, shadow_frame, dex_pc_ptr)
+
+%def opcode_pre():
+%  add_helper(dchecks_before_helper, "Mterp_dchecks_before_helper")
+    #if !defined(NDEBUG)
+    call    SYMBOL(Mterp_dchecks_before_helper)
     REFRESH_IBASE
-    jmp     .L_op_nop+(${opnum}*${handler_size_bytes})
+    #endif
 
 %def fallback():
 /* Transfer stub to alternate interpreter */
@@ -773,13 +771,6 @@ MRestoreFrame:
     .global SYMBOL(artMterpAsmInstructionEnd)
 SYMBOL(artMterpAsmInstructionEnd):
 
-%def instruction_end_alt():
-
-    OBJECT_TYPE(artMterpAsmAltInstructionEnd)
-    ASM_HIDDEN SYMBOL(artMterpAsmAltInstructionEnd)
-    .global SYMBOL(artMterpAsmAltInstructionEnd)
-SYMBOL(artMterpAsmAltInstructionEnd):
-
 %def instruction_start():
 
     OBJECT_TYPE(artMterpAsmInstructionStart)
@@ -787,14 +778,6 @@ SYMBOL(artMterpAsmAltInstructionEnd):
     .global SYMBOL(artMterpAsmInstructionStart)
 SYMBOL(artMterpAsmInstructionStart) = .L_op_nop
     .text
-
-%def instruction_start_alt():
-
-    OBJECT_TYPE(artMterpAsmAltInstructionStart)
-    ASM_HIDDEN SYMBOL(artMterpAsmAltInstructionStart)
-    .global SYMBOL(artMterpAsmAltInstructionStart)
-    .text
-SYMBOL(artMterpAsmAltInstructionStart) = .L_ALT_op_nop
 
 %def opcode_start():
     ENTRY Mterp_${opcode}

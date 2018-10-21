@@ -812,7 +812,7 @@ jvmtiError ThreadUtil::RunAgentThread(jvmtiEnv* jvmti_env,
     runtime->EndThreadBirth();
     return ERR(INTERNAL);
   }
-  data.release();
+  data.release();  // NOLINT pthreads API.
 
   return ERR(NONE);
 }
@@ -857,7 +857,7 @@ jvmtiError ThreadUtil::SuspendOther(art::Thread* self,
     bool timeout = true;
     art::Thread* ret_target = art::Runtime::Current()->GetThreadList()->SuspendThreadByPeer(
         target_jthread,
-        /* request_suspension */ true,
+        /* request_suspension= */ true,
         art::SuspendReason::kForUserCode,
         &timeout);
     if (ret_target == nullptr && !timeout) {

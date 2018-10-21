@@ -22,8 +22,8 @@ import sys, re
 from cStringIO import StringIO
 
 out = StringIO()  # File-like in-memory buffer.
-handler_size_bytes = "128"
-handler_size_bits = "7"
+handler_size_bytes = "MTERP_HANDLER_SIZE"
+handler_size_bits = "MTERP_HANDLER_SIZE_LOG2"
 opcode = ""
 opnum = ""
 
@@ -33,38 +33,34 @@ def write_line(line):
 def balign():
   write_line("    .balign {}".format(handler_size_bytes))
 
-def write_opcode(num, name, write_method, is_alt):
+def write_opcode(num, name, write_method):
   global opnum, opcode
   opnum, opcode = str(num), name
-  if is_alt:
-    name = "ALT_" + name
   write_line("/* ------------------------------ */")
   balign()
   write_line(".L_{1}: /* {0:#04x} */".format(num, name))
-  if is_alt:
-    alt_stub()
-  else:
-    opcode_start()
-    write_method()
-    opcode_end()
+  opcode_start()
+  opcode_pre()
+  write_method()
+  opcode_end()
   write_line("")
   opnum, opcode = None, None
 
-generated_helpers = list()
+generated_helpers = {}
 
 # This method generates a helper using the provided writer method.
 # The output is temporarily redirected to in-memory buffer.
-# It returns the symbol which can be used to jump to the helper.
-def add_helper(name_suffix, write_helper):
+def add_helper(write_helper, name = None):
+  if name == None:
+    name = "Mterp_" + opcode + "_helper"
   global out
   old_out = out
   out = StringIO()
-  name = "Mterp_" + opcode + "_" + name_suffix
   helper_start(name)
   write_helper()
   helper_end(name)
   out.seek(0)
-  generated_helpers.append(out.read())
+  generated_helpers[name] = out.read()
   out = old_out
   return name
 
@@ -76,18 +72,13 @@ def generate(output_filename):
   entry()
 
   instruction_start()
-  opcodes(is_alt = False)
+  opcodes()
   balign()
   instruction_end()
 
-  for helper in generated_helpers:
+  for name, helper in sorted(generated_helpers.items()):
     out.write(helper)
   helpers()
-
-  instruction_start_alt()
-  opcodes(is_alt = True)
-  balign()
-  instruction_end_alt()
 
   footer()
 
