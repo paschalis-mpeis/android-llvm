@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+#ifndef ART_RUNTIME_INTERPRETER_INTERPRETER_SWITCH_IMPL_INL_H_
+#define ART_RUNTIME_INTERPRETER_INTERPRETER_SWITCH_IMPL_INL_H_
+
 #include "interpreter_switch_impl.h"
 
 #include "base/enums.h"
@@ -167,7 +170,7 @@ namespace interpreter {
 #define HOTNESS_UPDATE()                                                                       \
   do {                                                                                         \
     if (jit != nullptr) {                                                                      \
-      jit->AddSamples(self, shadow_frame.GetMethod(), 1, /*with_backedges*/ true);             \
+      jit->AddSamples(self, shadow_frame.GetMethod(), 1, /*with_backedges=*/ true);            \
     }                                                                                          \
   } while (false)
 
@@ -1754,7 +1757,7 @@ ATTRIBUTE_NO_SANITIZE_ADDRESS void ExecuteSwitchImplCpp(SwitchImplContext* ctx) 
       case Instruction::INVOKE_POLYMORPHIC: {
         PREAMBLE();
         DCHECK(Runtime::Current()->IsMethodHandlesEnabled());
-        bool success = DoInvokePolymorphic<false /* is_range */>(
+        bool success = DoInvokePolymorphic</* is_range= */ false>(
             self, shadow_frame, inst, inst_data, &result_register);
         POSSIBLY_HANDLE_PENDING_EXCEPTION_ON_INVOKE_POLYMORPHIC(!success);
         break;
@@ -1762,7 +1765,7 @@ ATTRIBUTE_NO_SANITIZE_ADDRESS void ExecuteSwitchImplCpp(SwitchImplContext* ctx) 
       case Instruction::INVOKE_POLYMORPHIC_RANGE: {
         PREAMBLE();
         DCHECK(Runtime::Current()->IsMethodHandlesEnabled());
-        bool success = DoInvokePolymorphic<true /* is_range */>(
+        bool success = DoInvokePolymorphic</* is_range= */ true>(
             self, shadow_frame, inst, inst_data, &result_register);
         POSSIBLY_HANDLE_PENDING_EXCEPTION_ON_INVOKE_POLYMORPHIC(!success);
         break;
@@ -1770,7 +1773,7 @@ ATTRIBUTE_NO_SANITIZE_ADDRESS void ExecuteSwitchImplCpp(SwitchImplContext* ctx) 
       case Instruction::INVOKE_CUSTOM: {
         PREAMBLE();
         DCHECK(Runtime::Current()->IsMethodHandlesEnabled());
-        bool success = DoInvokeCustom<false /* is_range */>(
+        bool success = DoInvokeCustom</* is_range= */ false>(
             self, shadow_frame, inst, inst_data, &result_register);
         POSSIBLY_HANDLE_PENDING_EXCEPTION_ON_INVOKE(!success);
         break;
@@ -1778,7 +1781,7 @@ ATTRIBUTE_NO_SANITIZE_ADDRESS void ExecuteSwitchImplCpp(SwitchImplContext* ctx) 
       case Instruction::INVOKE_CUSTOM_RANGE: {
         PREAMBLE();
         DCHECK(Runtime::Current()->IsMethodHandlesEnabled());
-        bool success = DoInvokeCustom<true /* is_range */>(
+        bool success = DoInvokeCustom</* is_range= */ true>(
             self, shadow_frame, inst, inst_data, &result_register);
         POSSIBLY_HANDLE_PENDING_EXCEPTION_ON_INVOKE(!success);
         break;
@@ -2571,15 +2574,7 @@ ATTRIBUTE_NO_SANITIZE_ADDRESS void ExecuteSwitchImplCpp(SwitchImplContext* ctx) 
   return;
 }  // NOLINT(readability/fn_size)
 
-// Explicit definitions of ExecuteSwitchImplCpp.
-template HOT_ATTR
-void ExecuteSwitchImplCpp<true, false>(SwitchImplContext* ctx);
-template HOT_ATTR
-void ExecuteSwitchImplCpp<false, false>(SwitchImplContext* ctx);
-template
-void ExecuteSwitchImplCpp<true, true>(SwitchImplContext* ctx);
-template
-void ExecuteSwitchImplCpp<false, true>(SwitchImplContext* ctx);
-
 }  // namespace interpreter
 }  // namespace art
+
+#endif  // ART_RUNTIME_INTERPRETER_INTERPRETER_SWITCH_IMPL_INL_H_

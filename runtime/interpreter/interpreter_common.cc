@@ -50,6 +50,17 @@ void ThrowNullPointerExceptionFromInterpreter() {
   ThrowNullPointerExceptionFromDexPC();
 }
 
+bool CheckStackOverflow(Thread* self, size_t frame_size)
+    REQUIRES_SHARED(Locks::mutator_lock_) {
+  bool implicit_check = !Runtime::Current()->ExplicitStackOverflowChecks();
+  uint8_t* stack_end = self->GetStackEndForInterpreter(implicit_check);
+  if (UNLIKELY(__builtin_frame_address(0) < stack_end + frame_size)) {
+    ThrowStackOverflowError(self);
+    return false;
+  }
+  return true;
+}
+
 template<FindFieldType find_type, Primitive::Type field_type, bool do_access_check,
          bool transaction_active>
 bool DoFieldGet(Thread* self, ShadowFrame& shadow_frame, const Instruction* inst,
@@ -714,12 +725,12 @@ bool DoMethodHandleInvokeExact(Thread* self,
   if (inst->Opcode() == Instruction::INVOKE_POLYMORPHIC) {
     static const bool kIsRange = false;
     return DoMethodHandleInvokeCommon<kIsRange>(
-        self, shadow_frame, true /* is_exact */, inst, inst_data, result);
+        self, shadow_frame, /* invoke_exact= */ true, inst, inst_data, result);
   } else {
     DCHECK_EQ(inst->Opcode(), Instruction::INVOKE_POLYMORPHIC_RANGE);
     static const bool kIsRange = true;
     return DoMethodHandleInvokeCommon<kIsRange>(
-        self, shadow_frame, true /* is_exact */, inst, inst_data, result);
+        self, shadow_frame, /* invoke_exact= */ true, inst, inst_data, result);
   }
 }
 
@@ -731,12 +742,12 @@ bool DoMethodHandleInvoke(Thread* self,
   if (inst->Opcode() == Instruction::INVOKE_POLYMORPHIC) {
     static const bool kIsRange = false;
     return DoMethodHandleInvokeCommon<kIsRange>(
-        self, shadow_frame, false /* is_exact */, inst, inst_data, result);
+        self, shadow_frame, /* invoke_exact= */ false, inst, inst_data, result);
   } else {
     DCHECK_EQ(inst->Opcode(), Instruction::INVOKE_POLYMORPHIC_RANGE);
     static const bool kIsRange = true;
     return DoMethodHandleInvokeCommon<kIsRange>(
-        self, shadow_frame, false /* is_exact */, inst, inst_data, result);
+        self, shadow_frame, /* invoke_exact= */ false, inst, inst_data, result);
   }
 }
 
