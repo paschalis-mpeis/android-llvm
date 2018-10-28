@@ -16,9 +16,11 @@
 
 #include "method_type.h"
 
-#include "class-inl.h"
+#include "class-alloc-inl.h"
 #include "class_root.h"
 #include "method_handles.h"
+#include "object_array-alloc-inl.h"
+#include "object_array-inl.h"
 
 namespace art {
 namespace mirror {

@@ -20,11 +20,13 @@
 #include <stdio.h>
 #include <memory>
 
+#include "array-alloc-inl.h"
 #include "array-inl.h"
 #include "art_field-inl.h"
 #include "art_method-inl.h"
 #include "asm_support.h"
 #include "base/enums.h"
+#include "class-alloc-inl.h"
 #include "class-inl.h"
 #include "class_linker-inl.h"
 #include "class_linker.h"
@@ -38,6 +40,7 @@
 #include "iftable-inl.h"
 #include "obj_ptr.h"
 #include "object-inl.h"
+#include "object_array-alloc-inl.h"
 #include "object_array-inl.h"
 #include "scoped_thread_state_change-inl.h"
 #include "string-inl.h"

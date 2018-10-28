@@ -16,11 +16,15 @@
 
 #include "emulated_stack_frame.h"
 
-#include "class-inl.h"
+#include "array-alloc-inl.h"
+#include "array-inl.h"
+#include "class-alloc-inl.h"
 #include "class_root.h"
 #include "jvalue-inl.h"
 #include "method_handles-inl.h"
 #include "method_handles.h"
+#include "object_array-alloc-inl.h"
+#include "object_array-inl.h"
 #include "reflection-inl.h"
 
 namespace art {

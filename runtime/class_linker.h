@@ -111,9 +111,7 @@ class AllocatorVisitor {
 
 class ClassLinker {
  public:
-  // Disabled until AppImageLoadingHelper::UpdateInternStrings does the missing GC card marks.
-  // Bug: 117846779
-  static constexpr bool kAppImageMayContainStrings = false;
+  static constexpr bool kAppImageMayContainStrings = true;
 
   explicit ClassLinker(InternTable* intern_table);
   virtual ~ClassLinker();
@@ -316,10 +314,7 @@ class ClassLinker {
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   template <ResolveMode kResolveMode>
-  ALWAYS_INLINE ArtMethod* ResolveMethod(Thread* self,
-                                         uint32_t method_idx,
-                                         ArtMethod* referrer,
-                                         InvokeType type)
+  ArtMethod* ResolveMethod(Thread* self, uint32_t method_idx, ArtMethod* referrer, InvokeType type)
       REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!Locks::dex_lock_, !Roles::uninterruptible_);
   ArtMethod* ResolveMethodWithoutInvokeType(uint32_t method_idx,
@@ -559,12 +554,7 @@ class ClassLinker {
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   template <ReadBarrierOption kReadBarrierOption = kWithReadBarrier>
-  ObjPtr<mirror::ObjectArray<mirror::Class>> GetClassRoots() REQUIRES_SHARED(Locks::mutator_lock_) {
-    ObjPtr<mirror::ObjectArray<mirror::Class>> class_roots =
-        class_roots_.Read<kReadBarrierOption>();
-    DCHECK(class_roots != nullptr);
-    return class_roots;
-  }
+  ObjPtr<mirror::ObjectArray<mirror::Class>> GetClassRoots() REQUIRES_SHARED(Locks::mutator_lock_);
 
   // Move the class table to the pre-zygote table to reduce memory usage. This works by ensuring
   // that no more classes are ever added to the pre zygote table which makes it that the pages
