@@ -17,6 +17,7 @@
  */
 
 #include <stdint.h>
+#include <memory>
 #include <vector>
 
 #include "dex_ir_builder.h"
@@ -170,6 +171,7 @@ class BuilderMaps {
   void AddAnnotationsFromMapListSection(const DexFile& dex_file,
                                         uint32_t start_offset,
                                         uint32_t count);
+  void AddHiddenapiClassDataFromMapListSection(const DexFile& dex_file, uint32_t offset);
 
   void CheckAndSetRemainingOffsets(const DexFile& dex_file, const Options& options);
 
@@ -408,6 +410,10 @@ void BuilderMaps::CheckAndSetRemainingOffsets(const DexFile& dex_file, const Opt
       case DexFile::kDexTypeAnnotationsDirectoryItem:
         header_->AnnotationsDirectoryItems().SetOffset(item->offset_);
         break;
+      case DexFile::kDexTypeHiddenapiClassData:
+        header_->HiddenapiClassDatas().SetOffset(item->offset_);
+        AddHiddenapiClassDataFromMapListSection(dex_file, item->offset_);
+        break;
       default:
         LOG(ERROR) << "Unknown map list item type.";
     }
@@ -624,6 +630,44 @@ void BuilderMaps::AddAnnotationsFromMapListSection(const DexFile& dex_file,
   }
 }
 
+void BuilderMaps::AddHiddenapiClassDataFromMapListSection(const DexFile& dex_file,
+                                                          uint32_t offset) {
+  const DexFile::HiddenapiClassData* hiddenapi_class_data =
+      dex_file.GetHiddenapiClassDataAtOffset(offset);
+  DCHECK(hiddenapi_class_data == dex_file.GetHiddenapiClassData());
+
+  for (auto& class_def : header_->ClassDefs()) {
+    uint32_t index = class_def->GetIndex();
+    ClassData* class_data = class_def->GetClassData();
+    const uint8_t* ptr = hiddenapi_class_data->GetFlagsPointer(index);
+
+    std::unique_ptr<HiddenapiFlagsMap> flags = nullptr;
+    if (ptr != nullptr) {
+      DCHECK(class_data != nullptr);
+      flags = std::make_unique<HiddenapiFlagsMap>();
+      for (const dex_ir::FieldItem& field : *class_data->StaticFields()) {
+        flags->emplace(&field, DecodeUnsignedLeb128(&ptr));
+      }
+      for (const dex_ir::FieldItem& field : *class_data->InstanceFields()) {
+        flags->emplace(&field, DecodeUnsignedLeb128(&ptr));
+      }
+      for (const dex_ir::MethodItem& method : *class_data->DirectMethods()) {
+        flags->emplace(&method, DecodeUnsignedLeb128(&ptr));
+      }
+      for (const dex_ir::MethodItem& method : *class_data->VirtualMethods()) {
+        flags->emplace(&method, DecodeUnsignedLeb128(&ptr));
+      }
+    }
+
+    CreateAndAddIndexedItem(header_->HiddenapiClassDatas(),
+                            header_->HiddenapiClassDatas().GetOffset() +
+                                hiddenapi_class_data->flags_offset_[index],
+                            index,
+                            class_def.get(),
+                            std::move(flags));
+  }
+}
+
 AnnotationItem* BuilderMaps::CreateAnnotationItem(const DexFile& dex_file,
                                                   const DexFile::AnnotationItem* annotation) {
   const uint8_t* const start_data = reinterpret_cast<const uint8_t*>(annotation);
@@ -698,8 +742,8 @@ AnnotationsDirectoryItem* BuilderMaps::CreateAnnotationsDirectoryItem(const DexF
       uint32_t annotation_set_offset = fields[i].annotations_off_;
       AnnotationSetItem* annotation_set_item =
           CreateAnnotationSetItem(dex_file, field_set_item, annotation_set_offset);
-      field_annotations->push_back(std::unique_ptr<FieldAnnotation>(
-          new FieldAnnotation(field_id, annotation_set_item)));
+      field_annotations->push_back(std::make_unique<FieldAnnotation>(
+          field_id, annotation_set_item));
     }
   }
   const DexFile::MethodAnnotationsItem* methods =
@@ -714,8 +758,8 @@ AnnotationsDirectoryItem* BuilderMaps::CreateAnnotationsDirectoryItem(const DexF
       uint32_t annotation_set_offset = methods[i].annotations_off_;
       AnnotationSetItem* annotation_set_item =
           CreateAnnotationSetItem(dex_file, method_set_item, annotation_set_offset);
-      method_annotations->push_back(std::unique_ptr<MethodAnnotation>(
-          new MethodAnnotation(method_id, annotation_set_item)));
+      method_annotations->push_back(std::make_unique<MethodAnnotation>(
+          method_id, annotation_set_item));
     }
   }
   const DexFile::ParameterAnnotationsItem* parameters =
@@ -908,13 +952,13 @@ ClassData* BuilderMaps::CreateClassData(const DexFile& dex_file,
     FieldItemVector* static_fields = new FieldItemVector();
     for (const ClassAccessor::Field& field : accessor.GetStaticFields()) {
       FieldId* field_item = header_->FieldIds()[field.GetIndex()];
-      uint32_t access_flags = field.GetRawAccessFlags();
+      uint32_t access_flags = field.GetAccessFlags();
       static_fields->emplace_back(access_flags, field_item);
     }
     FieldItemVector* instance_fields = new FieldItemVector();
     for (const ClassAccessor::Field& field : accessor.GetInstanceFields()) {
       FieldId* field_item = header_->FieldIds()[field.GetIndex()];
-      uint32_t access_flags = field.GetRawAccessFlags();
+      uint32_t access_flags = field.GetAccessFlags();
       instance_fields->emplace_back(access_flags, field_item);
     }
     // Direct methods.
@@ -1160,9 +1204,9 @@ void BuilderMaps::ReadEncodedValue(const DexFile& dex_file,
       // Decode all name=value pairs.
       for (uint32_t i = 0; i < size; i++) {
         const uint32_t name_index = DecodeUnsignedLeb128(data);
-        elements->push_back(std::unique_ptr<AnnotationElement>(
-            new AnnotationElement(header_->StringIds()[name_index],
-                                  ReadEncodedValue(dex_file, data))));
+        elements->push_back(std::make_unique<AnnotationElement>(
+            header_->StringIds()[name_index],
+            ReadEncodedValue(dex_file, data)));
       }
       item->SetEncodedAnnotation(new EncodedAnnotation(header_->TypeIds()[type_idx], elements));
       break;
@@ -1180,7 +1224,7 @@ void BuilderMaps::ReadEncodedValue(const DexFile& dex_file,
 MethodItem BuilderMaps::GenerateMethodItem(const DexFile& dex_file,
                                            const ClassAccessor::Method& method) {
   MethodId* method_id = header_->MethodIds()[method.GetIndex()];
-  uint32_t access_flags = method.GetRawAccessFlags();
+  uint32_t access_flags = method.GetAccessFlags();
   const DexFile::CodeItem* disk_code_item = method.GetCodeItem();
   // Temporary hack to prevent incorrectly deduping code items if they have the same offset since
   // they may have different debug info streams.
