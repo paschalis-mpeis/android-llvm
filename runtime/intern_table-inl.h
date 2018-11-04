@@ -29,26 +29,34 @@ inline void InternTable::AddImageStringsToTable(gc::space::ImageSpace* image_spa
                                                 const Visitor& visitor) {
   DCHECK(image_space != nullptr);
   // Only add if we have the interned strings section.
-  const ImageSection& section = image_space->GetImageHeader().GetInternedStringsSection();
+  const ImageHeader& header = image_space->GetImageHeader();
+  const ImageSection& section = header.GetInternedStringsSection();
   if (section.Size() > 0) {
-    AddTableFromMemory(image_space->Begin() + section.Offset(), visitor);
+    AddTableFromMemory(image_space->Begin() + section.Offset(), visitor, !header.IsAppImage());
   }
 }
 
 template <typename Visitor>
-inline size_t InternTable::AddTableFromMemory(const uint8_t* ptr, const Visitor& visitor) {
+inline size_t InternTable::AddTableFromMemory(const uint8_t* ptr,
+                                              const Visitor& visitor,
+                                              bool is_boot_image) {
   size_t read_count = 0;
   UnorderedSet set(ptr, /*make copy*/false, &read_count);
-  // Visit the unordered set, may remove elements.
-  visitor(set);
-  if (!set.empty()) {
+  {
+    // Hold the lock while calling the visitor to prevent possible race
+    // conditions with another thread adding intern strings.
     MutexLock mu(Thread::Current(), *Locks::intern_table_lock_);
-    strong_interns_.AddInternStrings(std::move(set));
+    // Visit the unordered set, may remove elements.
+    visitor(set);
+    if (!set.empty()) {
+      strong_interns_.AddInternStrings(std::move(set), is_boot_image);
+    }
   }
   return read_count;
 }
 
-inline void InternTable::Table::AddInternStrings(UnorderedSet&& intern_strings) {
+inline void InternTable::Table::AddInternStrings(UnorderedSet&& intern_strings,
+                                                 bool is_boot_image) {
   static constexpr bool kCheckDuplicates = kIsDebugBuild;
   if (kCheckDuplicates) {
     // Avoid doing read barriers since the space might not yet be added to the heap.
@@ -60,7 +68,50 @@ inline void InternTable::Table::AddInternStrings(UnorderedSet&& intern_strings) 
     }
   }
   // Insert at the front since we add new interns into the back.
-  tables_.insert(tables_.begin(), std::move(intern_strings));
+  tables_.insert(tables_.begin(),
+                 InternalTable(std::move(intern_strings), is_boot_image));
+}
+
+template <typename Visitor>
+inline void InternTable::VisitInterns(const Visitor& visitor,
+                                      bool visit_boot_images,
+                                      bool visit_non_boot_images) {
+  auto visit_tables = [&](std::vector<Table::InternalTable>& tables)
+      NO_THREAD_SAFETY_ANALYSIS {
+    for (Table::InternalTable& table : tables) {
+      // Determine if we want to visit the table based on the flags..
+      const bool visit =
+          (visit_boot_images && table.IsBootImage()) ||
+          (visit_non_boot_images && !table.IsBootImage());
+      if (visit) {
+        for (auto& intern : table.set_) {
+          visitor(intern);
+        }
+      }
+    }
+  };
+  visit_tables(strong_interns_.tables_);
+  visit_tables(weak_interns_.tables_);
+}
+
+inline size_t InternTable::CountInterns(bool visit_boot_images,
+                                        bool visit_non_boot_images) const {
+  size_t ret = 0u;
+  auto visit_tables = [&](const std::vector<Table::InternalTable>& tables)
+      NO_THREAD_SAFETY_ANALYSIS {
+    for (const Table::InternalTable& table : tables) {
+      // Determine if we want to visit the table based on the flags..
+      const bool visit =
+          (visit_boot_images && table.IsBootImage()) ||
+          (visit_non_boot_images && !table.IsBootImage());
+      if (visit) {
+        ret += table.set_.size();
+      }
+    }
+  };
+  visit_tables(strong_interns_.tables_);
+  visit_tables(weak_interns_.tables_);
+  return ret;
 }
 
 }  // namespace art
