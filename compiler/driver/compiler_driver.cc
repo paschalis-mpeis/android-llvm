@@ -248,8 +248,7 @@ CompilerDriver::CompilerDriver(
     Compiler::Kind compiler_kind,
     HashSet<std::string>* image_classes,
     size_t thread_count,
-    int swap_fd,
-    const ProfileCompilationInfo* profile_compilation_info)
+    int swap_fd)
     : compiler_options_(compiler_options),
       verification_results_(verification_results),
       compiler_(Compiler::Create(this, compiler_kind)),
@@ -260,7 +259,6 @@ CompilerDriver::CompilerDriver(
       parallel_thread_count_(thread_count),
       stats_(new AOTCompilationStats),
       compiled_method_storage_(swap_fd),
-      profile_compilation_info_(profile_compilation_info),
       max_arena_alloc_(0),
       dex_to_dex_compiler_(this) {
   DCHECK(compiler_options_ != nullptr);
@@ -430,7 +428,6 @@ static void CompileMethodHarness(
     Handle<mirror::ClassLoader> class_loader,
     const DexFile& dex_file,
     optimizer::DexToDexCompiler::CompilationLevel dex_to_dex_compilation_level,
-    bool compilation_enabled,
     Handle<mirror::DexCache> dex_cache,
     CompileFn compile_fn) {
   DCHECK(driver != nullptr);
@@ -448,7 +445,6 @@ static void CompileMethodHarness(
                                class_loader,
                                dex_file,
                                dex_to_dex_compilation_level,
-                               compilation_enabled,
                                dex_cache);
 
   if (kTimeCompileMethod) {
@@ -481,7 +477,6 @@ static void CompileMethodDex2Dex(
     Handle<mirror::ClassLoader> class_loader,
     const DexFile& dex_file,
     optimizer::DexToDexCompiler::CompilationLevel dex_to_dex_compilation_level,
-    bool compilation_enabled,
     Handle<mirror::DexCache> dex_cache) {
   auto dex_2_dex_fn = [](Thread* self ATTRIBUTE_UNUSED,
       CompilerDriver* driver,
@@ -493,7 +488,6 @@ static void CompileMethodDex2Dex(
       Handle<mirror::ClassLoader> class_loader,
       const DexFile& dex_file,
       optimizer::DexToDexCompiler::CompilationLevel dex_to_dex_compilation_level,
-      bool compilation_enabled ATTRIBUTE_UNUSED,
       Handle<mirror::DexCache> dex_cache ATTRIBUTE_UNUSED) -> CompiledMethod* {
     DCHECK(driver != nullptr);
     MethodReference method_ref(&dex_file, method_idx);
@@ -530,7 +524,6 @@ static void CompileMethodDex2Dex(
                        class_loader,
                        dex_file,
                        dex_to_dex_compilation_level,
-                       compilation_enabled,
                        dex_cache,
                        dex_2_dex_fn);
 }
@@ -546,7 +539,6 @@ static void CompileMethodQuick(
     Handle<mirror::ClassLoader> class_loader,
     const DexFile& dex_file,
     optimizer::DexToDexCompiler::CompilationLevel dex_to_dex_compilation_level,
-    bool compilation_enabled,
     Handle<mirror::DexCache> dex_cache) {
   auto quick_fn = [](
       Thread* self,
@@ -559,7 +551,6 @@ static void CompileMethodQuick(
       Handle<mirror::ClassLoader> class_loader,
       const DexFile& dex_file,
       optimizer::DexToDexCompiler::CompilationLevel dex_to_dex_compilation_level,
-      bool compilation_enabled,
       Handle<mirror::DexCache> dex_cache) {
     DCHECK(driver != nullptr);
     CompiledMethod* compiled_method = nullptr;
@@ -585,7 +576,7 @@ static void CompileMethodQuick(
       VerificationResults* results = driver->GetVerificationResults();
       DCHECK(results != nullptr);
       const VerifiedMethod* verified_method = results->GetVerifiedMethod(method_ref);
-      bool compile = compilation_enabled &&
+      bool compile =
           // Basic checks, e.g., not <clinit>.
           results->IsCandidateForCompilation(method_ref, access_flags) &&
           // Did not fail to create VerifiedMethod metadata.
@@ -628,7 +619,6 @@ static void CompileMethodQuick(
                        class_loader,
                        dex_file,
                        dex_to_dex_compilation_level,
-                       compilation_enabled,
                        dex_cache,
                        quick_fn);
 }
@@ -662,7 +652,6 @@ void CompilerDriver::CompileOne(Thread* self,
                      h_class_loader,
                      dex_file,
                      dex_to_dex_compilation_level,
-                     true,
                      dex_cache);
 
   const size_t num_methods = dex_to_dex_compiler_.NumCodeItemsToQuicken(self);
@@ -678,7 +667,6 @@ void CompilerDriver::CompileOne(Thread* self,
                          h_class_loader,
                          dex_file,
                          dex_to_dex_compilation_level,
-                         true,
                          dex_cache);
     dex_to_dex_compiler_.ClearState();
   }
@@ -723,16 +711,14 @@ void CompilerDriver::ResolveConstStrings(const std::vector<const DexFile*>& dex_
     }
     TimingLogger::ScopedTiming t("Resolve const-string Strings", timings);
 
+    // TODO: Implement a profile-based filter for the boot image. See b/76145463.
     for (ClassAccessor accessor : dex_file->GetClasses()) {
-      if (!IsClassToCompile(accessor.GetDescriptor())) {
-        // Compilation is skipped, do not resolve const-string in code of this class.
-        // FIXME: Make sure that inlining honors this. b/26687569
-        continue;
-      }
+      const ProfileCompilationInfo* profile_compilation_info =
+          GetCompilerOptions().GetProfileCompilationInfo();
 
       const bool is_startup_class =
-          profile_compilation_info_ != nullptr &&
-          profile_compilation_info_->ContainsClass(*dex_file, accessor.GetClassIdx());
+          profile_compilation_info != nullptr &&
+          profile_compilation_info->ContainsClass(*dex_file, accessor.GetClassIdx());
 
       for (const ClassAccessor::Method& method : accessor.GetMethods()) {
         const bool is_clinit = (method.GetAccessFlags() & kAccConstructor) != 0 &&
@@ -740,8 +726,8 @@ void CompilerDriver::ResolveConstStrings(const std::vector<const DexFile*>& dex_
         const bool is_startup_clinit = is_startup_class && is_clinit;
 
         if (only_startup_strings &&
-            profile_compilation_info_ != nullptr &&
-            (!profile_compilation_info_->GetMethodHotness(method.GetReference()).IsStartup() &&
+            profile_compilation_info != nullptr &&
+            (!profile_compilation_info->GetMethodHotness(method.GetReference()).IsStartup() &&
              !is_startup_clinit)) {
           continue;
         }
@@ -833,12 +819,6 @@ static void InitializeTypeCheckBitstrings(CompilerDriver* driver,
     TimingLogger::ScopedTiming t("Initialize type check bitstrings", timings);
 
     for (ClassAccessor accessor : dex_file->GetClasses()) {
-      if (!driver->IsClassToCompile(accessor.GetDescriptor())) {
-        // Compilation is skipped, do not look for type checks in code of this class.
-        // FIXME: Make sure that inlining honors this. b/26687569
-        continue;
-      }
-
       // Direct and virtual methods.
       for (const ClassAccessor::Method& method : accessor.GetMethods()) {
         InitializeTypeCheckBitstrings(driver, class_linker, dex_cache, *dex_file, method);
@@ -965,13 +945,6 @@ void CompilerDriver::PreCompile(jobject class_loader,
   }
 }
 
-bool CompilerDriver::IsClassToCompile(const char* descriptor) const {
-  if (classes_to_compile_ == nullptr) {
-    return true;
-  }
-  return classes_to_compile_->find(StringPiece(descriptor)) != classes_to_compile_->end();
-}
-
 bool CompilerDriver::ShouldCompileBasedOnProfile(const MethodReference& method_ref) const {
   // Profile compilation info may be null if no profile is passed.
   if (!CompilerFilter::DependsOnProfile(compiler_options_->GetCompilerFilter())) {
@@ -980,12 +953,14 @@ bool CompilerDriver::ShouldCompileBasedOnProfile(const MethodReference& method_r
     return true;
   }
   // If we are using a profile filter but do not have a profile compilation info, compile nothing.
-  if (profile_compilation_info_ == nullptr) {
+  const ProfileCompilationInfo* profile_compilation_info =
+      GetCompilerOptions().GetProfileCompilationInfo();
+  if (profile_compilation_info == nullptr) {
     return false;
   }
   // Compile only hot methods, it is the profile saver's job to decide what startup methods to mark
   // as hot.
-  bool result = profile_compilation_info_->GetMethodHotness(method_ref).IsHot();
+  bool result = profile_compilation_info->GetMethodHotness(method_ref).IsHot();
 
   if (kDebugProfileGuidedCompilation) {
     LOG(INFO) << "[ProfileGuidedCompilation] "
@@ -2609,9 +2584,6 @@ static void CompileDexFile(CompilerDriver* driver,
     optimizer::DexToDexCompiler::CompilationLevel dex_to_dex_compilation_level =
         GetDexToDexCompilationLevel(soa.Self(), *driver, jclass_loader, dex_file, class_def);
 
-
-    const bool compilation_enabled = driver->IsClassToCompile(accessor.GetDescriptor());
-
     // Compile direct and virtual methods.
     int64_t previous_method_idx = -1;
     for (const ClassAccessor::Method& method : accessor.GetMethods()) {
@@ -2632,7 +2604,6 @@ static void CompileDexFile(CompilerDriver* driver,
                  class_loader,
                  dex_file,
                  dex_to_dex_compilation_level,
-                 compilation_enabled,
                  dex_cache);
     }
   };
@@ -2643,10 +2614,12 @@ void CompilerDriver::Compile(jobject class_loader,
                              const std::vector<const DexFile*>& dex_files,
                              TimingLogger* timings) {
   if (kDebugProfileGuidedCompilation) {
+    const ProfileCompilationInfo* profile_compilation_info =
+        GetCompilerOptions().GetProfileCompilationInfo();
     LOG(INFO) << "[ProfileGuidedCompilation] " <<
-        ((profile_compilation_info_ == nullptr)
+        ((profile_compilation_info == nullptr)
             ? "null"
-            : profile_compilation_info_->DumpInfo(dex_files));
+            : profile_compilation_info->DumpInfo(dex_files));
   }
 
   dex_to_dex_compiler_.ClearState();

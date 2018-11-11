@@ -99,8 +99,7 @@ class CompilerDriver {
                  Compiler::Kind compiler_kind,
                  HashSet<std::string>* image_classes,
                  size_t thread_count,
-                 int swap_fd,
-                 const ProfileCompilationInfo* profile_compilation_info);
+                 int swap_fd);
 
   ~CompilerDriver();
 
@@ -210,9 +209,6 @@ class CompilerDriver {
     return compiled_method_storage_.DedupeEnabled();
   }
 
-  // Checks whether the provided class should be compiled, i.e., is in classes_to_compile_.
-  bool IsClassToCompile(const char* descriptor) const;
-
   // Checks whether profile guided compilation is enabled and if the method should be compiled
   // according to the profile file.
   bool ShouldCompileBasedOnProfile(const MethodReference& method_ref) const;
@@ -245,10 +241,6 @@ class CompilerDriver {
 
   CompiledMethodStorage* GetCompiledMethodStorage() {
     return &compiled_method_storage_;
-  }
-
-  const ProfileCompilationInfo* GetProfileCompilationInfo() const {
-    return profile_compilation_info_;
   }
 
   // Is `boot_image_filename` the name of a core image (small boot
@@ -373,11 +365,6 @@ class CompilerDriver {
   //       Dex2Oat rather than implicitly by CompileAll().
   HashSet<std::string>* image_classes_;
 
-  // Specifies the classes that will be compiled. Note that if classes_to_compile_ is null,
-  // all classes are eligible for compilation (duplication filters etc. will still apply).
-  // This option may be restricted to the boot image, depending on a flag in the implementation.
-  std::unique_ptr<HashSet<std::string>> classes_to_compile_;
-
   std::atomic<uint32_t> number_of_soft_verifier_failures_;
 
   bool had_hard_verifier_failure_;
@@ -393,9 +380,6 @@ class CompilerDriver {
   std::unique_ptr<AOTCompilationStats> stats_;
 
   CompiledMethodStorage compiled_method_storage_;
-
-  // Info for profile guided compilation.
-  const ProfileCompilationInfo* const profile_compilation_info_;
 
   size_t max_arena_alloc_;
 

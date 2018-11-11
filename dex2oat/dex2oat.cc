@@ -186,7 +186,8 @@ static std::string StrippedCommandLine() {
 
   // Construct the final output.
   if (command.size() <= 1U) {
-    // It seems only "/system/bin/dex2oat" is left, or not even that. Use a pretty line.
+    // It seems only "/apex/com.android.runtime/bin/dex2oat" is left, or not
+    // even that. Use a pretty line.
     return "Starting dex2oat.";
   }
   return android::base::Join(command, ' ');
@@ -1783,14 +1784,14 @@ class Dex2Oat final {
         compiler_options_->no_inline_from_.swap(no_inline_from_dex_files);
       }
     }
+    compiler_options_->profile_compilation_info_ = profile_compilation_info_.get();
 
     driver_.reset(new CompilerDriver(compiler_options_.get(),
                                      verification_results_.get(),
                                      compiler_kind_,
                                      &compiler_options_->image_classes_,
                                      thread_count_,
-                                     swap_fd_,
-                                     profile_compilation_info_.get()));
+                                     swap_fd_));
     if (!IsBootImage()) {
       driver_->SetClasspathDexFiles(class_loader_context_->FlattenOpenedDexFiles());
     }
