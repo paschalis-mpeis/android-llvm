@@ -784,7 +784,7 @@ bool Runtime::Start() {
   // TODO(calin): We use the JIT class as a proxy for JIT compilation and for
   // recoding profiles. Maybe we should consider changing the name to be more clear it's
   // not only about compiling. b/28295073.
-  if (!safe_mode_ && (jit_options_->UseJitCompilation() || jit_options_->GetSaveProfilingInfo())) {
+  if (jit_options_->UseJitCompilation() || jit_options_->GetSaveProfilingInfo()) {
     // Try to load compiler pre zygote to reduce PSS. b/27744947
     std::string error_msg;
     if (!jit::Jit::LoadCompilerLibrary(&error_msg)) {
@@ -2488,7 +2488,7 @@ void Runtime::CreateJitCodeCache(bool rwx_memory_allowed) {
     DCHECK(!jit_options_->UseJitCompilation());
   }
 
-  if (safe_mode_ || (!jit_options_->UseJitCompilation() && !jit_options_->GetSaveProfilingInfo())) {
+  if (!jit_options_->UseJitCompilation() && !jit_options_->GetSaveProfilingInfo()) {
     return;
   }
 
@@ -2509,7 +2509,16 @@ void Runtime::CreateJitCodeCache(bool rwx_memory_allowed) {
 }
 
 void Runtime::CreateJit() {
+  DCHECK(jit_ == nullptr);
   if (jit_code_cache_.get() == nullptr) {
+    if (!IsSafeMode()) {
+      LOG(WARNING) << "Missing code cache, cannot create JIT.";
+    }
+    return;
+  }
+  if (IsSafeMode()) {
+    LOG(INFO) << "Not creating JIT because of SafeMode.";
+    jit_code_cache_.reset();
     return;
   }
 
@@ -2518,7 +2527,7 @@ void Runtime::CreateJit() {
   if (jit == nullptr) {
     LOG(WARNING) << "Failed to allocate JIT";
     // Release JIT code cache resources (several MB of memory).
-    jit_code_cache_.reset(nullptr);
+    jit_code_cache_.reset();
   }
 }
 

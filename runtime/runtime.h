@@ -634,6 +634,13 @@ class Runtime {
   void DeoptimizeBootImage();
 
   bool IsNativeDebuggable() const {
+    CHECK(!is_zygote_ || IsAotCompiler());
+    return is_native_debuggable_;
+  }
+
+  // Note: prefer not to use this method, but the checked version above. The separation exists
+  //       as the runtime state may change for a zygote child.
+  bool IsNativeDebuggableZygoteOK() const {
     return is_native_debuggable_;
   }
 
@@ -689,6 +696,11 @@ class Runtime {
 
   double GetHashTableMinLoadFactor() const;
   double GetHashTableMaxLoadFactor() const;
+
+  bool IsSafeMode() const {
+    CHECK(!is_zygote_);
+    return safe_mode_;
+  }
 
   void SetSafeMode(bool mode) {
     safe_mode_ = mode;
