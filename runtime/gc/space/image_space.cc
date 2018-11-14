@@ -832,7 +832,7 @@ class ImageSpace::Loader {
           reinterpret_cast<uintptr_t>(array) + kObjectAlignment);
       // If the bit is not set then the contents have not yet been updated.
       if (!visited_->Test(contents_bit)) {
-        array->Fixup<kVerifyNone, kWithoutReadBarrier>(array, pointer_size_, visitor);
+        array->Fixup<kVerifyNone>(array, pointer_size_, visitor);
         visited_->Set(contents_bit);
       }
     }
@@ -1884,7 +1884,7 @@ class ImageSpace::BootImageLoader {
           }
           auto* iftable = klass->GetIfTable<kVerifyNone, kWithoutReadBarrier>();
           if (iftable != nullptr) {
-            int32_t ifcount = klass->GetIfTableCount<kVerifyNone, kWithoutReadBarrier>();
+            int32_t ifcount = klass->GetIfTableCount<kVerifyNone>();
             for (int32_t i = 0; i != ifcount; ++i) {
               mirror::PointerArray* unpatched_ifarray =
                   iftable->GetMethodArrayOrNull<kVerifyNone, kWithoutReadBarrier>(i);

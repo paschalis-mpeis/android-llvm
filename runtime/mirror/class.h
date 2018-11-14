@@ -422,13 +422,6 @@ class MANAGED Class final : public Object {
     return GetPrimitiveType<kVerifyFlags>() == Primitive::kPrimVoid;
   }
 
-  template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags>
-  bool IsPrimitiveArray() REQUIRES_SHARED(Locks::mutator_lock_) {
-    return IsArrayClass<kVerifyFlags>() &&
-        GetComponentType<static_cast<VerifyObjectFlags>(kVerifyFlags & ~kVerifyThis)>()->
-        IsPrimitive();
-  }
-
   // Depth of class from java.lang.Object
   uint32_t Depth() REQUIRES_SHARED(Locks::mutator_lock_);
 
@@ -466,7 +459,8 @@ class MANAGED Class final : public Object {
   }
 
   bool IsObjectClass() REQUIRES_SHARED(Locks::mutator_lock_) {
-    return !IsPrimitive() && GetSuperClass() == nullptr;
+    // No read barrier is needed for comparing with null.
+    return !IsPrimitive() && GetSuperClass<kDefaultVerifyFlags, kWithoutReadBarrier>() == nullptr;
   }
 
   bool IsInstantiableNonArray() REQUIRES_SHARED(Locks::mutator_lock_) {
@@ -485,18 +479,7 @@ class MANAGED Class final : public Object {
   ALWAYS_INLINE bool IsObjectArrayClass() REQUIRES_SHARED(Locks::mutator_lock_);
 
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags>
-  bool IsIntArrayClass() REQUIRES_SHARED(Locks::mutator_lock_) {
-    constexpr auto kNewFlags = static_cast<VerifyObjectFlags>(kVerifyFlags & ~kVerifyThis);
-    auto* component_type = GetComponentType<kVerifyFlags>();
-    return component_type != nullptr && component_type->template IsPrimitiveInt<kNewFlags>();
-  }
-
-  template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags>
-  bool IsLongArrayClass() REQUIRES_SHARED(Locks::mutator_lock_) {
-    constexpr auto kNewFlags = static_cast<VerifyObjectFlags>(kVerifyFlags & ~kVerifyThis);
-    auto* component_type = GetComponentType<kVerifyFlags>();
-    return component_type != nullptr && component_type->template IsPrimitiveLong<kNewFlags>();
-  }
+  bool IsPrimitiveArray() REQUIRES_SHARED(Locks::mutator_lock_);
 
   // Creates a raw object instance but does not invoke the default constructor.
   template<bool kIsInstrumented, bool kCheckAddFinalizer = true>
@@ -633,7 +616,8 @@ class MANAGED Class final : public Object {
   void SetSuperClass(ObjPtr<Class> new_super_class) REQUIRES_SHARED(Locks::mutator_lock_);
 
   bool HasSuperClass() REQUIRES_SHARED(Locks::mutator_lock_) {
-    return GetSuperClass() != nullptr;
+    // No read barrier is needed for comparing with null.
+    return GetSuperClass<kDefaultVerifyFlags, kWithoutReadBarrier>() != nullptr;
   }
 
   static constexpr MemberOffset SuperClassOffset() {
@@ -812,8 +796,7 @@ class MANAGED Class final : public Object {
 
   static MemberOffset EmbeddedVTableEntryOffset(uint32_t i, PointerSize pointer_size);
 
-  template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags,
-           ReadBarrierOption kReadBarrierOption = kWithReadBarrier>
+  template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags>
   int32_t GetVTableLength() REQUIRES_SHARED(Locks::mutator_lock_);
 
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags,
@@ -948,8 +931,7 @@ class MANAGED Class final : public Object {
     return (GetAccessFlags() & kAccRecursivelyInitialized) != 0;
   }
 
-  template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags,
-           ReadBarrierOption kReadBarrierOption = kWithReadBarrier>
+  template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags>
   ALWAYS_INLINE int32_t GetIfTableCount() REQUIRES_SHARED(Locks::mutator_lock_);
 
   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags,
@@ -1216,7 +1198,8 @@ class MANAGED Class final : public Object {
 
   // Returns true if the class loader is null, ie the class loader is the boot strap class loader.
   bool IsBootStrapClassLoaded() REQUIRES_SHARED(Locks::mutator_lock_) {
-    return GetClassLoader() == nullptr;
+    // No read barrier is needed for comparing with null.
+    return GetClassLoader<kDefaultVerifyFlags, kWithoutReadBarrier>() == nullptr;
   }
 
   static size_t ImTableEntrySize(PointerSize pointer_size) {

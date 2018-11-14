@@ -269,10 +269,8 @@ Runtime::Runtime()
       oat_file_manager_(nullptr),
       is_low_memory_mode_(false),
       safe_mode_(false),
-      hidden_api_policy_(hiddenapi::EnforcementPolicy::kNoChecks),
-      pending_hidden_api_warning_(false),
+      hidden_api_policy_(hiddenapi::EnforcementPolicy::kDisabled),
       dedupe_hidden_api_warnings_(true),
-      always_set_hidden_api_warning_flag_(false),
       hidden_api_access_event_log_rate_(0),
       dump_native_stack_on_sig_quit_(true),
       pruned_dalvik_cache_(false),
@@ -786,7 +784,7 @@ bool Runtime::Start() {
   // TODO(calin): We use the JIT class as a proxy for JIT compilation and for
   // recoding profiles. Maybe we should consider changing the name to be more clear it's
   // not only about compiling. b/28295073.
-  if (!safe_mode_ && (jit_options_->UseJitCompilation() || jit_options_->GetSaveProfilingInfo())) {
+  if (jit_options_->UseJitCompilation() || jit_options_->GetSaveProfilingInfo()) {
     // Try to load compiler pre zygote to reduce PSS. b/27744947
     std::string error_msg;
     if (!jit::Jit::LoadCompilerLibrary(&error_msg)) {
@@ -1235,8 +1233,8 @@ bool Runtime::Init(RuntimeArgumentMap&& runtime_options_in) {
   // As is, we're encoding some logic here about which specific policy to use, which would be better
   // controlled by the framework.
   hidden_api_policy_ = do_hidden_api_checks
-      ? hiddenapi::EnforcementPolicy::kDarkGreyAndBlackList
-      : hiddenapi::EnforcementPolicy::kNoChecks;
+      ? hiddenapi::EnforcementPolicy::kEnabled
+      : hiddenapi::EnforcementPolicy::kDisabled;
 
   no_sig_chain_ = runtime_options.Exists(Opt::NoSigChain);
   force_native_bridge_ = runtime_options.Exists(Opt::ForceNativeBridge);
@@ -2490,7 +2488,7 @@ void Runtime::CreateJitCodeCache(bool rwx_memory_allowed) {
     DCHECK(!jit_options_->UseJitCompilation());
   }
 
-  if (safe_mode_ || (!jit_options_->UseJitCompilation() && !jit_options_->GetSaveProfilingInfo())) {
+  if (!jit_options_->UseJitCompilation() && !jit_options_->GetSaveProfilingInfo()) {
     return;
   }
 
@@ -2511,7 +2509,16 @@ void Runtime::CreateJitCodeCache(bool rwx_memory_allowed) {
 }
 
 void Runtime::CreateJit() {
+  DCHECK(jit_ == nullptr);
   if (jit_code_cache_.get() == nullptr) {
+    if (!IsSafeMode()) {
+      LOG(WARNING) << "Missing code cache, cannot create JIT.";
+    }
+    return;
+  }
+  if (IsSafeMode()) {
+    LOG(INFO) << "Not creating JIT because of SafeMode.";
+    jit_code_cache_.reset();
     return;
   }
 
@@ -2520,7 +2527,7 @@ void Runtime::CreateJit() {
   if (jit == nullptr) {
     LOG(WARNING) << "Failed to allocate JIT";
     // Release JIT code cache resources (several MB of memory).
-    jit_code_cache_.reset(nullptr);
+    jit_code_cache_.reset();
   }
 }
 
