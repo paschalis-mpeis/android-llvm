@@ -211,12 +211,12 @@ class MANAGED Class final : public Object {
   }
 
   ALWAYS_INLINE bool ShouldSkipHiddenApiChecks() REQUIRES_SHARED(Locks::mutator_lock_) {
-    return (GetAccessFlags() & kAccSkipHiddenApiChecks) != 0;
+    return (GetAccessFlags() & kAccSkipHiddenapiChecks) != 0;
   }
 
   ALWAYS_INLINE void SetSkipHiddenApiChecks() REQUIRES_SHARED(Locks::mutator_lock_) {
     uint32_t flags = GetAccessFlags();
-    SetAccessFlags(flags | kAccSkipHiddenApiChecks);
+    SetAccessFlags(flags | kAccSkipHiddenapiChecks);
   }
 
   ALWAYS_INLINE void SetRecursivelyInitialized() REQUIRES_SHARED(Locks::mutator_lock_) {
@@ -628,6 +628,7 @@ class MANAGED Class final : public Object {
            ReadBarrierOption kReadBarrierOption = kWithReadBarrier>
   ClassLoader* GetClassLoader() ALWAYS_INLINE REQUIRES_SHARED(Locks::mutator_lock_);
 
+  template <bool kCheckTransaction = true>
   void SetClassLoader(ObjPtr<ClassLoader> new_cl) REQUIRES_SHARED(Locks::mutator_lock_);
 
   static constexpr MemberOffset DexCacheOffset() {

@@ -205,8 +205,8 @@ void LocationsBuilderX86::VisitVecReduce(HVecReduce* instruction) {
   CreateVecUnOpLocations(GetGraph()->GetAllocator(), instruction);
   // Long reduction or min/max require a temporary.
   if (instruction->GetPackedType() == DataType::Type::kInt64 ||
-      instruction->GetKind() == HVecReduce::kMin ||
-      instruction->GetKind() == HVecReduce::kMax) {
+      instruction->GetReductionKind() == HVecReduce::kMin ||
+      instruction->GetReductionKind() == HVecReduce::kMax) {
     instruction->GetLocations()->AddTemp(Location::RequiresFpuRegister());
   }
 }
@@ -218,38 +218,23 @@ void InstructionCodeGeneratorX86::VisitVecReduce(HVecReduce* instruction) {
   switch (instruction->GetPackedType()) {
     case DataType::Type::kInt32:
       DCHECK_EQ(4u, instruction->GetVectorLength());
-      switch (instruction->GetKind()) {
+      switch (instruction->GetReductionKind()) {
         case HVecReduce::kSum:
           __ movaps(dst, src);
           __ phaddd(dst, dst);
           __ phaddd(dst, dst);
           break;
-        case HVecReduce::kMin: {
-          XmmRegister tmp = locations->GetTemp(0).AsFpuRegister<XmmRegister>();
-          __ movaps(tmp, src);
-          __ movaps(dst, src);
-          __ psrldq(tmp, Immediate(8));
-          __ pminsd(dst, tmp);
-          __ psrldq(tmp, Immediate(4));
-          __ pminsd(dst, tmp);
-          break;
-        }
-        case HVecReduce::kMax: {
-          XmmRegister tmp = locations->GetTemp(0).AsFpuRegister<XmmRegister>();
-          __ movaps(tmp, src);
-          __ movaps(dst, src);
-          __ psrldq(tmp, Immediate(8));
-          __ pmaxsd(dst, tmp);
-          __ psrldq(tmp, Immediate(4));
-          __ pmaxsd(dst, tmp);
-          break;
-        }
+        case HVecReduce::kMin:
+        case HVecReduce::kMax:
+          // Historical note: We've had a broken implementation here. b/117863065
+          // Do not draw on the old code if we ever want to bring MIN/MAX reduction back.
+          LOG(FATAL) << "Unsupported reduction type.";
       }
       break;
     case DataType::Type::kInt64: {
       DCHECK_EQ(2u, instruction->GetVectorLength());
       XmmRegister tmp = locations->GetTemp(0).AsFpuRegister<XmmRegister>();
-      switch (instruction->GetKind()) {
+      switch (instruction->GetReductionKind()) {
         case HVecReduce::kSum:
           __ movaps(tmp, src);
           __ movaps(dst, src);

@@ -1543,26 +1543,6 @@ void AppImageLoadingHelper::HandleAppImageStrings(gc::space::ImageSpace* space) 
   }
 }
 
-// Update the class loader. Should only be used on classes in the image space.
-class UpdateClassLoaderVisitor {
- public:
-  UpdateClassLoaderVisitor(gc::space::ImageSpace* space, ObjPtr<mirror::ClassLoader> class_loader)
-      : space_(space),
-        class_loader_(class_loader) {}
-
-  bool operator()(ObjPtr<mirror::Class> klass) const REQUIRES_SHARED(Locks::mutator_lock_) {
-    // Do not update class loader for boot image classes where the app image
-    // class loader is only the initiating loader but not the defining loader.
-    if (klass->GetClassLoader() != nullptr) {
-      klass->SetClassLoader(class_loader_);
-    }
-    return true;
-  }
-
-  gc::space::ImageSpace* const space_;
-  ObjPtr<mirror::ClassLoader> const class_loader_;
-};
-
 static std::unique_ptr<const DexFile> OpenOatDexFile(const OatFile* oat_file,
                                                      const char* location,
                                                      std::string* error_msg)
@@ -2036,9 +2016,17 @@ bool ClassLinker::AddImageSpace(
       ScopedTrace trace("AppImage:UpdateClassLoaders");
       // Update class loader and resolved strings. If added_class_table is false, the resolved
       // strings were forwarded UpdateAppImageClassLoadersAndDexCaches.
-      UpdateClassLoaderVisitor visitor(space, class_loader.Get());
+      ObjPtr<mirror::ClassLoader> loader(class_loader.Get());
       for (const ClassTable::TableSlot& root : temp_set) {
-        visitor(root.Read());
+        // Note: We probably don't need the read barrier unless we copy the app image objects into
+        // the region space.
+        ObjPtr<mirror::Class> klass(root.Read());
+        // Do not update class loader for boot image classes where the app image
+        // class loader is only the initiating loader but not the defining loader.
+        // Avoid read barrier since we are comparing against null.
+        if (klass->GetClassLoader<kDefaultVerifyFlags, kWithoutReadBarrier>() != nullptr) {
+          klass->SetClassLoader</*kCheckTransaction=*/ false>(loader);
+        }
       }
     }
 
@@ -2527,6 +2515,35 @@ ClassPathEntry FindInClassPath(const char* descriptor,
   return ClassPathEntry(nullptr, nullptr);
 }
 
+bool ClassLinker::FindClassInSharedLibraries(ScopedObjectAccessAlreadyRunnable& soa,
+                                             Thread* self,
+                                             const char* descriptor,
+                                             size_t hash,
+                                             Handle<mirror::ClassLoader> class_loader,
+                                             /*out*/ ObjPtr<mirror::Class>* result) {
+  ArtField* field =
+      jni::DecodeArtField(WellKnownClasses::dalvik_system_BaseDexClassLoader_sharedLibraryLoaders);
+  ObjPtr<mirror::Object> raw_shared_libraries = field->GetObject(class_loader.Get());
+  if (raw_shared_libraries == nullptr) {
+    return true;
+  }
+
+  StackHandleScope<2> hs(self);
+  Handle<mirror::ObjectArray<mirror::ClassLoader>> shared_libraries(
+      hs.NewHandle(raw_shared_libraries->AsObjectArray<mirror::ClassLoader>()));
+  MutableHandle<mirror::ClassLoader> temp_loader = hs.NewHandle<mirror::ClassLoader>(nullptr);
+  for (int32_t i = 0; i < shared_libraries->GetLength(); ++i) {
+    temp_loader.Assign(shared_libraries->Get(i));
+    if (!FindClassInBaseDexClassLoader(soa, self, descriptor, hash, temp_loader, result)) {
+      return false;  // One of the shared libraries is not supported.
+    }
+    if (*result != nullptr) {
+      return true;  // Found the class up the chain.
+    }
+  }
+  return true;
+}
+
 bool ClassLinker::FindClassInBaseDexClassLoader(ScopedObjectAccessAlreadyRunnable& soa,
                                                 Thread* self,
                                                 const char* descriptor,
@@ -2542,6 +2559,7 @@ bool ClassLinker::FindClassInBaseDexClassLoader(ScopedObjectAccessAlreadyRunnabl
   if (IsPathOrDexClassLoader(soa, class_loader)) {
     // For regular path or dex class loader the search order is:
     //    - parent
+    //    - shared libraries
     //    - class loader dex files
 
     // Handles as RegisterDexFile may allocate dex caches (and cause thread suspension).
@@ -2554,6 +2572,13 @@ bool ClassLinker::FindClassInBaseDexClassLoader(ScopedObjectAccessAlreadyRunnabl
       return true;  // Found the class up the chain.
     }
 
+    if (!FindClassInSharedLibraries(soa, self, descriptor, hash, class_loader, result)) {
+      return false;  // One of the shared library loader is not supported.
+    }
+    if (*result != nullptr) {
+      return true;  // Found the class in a shared library.
+    }
+
     // Search the current class loader classpath.
     *result = FindClassInBaseDexClassLoaderClassPath(soa, descriptor, hash, class_loader);
     return true;
@@ -2562,11 +2587,19 @@ bool ClassLinker::FindClassInBaseDexClassLoader(ScopedObjectAccessAlreadyRunnabl
   if (IsDelegateLastClassLoader(soa, class_loader)) {
     // For delegate last, the search order is:
     //    - boot class path
+    //    - shared libraries
     //    - class loader dex files
     //    - parent
     *result = FindClassInBootClassLoaderClassPath(self, descriptor, hash);
     if (*result != nullptr) {
       return true;  // The class is part of the boot class path.
+    }
+
+    if (!FindClassInSharedLibraries(soa, self, descriptor, hash, class_loader, result)) {
+      return false;  // One of the shared library loader is not supported.
+    }
+    if (*result != nullptr) {
+      return true;  // Found the class in a shared library.
     }
 
     *result = FindClassInBaseDexClassLoaderClassPath(soa, descriptor, hash, class_loader);
@@ -3435,14 +3468,8 @@ void ClassLinker::LoadField(const ClassAccessor::Field& field,
   dst->SetDexFieldIndex(field_idx);
   dst->SetDeclaringClass(klass.Get());
 
-  // Get access flags from the DexFile. If this is a boot class path class,
-  // also set its runtime hidden API access flags.
-  uint32_t access_flags = field.GetAccessFlags();
-  if (klass->IsBootStrapClassLoaded()) {
-    access_flags = hiddenapi::EncodeForRuntime(
-        access_flags, static_cast<hiddenapi::ApiList>(field.GetHiddenapiFlags()));
-  }
-  dst->SetAccessFlags(access_flags);
+  // Get access flags from the DexFile and set hiddenapi runtime access flags.
+  dst->SetAccessFlags(field.GetAccessFlags() | hiddenapi::CreateRuntimeFlags(field));
 }
 
 void ClassLinker::LoadMethod(const DexFile& dex_file,
@@ -3458,13 +3485,8 @@ void ClassLinker::LoadMethod(const DexFile& dex_file,
   dst->SetDeclaringClass(klass.Get());
   dst->SetCodeItemOffset(method.GetCodeItemOffset());
 
-  // Get access flags from the DexFile. If this is a boot class path class,
-  // also set its runtime hidden API access flags.
-  uint32_t access_flags = method.GetAccessFlags();
-  if (klass->IsBootStrapClassLoaded()) {
-    access_flags = hiddenapi::EncodeForRuntime(
-        access_flags, static_cast<hiddenapi::ApiList>(method.GetHiddenapiFlags()));
-  }
+  // Get access flags from the DexFile and set hiddenapi runtime access flags.
+  uint32_t access_flags = method.GetAccessFlags() | hiddenapi::CreateRuntimeFlags(method);
 
   if (UNLIKELY(strcmp("finalize", method_name) == 0)) {
     // Set finalizable flag on declaring class.

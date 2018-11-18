@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 The Android Open Source Project
+ * Copyright (C) 2018 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,24 +14,5 @@
  * limitations under the License.
  */
 
-#include "runtime_options.h"
-
-#include <memory>
-
-#include "base/sdk_version.h"
-#include "base/utils.h"
-#include "debugger.h"
-#include "gc/heap.h"
-#include "monitor.h"
-#include "runtime.h"
-#include "thread_list.h"
-#include "trace.h"
-
-namespace art {
-
-// Specify storage for the RuntimeOptions keys.
-
-#define RUNTIME_OPTIONS_KEY(Type, Name, ...) const RuntimeArgumentMap::Key<Type> RuntimeArgumentMap::Name {__VA_ARGS__};
-#include "runtime_options.def"
-
-}  // namespace art
+public class Main {
+}
