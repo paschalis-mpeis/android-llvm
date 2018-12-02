@@ -662,8 +662,8 @@ class ImageWriter::ImageFileGuard {
 };
 
 bool ImageWriter::Write(int image_fd,
-                        const std::vector<const char*>& image_filenames,
-                        const std::vector<const char*>& oat_filenames) {
+                        const std::vector<std::string>& image_filenames,
+                        const std::vector<std::string>& oat_filenames) {
   // If image_fd or oat_fd are not kInvalidFd then we may have empty strings in image_filenames or
   // oat_filenames.
   CHECK(!image_filenames.empty());
@@ -715,11 +715,11 @@ bool ImageWriter::Write(int image_fd,
   ImageHeader* primary_header = reinterpret_cast<ImageHeader*>(image_infos_[0].image_.Begin());
   ImageFileGuard primary_image_file;
   for (size_t i = 0; i < image_filenames.size(); ++i) {
-    const char* image_filename = image_filenames[i];
+    const std::string& image_filename = image_filenames[i];
     ImageInfo& image_info = GetImageInfo(i);
     ImageFileGuard image_file;
     if (image_fd != kInvalidFd) {
-      if (strlen(image_filename) == 0u) {
+      if (image_filename.empty()) {
         image_file.reset(new File(image_fd, unix_file::kCheckSafeUsage));
         // Empty the file in case it already exists.
         if (image_file != nullptr) {
@@ -730,7 +730,7 @@ bool ImageWriter::Write(int image_fd,
         LOG(ERROR) << "image fd " << image_fd << " name " << image_filename;
       }
     } else {
-      image_file.reset(OS::CreateEmptyFile(image_filename));
+      image_file.reset(OS::CreateEmptyFile(image_filename.c_str()));
     }
 
     if (image_file == nullptr) {
@@ -745,32 +745,93 @@ bool ImageWriter::Write(int image_fd,
 
     // Image data size excludes the bitmap and the header.
     ImageHeader* const image_header = reinterpret_cast<ImageHeader*>(image_info.image_.Begin());
-    ArrayRef<const uint8_t> raw_image_data(image_info.image_.Begin() + sizeof(ImageHeader),
-                                           image_header->GetImageSize() - sizeof(ImageHeader));
 
-    CHECK_EQ(image_header->storage_mode_, image_storage_mode_);
-    std::vector<uint8_t> compressed_data;
-    ArrayRef<const uint8_t> image_data =
-        MaybeCompressData(raw_image_data, image_storage_mode_, &compressed_data);
-    image_header->data_size_ = image_data.size();  // Fill in the data size.
+    // Block sources (from the image).
+    const bool is_compressed = image_storage_mode_ != ImageHeader::kStorageModeUncompressed;
+    std::vector<std::pair<uint32_t, uint32_t>> block_sources;
+    std::vector<ImageHeader::Block> blocks;
 
-    // Write out the image + fields + methods.
-    if (!image_file->PwriteFully(image_data.data(), image_data.size(), sizeof(ImageHeader))) {
-      PLOG(ERROR) << "Failed to write image file data " << image_filename;
-      return false;
+    // Add a set of solid blocks such that no block is larger than the maximum size. A solid block
+    // is a block that must be decompressed all at once.
+    auto add_blocks = [&](uint32_t offset, uint32_t size) {
+      while (size != 0u) {
+        const uint32_t cur_size = std::min(size, compiler_options_.MaxImageBlockSize());
+        block_sources.emplace_back(offset, cur_size);
+        offset += cur_size;
+        size -= cur_size;
+      }
+    };
+
+    add_blocks(sizeof(ImageHeader), image_header->GetImageSize() - sizeof(ImageHeader));
+
+    // Checksum of compressed image data and header.
+    uint32_t image_checksum = adler32(0L, Z_NULL, 0);
+    image_checksum = adler32(image_checksum,
+                             reinterpret_cast<const uint8_t*>(image_header),
+                             sizeof(ImageHeader));
+    // Copy and compress blocks.
+    size_t out_offset = sizeof(ImageHeader);
+    for (const std::pair<uint32_t, uint32_t> block : block_sources) {
+      ArrayRef<const uint8_t> raw_image_data(image_info.image_.Begin() + block.first,
+                                             block.second);
+      std::vector<uint8_t> compressed_data;
+      ArrayRef<const uint8_t> image_data =
+          MaybeCompressData(raw_image_data, image_storage_mode_, &compressed_data);
+
+      if (!is_compressed) {
+        // For uncompressed, preserve alignment since the image will be directly mapped.
+        out_offset = block.first;
+      }
+
+      // Fill in the compressed location of the block.
+      blocks.emplace_back(ImageHeader::Block(
+          image_storage_mode_,
+          /*data_offset=*/ out_offset,
+          /*data_size=*/ image_data.size(),
+          /*image_offset=*/ block.first,
+          /*image_size=*/ block.second));
+
+      // Write out the image + fields + methods.
+      if (!image_file->PwriteFully(image_data.data(), image_data.size(), out_offset)) {
+        PLOG(ERROR) << "Failed to write image file data " << image_filename;
+        image_file->Erase();
+        return false;
+      }
+      out_offset += image_data.size();
+      image_checksum = adler32(image_checksum, image_data.data(), image_data.size());
     }
 
-    // Write out the image bitmap at the page aligned start of the image end, also uncompressed for
-    // convenience.
-    const ImageSection& bitmap_section = image_header->GetImageBitmapSection();
+    // Write the block metadata directly after the image sections.
+    // Note: This is not part of the mapped image and is not preserved after decompressing, it's
+    // only used for image loading. For this reason, only write it out for compressed images.
+    if (is_compressed) {
+      // Align up since the compressed data is not necessarily aligned.
+      out_offset = RoundUp(out_offset, alignof(ImageHeader::Block));
+      CHECK(!blocks.empty());
+      const size_t blocks_bytes = blocks.size() * sizeof(blocks[0]);
+      if (!image_file->PwriteFully(&blocks[0], blocks_bytes, out_offset)) {
+        PLOG(ERROR) << "Failed to write image blocks " << image_filename;
+        image_file->Erase();
+        return false;
+      }
+      image_header->blocks_offset_ = out_offset;
+      image_header->blocks_count_ = blocks.size();
+      out_offset += blocks_bytes;
+    }
+
+    // Data size includes everything except the bitmap.
+    image_header->data_size_ = out_offset - sizeof(ImageHeader);
+
+    // Update and write the bitmap section. Note that the bitmap section is relative to the
+    // possibly compressed image.
+    ImageSection& bitmap_section = image_header->GetImageSection(ImageHeader::kSectionImageBitmap);
     // Align up since data size may be unaligned if the image is compressed.
-    size_t bitmap_position_in_file = RoundUp(sizeof(ImageHeader) + image_data.size(), kPageSize);
-    if (image_storage_mode_ == ImageHeader::kDefaultStorageMode) {
-      CHECK_EQ(bitmap_position_in_file, bitmap_section.Offset());
-    }
+    out_offset = RoundUp(out_offset, kPageSize);
+    bitmap_section = ImageSection(out_offset, bitmap_section.Size());
+
     if (!image_file->PwriteFully(image_info.image_bitmap_->Begin(),
                                  bitmap_section.Size(),
-                                 bitmap_position_in_file)) {
+                                 bitmap_section.Offset())) {
       PLOG(ERROR) << "Failed to write image file bitmap " << image_filename;
       return false;
     }
@@ -781,22 +842,17 @@ bool ImageWriter::Write(int image_fd,
       return false;
     }
 
-    // Calculate the image checksum.
-    uint32_t image_checksum = adler32(0L, Z_NULL, 0);
-    image_checksum = adler32(image_checksum,
-                             reinterpret_cast<const uint8_t*>(image_header),
-                             sizeof(ImageHeader));
-    image_checksum = adler32(image_checksum, image_data.data(), image_data.size());
+    // Calculate the image checksum of the remaining data.
     image_checksum = adler32(image_checksum,
                              reinterpret_cast<const uint8_t*>(image_info.image_bitmap_->Begin()),
                              bitmap_section.Size());
     image_header->SetImageChecksum(image_checksum);
 
     if (VLOG_IS_ON(compiler)) {
-      size_t separately_written_section_size = bitmap_section.Size() + sizeof(ImageHeader);
-
-      size_t total_uncompressed_size = raw_image_data.size() + separately_written_section_size,
-             total_compressed_size   = image_data.size() + separately_written_section_size;
+      const size_t separately_written_section_size = bitmap_section.Size();
+      const size_t total_uncompressed_size = image_info.image_size_ +
+          separately_written_section_size;
+      const size_t total_compressed_size = out_offset + separately_written_section_size;
 
       VLOG(compiler) << "Dex2Oat:uncompressedImageSize = " << total_uncompressed_size;
       if (total_uncompressed_size != total_compressed_size) {
@@ -804,8 +860,8 @@ bool ImageWriter::Write(int image_fd,
       }
     }
 
-    CHECK_EQ(bitmap_position_in_file + bitmap_section.Size(),
-             static_cast<size_t>(image_file->GetLength()));
+    CHECK_EQ(bitmap_section.End(), static_cast<size_t>(image_file->GetLength()))
+        << "Bitmap should be at the end of the file";
 
     // Write header last in case the compiler gets killed in the middle of image writing.
     // We do not want to have a corrupted image with a valid header.
@@ -895,7 +951,7 @@ void ImageWriter::SetImageBinSlot(mirror::Object* object, BinSlot bin_slot) {
         oss << ". Lock owner:" << lw.ThinLockOwner();
       }
       LOG(FATAL) << oss.str();
-      break;
+      UNREACHABLE();
     }
     case LockWord::kUnlocked:
       // No hash, don't need to save it.
@@ -2574,9 +2630,7 @@ void ImageWriter::CreateHeader(size_t oat_index) {
       PointerToLowMemUInt32(oat_file_end),
       boot_image_begin,
       boot_oat_end - boot_image_begin,
-      static_cast<uint32_t>(target_ptr_size_),
-      image_storage_mode_,
-      /*data_size*/0u);
+      static_cast<uint32_t>(target_ptr_size_));
 }
 
 ArtMethod* ImageWriter::GetImageMethodAddress(ArtMethod* method) {
@@ -3454,7 +3508,7 @@ ImageWriter::ImageWriter(
     const CompilerOptions& compiler_options,
     uintptr_t image_begin,
     ImageHeader::StorageMode image_storage_mode,
-    const std::vector<const char*>& oat_filenames,
+    const std::vector<std::string>& oat_filenames,
     const std::unordered_map<const DexFile*, size_t>& dex_file_oat_index_map,
     jobject class_loader,
     const HashSet<std::string>* dirty_image_objects)

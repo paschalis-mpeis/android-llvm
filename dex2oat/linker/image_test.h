@@ -77,9 +77,10 @@ class ImageTest : public CommonCompilerTest {
     CommonCompilerTest::SetUp();
   }
 
-  void TestWriteRead(ImageHeader::StorageMode storage_mode);
+  void TestWriteRead(ImageHeader::StorageMode storage_mode, uint32_t max_image_block_size);
 
   void Compile(ImageHeader::StorageMode storage_mode,
+               uint32_t max_image_block_size,
                /*out*/ CompilationHelper& out_helper,
                const std::string& extra_dex = "",
                const std::initializer_list<std::string>& image_classes = {},
@@ -200,14 +201,6 @@ inline void ImageTest::DoCompile(ImageHeader::StorageMode storage_mode,
   }
 
   std::unordered_map<const DexFile*, size_t> dex_file_to_oat_index_map;
-  std::vector<const char*> oat_filename_vector;
-  for (const std::string& file : oat_filenames) {
-    oat_filename_vector.push_back(file.c_str());
-  }
-  std::vector<const char*> image_filename_vector;
-  for (const std::string& file : image_filenames) {
-    image_filename_vector.push_back(file.c_str());
-  }
   size_t image_idx = 0;
   for (const DexFile* dex_file : class_path) {
     dex_file_to_oat_index_map.emplace(dex_file, image_idx);
@@ -217,7 +210,7 @@ inline void ImageTest::DoCompile(ImageHeader::StorageMode storage_mode,
   std::unique_ptr<ImageWriter> writer(new ImageWriter(*compiler_options_,
                                                       kRequestedImageBase,
                                                       storage_mode,
-                                                      oat_filename_vector,
+                                                      oat_filenames,
                                                       dex_file_to_oat_index_map,
                                                       /*class_loader=*/ nullptr,
                                                       /*dirty_image_objects=*/ nullptr));
@@ -231,15 +224,11 @@ inline void ImageTest::DoCompile(ImageHeader::StorageMode storage_mode,
 
       t.NewTiming("WriteElf");
       SafeMap<std::string, std::string> key_value_store;
-      std::vector<const char*> dex_filename_vector;
-      for (size_t i = 0; i < class_path.size(); ++i) {
-        dex_filename_vector.push_back("");
-      }
       key_value_store.Put(OatHeader::kBootClassPathKey,
                           gc::space::ImageSpace::GetMultiImageBootClassPath(
-                              dex_filename_vector,
-                              oat_filename_vector,
-                              image_filename_vector));
+                              out_helper.dex_file_locations,
+                              oat_filenames,
+                              image_filenames));
 
       std::vector<std::unique_ptr<ElfWriter>> elf_writers;
       std::vector<std::unique_ptr<OatWriter>> oat_writers;
@@ -271,7 +260,7 @@ inline void ImageTest::DoCompile(ImageHeader::StorageMode storage_mode,
         bool dex_files_ok = oat_writers[i]->WriteAndOpenDexFiles(
             out_helper.vdex_files[i].GetFile(),
             rodata.back(),
-            &key_value_store,
+            (i == 0u) ? &key_value_store : nullptr,
             /* verify */ false,           // Dex files may be dex-to-dex-ed, don't verify.
             /* update_input_vdex */ false,
             /* copy_dex_files */ CopyOption::kOnlyIfCompressed,
@@ -356,8 +345,8 @@ inline void ImageTest::DoCompile(ImageHeader::StorageMode storage_mode,
     }
 
     bool success_image = writer->Write(kInvalidFd,
-                                       image_filename_vector,
-                                       oat_filename_vector);
+                                       image_filenames,
+                                       oat_filenames);
     ASSERT_TRUE(success_image);
 
     for (size_t i = 0, size = oat_filenames.size(); i != size; ++i) {
@@ -374,6 +363,7 @@ inline void ImageTest::DoCompile(ImageHeader::StorageMode storage_mode,
 
 inline void ImageTest::Compile(
     ImageHeader::StorageMode storage_mode,
+    uint32_t max_image_block_size,
     CompilationHelper& helper,
     const std::string& extra_dex,
     const std::initializer_list<std::string>& image_classes,
@@ -388,6 +378,7 @@ inline void ImageTest::Compile(
   CreateCompilerDriver();
   // Set inline filter values.
   compiler_options_->SetInlineMaxCodeUnits(CompilerOptions::kDefaultInlineMaxCodeUnits);
+  compiler_options_->SetMaxImageBlockSize(max_image_block_size);
   image_classes_.clear();
   if (!extra_dex.empty()) {
     helper.extra_dex_files = OpenTestDexFiles(extra_dex.c_str());
@@ -411,9 +402,10 @@ inline void ImageTest::Compile(
   }
 }
 
-inline void ImageTest::TestWriteRead(ImageHeader::StorageMode storage_mode) {
+inline void ImageTest::TestWriteRead(ImageHeader::StorageMode storage_mode,
+                                     uint32_t max_image_block_size) {
   CompilationHelper helper;
-  Compile(storage_mode, /*out*/ helper);
+  Compile(storage_mode, max_image_block_size, /*out*/ helper);
   std::vector<uint64_t> image_file_sizes;
   for (ScratchFile& image_file : helper.image_files) {
     std::unique_ptr<File> file(OS::OpenFileForReading(image_file.GetFilename().c_str()));
@@ -488,6 +480,10 @@ inline void ImageTest::TestWriteRead(ImageHeader::StorageMode storage_mode) {
     } else if (image_file_size > 16 * KB) {
       // Compressed, file should be smaller than image. Not really valid for small images.
       ASSERT_LE(image_file_size, image_space->GetImageHeader().GetImageSize());
+      // TODO: Actually validate the blocks, this is hard since the blocks are not copied over for
+      // compressed images. Add kPageSize since image_size is rounded up to this.
+      ASSERT_GT(image_space->GetImageHeader().GetBlockCount() * max_image_block_size,
+                image_space->GetImageHeader().GetImageSize() - kPageSize);
     }
 
     image_space->VerifyImageAllocations();
