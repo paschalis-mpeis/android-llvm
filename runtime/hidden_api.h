@@ -20,7 +20,7 @@
 #include "art_field.h"
 #include "art_method.h"
 #include "base/hiddenapi_flags.h"
-#include "base/mutex.h"
+#include "base/locks.h"
 #include "intrinsics_enum.h"
 #include "mirror/class-inl.h"
 #include "reflection.h"
@@ -235,6 +235,7 @@ ALWAYS_INLINE inline uint32_t GetRuntimeFlags(ArtMethod* method)
       case Intrinsics::kUnsafeStoreFence:
       case Intrinsics::kUnsafeFullFence:
       case Intrinsics::kCRC32Update:
+      case Intrinsics::kCRC32UpdateBytes:
       case Intrinsics::kStringNewStringFromBytes:
       case Intrinsics::kStringNewStringFromChars:
       case Intrinsics::kStringNewStringFromString:

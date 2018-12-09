@@ -48,6 +48,13 @@ art_runtime_debug_native_shared_libs = [
     "libadbconnectiond",
 ]
 
+// Files associated with bionic / managed core library time zone APIs.
+art_runtime_time_zone_prebuilts = [
+    "apex_tz_version",
+    "apex_tzdata",
+    "apex_tzlookup.xml",
+]
+
 // Modules listed in LOCAL_REQUIRED_MODULES for module art-tools in art/Android.mk.
 art_tools_common_binaries = [
     "dexdiag",
@@ -109,7 +116,8 @@ apex {
             binaries: [],
         }
     },
-    prebuilts: ["com.android.runtime.ld.config.txt"],
+    prebuilts: art_runtime_time_zone_prebuilts
+        + ["com.android.runtime.ld.config.txt"],
     key: "com.android.runtime.key",
 }
 
@@ -137,19 +145,22 @@ apex {
             binaries: art_tools_binaries,
         }
     },
-    prebuilts: ["com.android.runtime.ld.config.txt"],
+    prebuilts: art_runtime_time_zone_prebuilts
+        + ["com.android.runtime.ld.config.txt"],
     key: "com.android.runtime.key",
 }
 
-apex {
+// TODO: Do this better. art_apex will disable host builds when
+// HOST_PREFER_32_BIT is set. We cannot simply use com.android.runtime.debug
+// because binaries have different multilib classes and 'multilib: {}' isn't
+// supported by target: { ... }.
+// See b/120617876 for more information.
+art_apex {
     name: "com.android.runtime.host",
     compile_multilib: "both",
     payload_type: "zip",
-    // TODO: We need this and the multilib is different from above b/c ART sets
-    // different prefer32 on host and device. We should change this.
     host_supported: true,
     device_supported: false,
-    // The files are the same on both.
     manifest: "manifest.json",
     native_shared_libs: art_runtime_base_native_shared_libs
         + art_runtime_fake_native_shared_libs
@@ -168,4 +179,9 @@ apex {
         }
     },
     key: "com.android.runtime.key",
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
 }

@@ -17,7 +17,7 @@
 #ifndef ART_RUNTIME_WELL_KNOWN_CLASSES_H_
 #define ART_RUNTIME_WELL_KNOWN_CLASSES_H_
 
-#include "base/mutex.h"
+#include "base/locks.h"
 #include "jni.h"
 #include "obj_ptr.h"
 
@@ -57,6 +57,7 @@ struct WellKnownClasses {
   static jclass dalvik_system_DexPathList;
   static jclass dalvik_system_DexPathList__Element;
   static jclass dalvik_system_EmulatedStackFrame;
+  static jclass dalvik_system_InMemoryDexClassLoader;
   static jclass dalvik_system_PathClassLoader;
   static jclass dalvik_system_VMRuntime;
   static jclass java_lang_annotation_Annotation__array;

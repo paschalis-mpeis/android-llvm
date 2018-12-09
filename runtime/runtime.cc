@@ -234,8 +234,7 @@ Runtime::Runtime()
       class_linker_(nullptr),
       signal_catcher_(nullptr),
       java_vm_(nullptr),
-      fault_message_lock_("Fault message lock"),
-      fault_message_(""),
+      fault_message_(nullptr),
       threads_being_born_(0),
       shutdown_cond_(new ConditionVariable("Runtime shutdown", *Locks::runtime_shutdown_lock_)),
       shutting_down_(false),
@@ -549,18 +548,18 @@ struct AbortState {
 void Runtime::Abort(const char* msg) {
   auto old_value = gAborting.fetch_add(1);  // set before taking any locks
 
-#ifdef ART_TARGET_ANDROID
+  // Only set the first abort message.
   if (old_value == 0) {
-    // Only set the first abort message.
-    android_set_abort_message(msg);
-  }
-#else
-  UNUSED(old_value);
-#endif
-
 #ifdef ART_TARGET_ANDROID
-  android_set_abort_message(msg);
+    android_set_abort_message(msg);
+#else
+    // Set the runtime fault message in case our unexpected-signal code will run.
+    Runtime* current = Runtime::Current();
+    if (current != nullptr) {
+      current->SetFaultMessage(msg);
+    }
 #endif
+  }
 
   // Ensure that we don't have multiple threads trying to abort at once,
   // which would result in significantly worse diagnostics.
@@ -601,7 +600,16 @@ void Runtime::Abort(const char* msg) {
 }
 
 void Runtime::PreZygoteFork() {
+  if (GetJit() != nullptr) {
+    GetJit()->PreZygoteFork();
+  }
   heap_->PreZygoteFork();
+}
+
+void Runtime::PostZygoteFork() {
+  if (GetJit() != nullptr) {
+    GetJit()->PostZygoteFork();
+  }
 }
 
 void Runtime::CallExitHook(jint status) {
@@ -917,15 +925,12 @@ void Runtime::InitNonZygoteOrPostFork(
     }
   }
 
-  if (jit_ != nullptr) {
-    jit_->CreateThreadPool();
-  }
-
   if (thread_pool_ == nullptr) {
-    constexpr size_t kMaxRuntimeThreads = 4u;
-    thread_pool_.reset(
-        new ThreadPool("Runtime", std::min(
-            static_cast<size_t>(std::thread::hardware_concurrency()), kMaxRuntimeThreads)));
+    constexpr size_t kStackSize = 64 * KB;
+    constexpr size_t kMaxRuntimeWorkers = 4u;
+    const size_t num_workers =
+        std::min(static_cast<size_t>(std::thread::hardware_concurrency()), kMaxRuntimeWorkers);
+    thread_pool_.reset(new ThreadPool("Runtime", num_workers, /*create_peers=*/false, kStackSize));
     thread_pool_->StartWorkers(Thread::Current());
   }
 
@@ -2366,8 +2371,27 @@ void Runtime::RecordResolveString(ObjPtr<mirror::DexCache> dex_cache,
 }
 
 void Runtime::SetFaultMessage(const std::string& message) {
-  MutexLock mu(Thread::Current(), fault_message_lock_);
-  fault_message_ = message;
+  std::string* new_msg = new std::string(message);
+  std::string* cur_msg = fault_message_.exchange(new_msg);
+  delete cur_msg;
+}
+
+std::string Runtime::GetFaultMessage() {
+  // Retrieve the message. Temporarily replace with null so that SetFaultMessage will not delete
+  // the string in parallel.
+  std::string* cur_msg = fault_message_.exchange(nullptr);
+
+  // Make a copy of the string.
+  std::string ret = cur_msg == nullptr ? "" : *cur_msg;
+
+  // Put the message back if it hasn't been updated.
+  std::string* null_str = nullptr;
+  if (!fault_message_.compare_exchange_strong(null_str, cur_msg)) {
+    // Already replaced.
+    delete cur_msg;
+  }
+
+  return ret;
 }
 
 void Runtime::AddCurrentRuntimeFeaturesAsDex2OatArguments(std::vector<std::string>* argv)
@@ -2429,6 +2453,8 @@ void Runtime::CreateJit() {
     LOG(WARNING) << "Failed to allocate JIT";
     // Release JIT code cache resources (several MB of memory).
     jit_code_cache_.reset();
+  } else {
+    jit->CreateThreadPool();
   }
 }
 
