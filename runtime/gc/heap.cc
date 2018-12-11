@@ -36,6 +36,7 @@
 #include "base/stl_util.h"
 #include "base/systrace.h"
 #include "base/time_utils.h"
+#include "base/utils.h"
 #include "common_throws.h"
 #include "debugger.h"
 #include "dex/dex_file-inl.h"
@@ -173,6 +174,8 @@ Heap::Heap(size_t initial_size,
            double foreground_heap_growth_multiplier,
            size_t capacity,
            size_t non_moving_space_capacity,
+           const std::vector<std::string>& boot_class_path,
+           const std::vector<std::string>& boot_class_path_locations,
            const std::string& image_file_name,
            const InstructionSet image_instruction_set,
            CollectorType foreground_collector_type,
@@ -212,7 +215,7 @@ Heap::Heap(size_t initial_size,
       long_gc_log_threshold_(long_gc_log_threshold),
       process_cpu_start_time_ns_(ProcessCpuNanoTime()),
       last_process_cpu_time_ns_(process_cpu_start_time_ns_),
-      weighted_allocated_bytes_(0u),
+      weighted_allocated_bytes_(0.0),
       ignore_max_footprint_(ignore_max_footprint),
       zygote_creation_lock_("zygote creation lock", kZygoteCreationLock),
       zygote_space_(nullptr),
@@ -350,7 +353,9 @@ Heap::Heap(size_t initial_size,
   // Load image space(s).
   std::vector<std::unique_ptr<space::ImageSpace>> boot_image_spaces;
   MemMap heap_reservation;
-  if (space::ImageSpace::LoadBootImage(image_file_name,
+  if (space::ImageSpace::LoadBootImage(boot_class_path,
+                                       boot_class_path_locations,
+                                       image_file_name,
                                        image_instruction_set,
                                        heap_reservation_size,
                                        &boot_image_spaces,
@@ -1068,7 +1073,7 @@ void Heap::RemoveSpace(space::Space* space) {
 void Heap::CalculateWeightedAllocatedBytes() {
   uint64_t current_process_cpu_time = ProcessCpuNanoTime();
   uint64_t bytes_allocated = GetBytesAllocated();
-  uint64_t weight = current_process_cpu_time - last_process_cpu_time_ns_;
+  double weight = current_process_cpu_time - last_process_cpu_time_ns_;
   weighted_allocated_bytes_ += weight * bytes_allocated;
   last_process_cpu_time_ns_ = current_process_cpu_time;
 }

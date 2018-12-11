@@ -174,7 +174,9 @@ class Heap {
        double foreground_heap_growth_multiplier,
        size_t capacity,
        size_t non_moving_space_capacity,
-       const std::string& original_image_file_name,
+       const std::vector<std::string>& boot_class_path,
+       const std::vector<std::string>& boot_class_path_locations,
+       const std::string& image_file_name,
        InstructionSet image_instruction_set,
        CollectorType foreground_collector_type,
        CollectorType background_collector_type,
@@ -395,7 +397,7 @@ class Heap {
     REQUIRES(!Locks::heap_bitmap_lock_)
     REQUIRES(Locks::mutator_lock_);
 
-  uint64_t GetWeightedAllocatedBytes() const {
+  double GetWeightedAllocatedBytes() const {
     return weighted_allocated_bytes_;
   }
 
@@ -1177,7 +1179,7 @@ class Heap {
   uint64_t last_process_cpu_time_ns_;
 
   // allocated_bytes * (current_process_cpu_time - last_process_cpu_time)
-  uint64_t weighted_allocated_bytes_;
+  double weighted_allocated_bytes_;
 
   // If we ignore the max footprint it lets the heap grow until it hits the heap capacity, this is
   // useful for benchmarking since it reduces time spent in GC to a low %.

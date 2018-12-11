@@ -243,8 +243,14 @@ class Runtime {
 
   ~Runtime();
 
-  const std::string& GetBootClassPathString() const {
-    return boot_class_path_string_;
+  const std::vector<std::string>& GetBootClassPath() const {
+    return boot_class_path_;
+  }
+
+  const std::vector<std::string>& GetBootClassPathLocations() const {
+    DCHECK(boot_class_path_locations_.empty() ||
+           boot_class_path_locations_.size() == boot_class_path_.size());
+    return boot_class_path_locations_.empty() ? boot_class_path_ : boot_class_path_locations_;
   }
 
   const std::string& GetClassPathString() const {
@@ -786,10 +792,6 @@ class Runtime {
     return verifier_logging_threshold_ms_;
   }
 
-  ThreadPool* GetThreadPool() {
-    return thread_pool_.get();
-  }
-
  private:
   static void InitPlatformSignalHandlers();
 
@@ -866,7 +868,8 @@ class Runtime {
   std::vector<std::string> image_compiler_options_;
   std::string image_location_;
 
-  std::string boot_class_path_string_;
+  std::vector<std::string> boot_class_path_;
+  std::vector<std::string> boot_class_path_locations_;
   std::string class_path_string_;
   std::vector<std::string> properties_;
 
@@ -888,9 +891,6 @@ class Runtime {
 
   // Shared linear alloc for now.
   std::unique_ptr<LinearAlloc> linear_alloc_;
-
-  // Thread pool
-  std::unique_ptr<ThreadPool> thread_pool_;
 
   // The number of spins that are done before thread suspension is used to forcibly inflate.
   size_t max_spins_before_thin_lock_inflation_;
