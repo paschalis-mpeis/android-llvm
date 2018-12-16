@@ -79,6 +79,8 @@ class ConcurrentCopying : public GarbageCollector {
   void InitializePhase() REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!mark_stack_lock_, !immune_gray_stack_lock_);
   void MarkingPhase() REQUIRES_SHARED(Locks::mutator_lock_)
+      REQUIRES(!mark_stack_lock_);
+  void CopyingPhase() REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!mark_stack_lock_, !skipped_blocks_lock_, !immune_gray_stack_lock_);
   void ReclaimPhase() REQUIRES_SHARED(Locks::mutator_lock_) REQUIRES(!mark_stack_lock_);
   void FinishPhase() REQUIRES(!mark_stack_lock_,
@@ -161,6 +163,13 @@ class ConcurrentCopying : public GarbageCollector {
   template <bool kNoUnEvac>
   void Scan(mirror::Object* to_ref) REQUIRES_SHARED(Locks::mutator_lock_)
       REQUIRES(!mark_stack_lock_);
+  // Scan the reference fields of object 'obj' in the dirty cards during
+  // card-table scan. In addition to visiting the references, it also sets the
+  // read-barrier state to gray for Reference-type objects to ensure that
+  // GetReferent() called on these objects calls the read-barrier on the referent.
+  template <bool kNoUnEvac>
+  void ScanDirtyObject(mirror::Object* obj) REQUIRES_SHARED(Locks::mutator_lock_)
+      REQUIRES(!mark_stack_lock_);
   // Process a field.
   template <bool kNoUnEvac>
   void Process(mirror::Object* obj, MemberOffset offset)
@@ -198,7 +207,10 @@ class ConcurrentCopying : public GarbageCollector {
   void VerifyNoMissingCardMarks()
       REQUIRES(Locks::mutator_lock_)
       REQUIRES(!mark_stack_lock_);
-  size_t ProcessThreadLocalMarkStacks(bool disable_weak_ref_access, Closure* checkpoint_callback)
+  template <typename Processor>
+  size_t ProcessThreadLocalMarkStacks(bool disable_weak_ref_access,
+                                      Closure* checkpoint_callback,
+                                      const Processor& processor)
       REQUIRES_SHARED(Locks::mutator_lock_) REQUIRES(!mark_stack_lock_);
   void RevokeThreadLocalMarkStacks(bool disable_weak_ref_access, Closure* checkpoint_callback)
       REQUIRES_SHARED(Locks::mutator_lock_);
@@ -295,6 +307,15 @@ class ConcurrentCopying : public GarbageCollector {
   // Set the read barrier mark entrypoints to non-null.
   void ActivateReadBarrierEntrypoints();
 
+  void CaptureThreadRootsForMarking() REQUIRES_SHARED(Locks::mutator_lock_);
+  void AddLiveBytesAndScanRef(mirror::Object* ref) REQUIRES_SHARED(Locks::mutator_lock_);
+  bool TestMarkBitmapForRef(mirror::Object* ref) REQUIRES_SHARED(Locks::mutator_lock_);
+  template <bool kAtomic = false>
+  bool TestAndSetMarkBitForRef(mirror::Object* ref) REQUIRES_SHARED(Locks::mutator_lock_);
+  void PushOntoLocalMarkStack(mirror::Object* ref) REQUIRES_SHARED(Locks::mutator_lock_);
+  void ProcessMarkStackForMarkingAndComputeLiveBytes() REQUIRES_SHARED(Locks::mutator_lock_)
+      REQUIRES(!mark_stack_lock_);
+
   space::RegionSpace* region_space_;      // The underlying region space.
   std::unique_ptr<Barrier> gc_barrier_;
   std::unique_ptr<accounting::ObjectStack> gc_mark_stack_;
@@ -375,7 +396,7 @@ class ConcurrentCopying : public GarbageCollector {
   // Generational "sticky", only trace through dirty objects in region space.
   const bool young_gen_;
   // If true, the GC thread is done scanning marked objects on dirty and aged
-  // card (see ConcurrentCopying::MarkingPhase).
+  // card (see ConcurrentCopying::CopyingPhase).
   Atomic<bool> done_scanning_;
 
   // The skipped blocks are memory blocks/chucks that were copies of
@@ -441,6 +462,10 @@ class ConcurrentCopying : public GarbageCollector {
   class VerifyNoFromSpaceRefsFieldVisitor;
   class VerifyNoFromSpaceRefsVisitor;
   class VerifyNoMissingCardMarkVisitor;
+  class ImmuneSpaceCaptureRefsVisitor;
+  template <bool kAtomicTestAndSet = false> class CaptureRootsForMarkingVisitor;
+  class CaptureThreadRootsForMarkingAndCheckpoint;
+  template <bool kHandleInterRegionRefs> class ComputeLiveBytesAndMarkRefFieldsVisitor;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(ConcurrentCopying);
 };

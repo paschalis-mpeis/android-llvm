@@ -212,6 +212,22 @@ static void HandleEarlierVerifyError(Thread* self,
   self->AssertPendingException();
 }
 
+// Ensures that methods have the kAccSkipAccessChecks bit set. We use the
+// kAccVerificationAttempted bit on the class access flags to determine whether this has been done
+// before.
+template <bool kNeedsVerified = false>
+static void EnsureSkipAccessChecksMethods(Handle<mirror::Class> klass, PointerSize pointer_size)
+    REQUIRES_SHARED(Locks::mutator_lock_) {
+  if (kNeedsVerified) {
+    // To not fail access-flags access checks, push a minimal state.
+    mirror::Class::SetStatus(klass, ClassStatus::kVerified, Thread::Current());
+  }
+  if (!klass->WasVerificationAttempted()) {
+    klass->SetSkipAccessChecksFlagOnAllMethods(pointer_size);
+    klass->SetVerificationAttempted();
+  }
+}
+
 void ClassLinker::ThrowEarlierClassFailure(ObjPtr<mirror::Class> c, bool wrap_in_no_class_def) {
   // The class failed to initialize on a previous attempt, so we want to throw
   // a NoClassDefFoundError (v2 2.17.5).  The exception to this rule is if we
@@ -1037,20 +1053,15 @@ bool ClassLinker::InitFromBootImage(std::string* error_msg) {
   runtime->SetSentinel(heap->AllocNonMovableObject<true>(
       self, java_lang_Object, java_lang_Object->GetObjectSize(), VoidFunctor()));
 
-  const std::vector<std::string>& boot_class_path = runtime->GetBootClassPath();
-  if (boot_class_path.size() != spaces.size()) {
-    *error_msg = StringPrintf("Boot class path has %zu components but there are %zu image spaces.",
-                              boot_class_path.size(),
-                              spaces.size());
-    return false;
-  }
+  const std::vector<std::string>& boot_class_path_locations = runtime->GetBootClassPathLocations();
+  CHECK_LE(spaces.size(), boot_class_path_locations.size());
   for (size_t i = 0u, size = spaces.size(); i != size; ++i) {
     // Boot class loader, use a null handle.
     std::vector<std::unique_ptr<const DexFile>> dex_files;
     if (!AddImageSpace(spaces[i],
                        ScopedNullHandle<mirror::ClassLoader>(),
                        /*dex_elements=*/ nullptr,
-                       /*dex_location=*/ boot_class_path[i].c_str(),
+                       /*dex_location=*/ boot_class_path_locations[i].c_str(),
                        /*out*/&dex_files,
                        error_msg)) {
       return false;
@@ -1067,6 +1078,15 @@ bool ClassLinker::InitFromBootImage(std::string* error_msg) {
 
   VLOG(startup) << __FUNCTION__ << " exiting";
   return true;
+}
+
+void ClassLinker::AddExtraBootDexFiles(
+    Thread* self,
+    std::vector<std::unique_ptr<const DexFile>>&& additional_dex_files) {
+  for (std::unique_ptr<const DexFile>& dex_file : additional_dex_files) {
+    AppendToBootClassPath(self, *dex_file);
+    boot_dex_files_.push_back(std::move(dex_file));
+  }
 }
 
 bool ClassLinker::IsBootClassLoader(ScopedObjectAccessAlreadyRunnable& soa,
@@ -3946,6 +3966,7 @@ ObjPtr<mirror::Class> ClassLinker::CreatePrimitiveClass(Thread* self, Primitive:
   h_class->SetAccessFlags(kAccPublic | kAccFinal | kAccAbstract);
   h_class->SetPrimitiveType(type);
   h_class->SetIfTable(GetClassRoot<mirror::Object>(this)->GetIfTable());
+  EnsureSkipAccessChecksMethods</* kNeedsVerified= */ true>(h_class, image_pointer_size_);
   mirror::Class::SetStatus(h_class, ClassStatus::kInitialized, self);
   const char* descriptor = Primitive::Descriptor(type);
   ObjPtr<mirror::Class> existing = InsertClass(descriptor,
@@ -4093,6 +4114,7 @@ ObjPtr<mirror::Class> ClassLinker::CreateArrayClass(Thread* self,
   new_class->PopulateEmbeddedVTable(image_pointer_size_);
   ImTable* object_imt = java_lang_Object->GetImt(image_pointer_size_);
   new_class->SetImt(object_imt, image_pointer_size_);
+  EnsureSkipAccessChecksMethods</* kNeedsVerified= */ true>(new_class, image_pointer_size_);
   mirror::Class::SetStatus(new_class, ClassStatus::kInitialized, self);
   // don't need to set new_class->SetObjectSize(..)
   // because Object::SizeOf delegates to Array::SizeOf
@@ -4123,6 +4145,8 @@ ObjPtr<mirror::Class> ClassLinker::CreateArrayClass(Thread* self,
   // and remove "interface".
   access_flags |= kAccAbstract | kAccFinal;
   access_flags &= ~kAccInterface;
+  // Arrays are access-checks-clean and preverified.
+  access_flags |= kAccVerificationAttempted;
 
   new_class->SetAccessFlags(access_flags);
 
@@ -4355,17 +4379,6 @@ bool ClassLinker::AttemptSupertypeVerification(Thread* self,
   ObjectLock<mirror::Class> super_lock(self, klass);
   mirror::Class::SetStatus(klass, ClassStatus::kErrorResolved, self);
   return false;
-}
-
-// Ensures that methods have the kAccSkipAccessChecks bit set. We use the
-// kAccVerificationAttempted bit on the class access flags to determine whether this has been done
-// before.
-static void EnsureSkipAccessChecksMethods(Handle<mirror::Class> klass, PointerSize pointer_size)
-    REQUIRES_SHARED(Locks::mutator_lock_) {
-  if (!klass->WasVerificationAttempted()) {
-    klass->SetSkipAccessChecksFlagOnAllMethods(pointer_size);
-    klass->SetVerificationAttempted();
-  }
 }
 
 verifier::FailureKind ClassLinker::VerifyClass(
@@ -4844,6 +4857,7 @@ ObjPtr<mirror::Class> ClassLinker::CreateProxyClass(ScopedObjectAccessAlreadyRun
   {
     // Lock on klass is released. Lock new class object.
     ObjectLock<mirror::Class> initialization_lock(self, klass);
+    EnsureSkipAccessChecksMethods(klass, image_pointer_size_);
     mirror::Class::SetStatus(klass, ClassStatus::kInitialized, self);
   }
 
@@ -5594,8 +5608,7 @@ bool ClassLinker::EnsureInitialized(Thread* self,
   DCHECK(c != nullptr);
 
   if (c->IsInitialized()) {
-    EnsureSkipAccessChecksMethods(c, image_pointer_size_);
-    self->AssertNoPendingException();
+    DCHECK(c->WasVerificationAttempted()) << c->PrettyClassAndClassLoader();
     return true;
   }
   // SubtypeCheckInfo::Initialized must happen-before any new-instance for that type.
