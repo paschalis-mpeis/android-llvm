@@ -212,16 +212,14 @@ bool DexFileLoader::GetMultiDexChecksums(
   return false;
 }
 
-std::unique_ptr<const DexFile> DexFileLoader::Open(
-    const uint8_t* base,
-    size_t size,
-    const std::string& location,
-    uint32_t location_checksum,
-    const OatDexFile* oat_dex_file,
-    bool verify,
-    bool verify_checksum,
-    std::string* error_msg,
-    std::unique_ptr<DexFileContainer> container) const {
+std::unique_ptr<const DexFile> DexFileLoader::Open(const uint8_t* base,
+                                                   size_t size,
+                                                   const std::string& location,
+                                                   uint32_t location_checksum,
+                                                   const OatDexFile* oat_dex_file,
+                                                   bool verify,
+                                                   bool verify_checksum,
+                                                   std::string* error_msg) const {
   return OpenCommon(base,
                     size,
                     /*data_base=*/ nullptr,
@@ -232,7 +230,7 @@ std::unique_ptr<const DexFile> DexFileLoader::Open(
                     verify,
                     verify_checksum,
                     error_msg,
-                    std::move(container),
+                    /*container=*/ nullptr,
                     /*verify_result=*/ nullptr);
 }
 
