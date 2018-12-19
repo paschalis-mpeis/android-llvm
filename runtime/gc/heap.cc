@@ -201,7 +201,9 @@ Heap::Heap(size_t initial_size,
            bool gc_stress_mode,
            bool measure_gc_performance,
            bool use_homogeneous_space_compaction_for_oom,
-           uint64_t min_interval_homogeneous_space_compaction_by_oom)
+           uint64_t min_interval_homogeneous_space_compaction_by_oom,
+           bool dump_region_info_before_gc,
+           bool dump_region_info_after_gc)
     : non_moving_space_(nullptr),
       rosalloc_space_(nullptr),
       dlmalloc_space_(nullptr),
@@ -300,7 +302,9 @@ Heap::Heap(size_t initial_size,
       backtrace_lock_(nullptr),
       seen_backtrace_count_(0u),
       unique_backtrace_count_(0u),
-      gc_disabled_for_shutdown_(false) {
+      gc_disabled_for_shutdown_(false),
+      dump_region_info_before_gc_(dump_region_info_before_gc),
+      dump_region_info_after_gc_(dump_region_info_after_gc) {
   if (VLOG_IS_ON(heap) || VLOG_IS_ON(startup)) {
     LOG(INFO) << "Heap() entering";
   }
@@ -662,6 +666,9 @@ Heap::Heap(size_t initial_size,
       concurrent_copying_collector_->SetRegionSpace(region_space_);
       if (kEnableGenerationalConcurrentCopyingCollection) {
         young_concurrent_copying_collector_->SetRegionSpace(region_space_);
+        // At this point, non-moving space should be created.
+        DCHECK(non_moving_space_ != nullptr);
+        concurrent_copying_collector_->CreateInterRegionRefBitmaps();
       }
       garbage_collectors_.push_back(concurrent_copying_collector_);
       if (kEnableGenerationalConcurrentCopyingCollection) {
@@ -2732,7 +2739,7 @@ collector::GcType Heap::CollectGarbageInternal(collector::GcType gc_type,
           // active_concurrent_copying_collector_. So we should not concurrency here.
           active_concurrent_copying_collector_ = (gc_type == collector::kGcTypeSticky) ?
               young_concurrent_copying_collector_ : concurrent_copying_collector_;
-          active_concurrent_copying_collector_->SetRegionSpace(region_space_);
+          DCHECK(active_concurrent_copying_collector_->RegionSpace() == region_space_);
         }
         collector = active_concurrent_copying_collector_;
         break;
