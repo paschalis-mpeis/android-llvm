@@ -21,7 +21,6 @@
 #include <unistd.h>
 
 #include <random>
-#include <thread>
 
 #include "android-base/stringprintf.h"
 #include "android-base/strings.h"
@@ -685,40 +684,12 @@ class ImageSpace::Loader {
       REQUIRES_SHARED(Locks::mutator_lock_) {
     TimingLogger logger(__PRETTY_FUNCTION__, /*precise=*/ true, VLOG_IS_ON(image));
 
-    std::unique_ptr<ThreadPool> thread_pool;
     std::unique_ptr<ImageSpace> space = Init(image_filename,
                                              image_location,
                                              oat_file,
                                              &logger,
-                                             &thread_pool,
                                              image_reservation,
                                              error_msg);
-    if (thread_pool != nullptr) {
-      // Delay the thread pool deletion to prevent the deletion slowing down the startup by causing
-      // preemption. TODO: Just do this in heap trim.
-      static constexpr uint64_t kThreadPoolDeleteDelay = MsToNs(5000);
-
-      class DeleteThreadPoolTask : public HeapTask {
-       public:
-        explicit DeleteThreadPoolTask(std::unique_ptr<ThreadPool>&& thread_pool)
-            : HeapTask(NanoTime() + kThreadPoolDeleteDelay), thread_pool_(std::move(thread_pool)) {}
-
-        void Run(Thread* self) override {
-          ScopedTrace trace("DestroyThreadPool");
-          ScopedThreadStateChange stsc(self, kNative);
-          thread_pool_.reset();
-        }
-
-       private:
-        std::unique_ptr<ThreadPool> thread_pool_;
-      };
-      gc::TaskProcessor* const processor = Runtime::Current()->GetHeap()->GetTaskProcessor();
-      // The thread pool is already done being used since Init has finished running. Deleting the
-      // thread pool is done async since it takes a non-trivial amount of time to do.
-      if (processor != nullptr) {
-        processor->AddTask(Thread::Current(), new DeleteThreadPoolTask(std::move(thread_pool)));
-      }
-    }
     if (space != nullptr) {
       uint32_t expected_reservation_size =
           RoundUp(space->GetImageHeader().GetImageSize(), kPageSize);
@@ -779,7 +750,6 @@ class ImageSpace::Loader {
                                           const char* image_location,
                                           const OatFile* oat_file,
                                           TimingLogger* logger,
-                                          std::unique_ptr<ThreadPool>* thread_pool,
                                           /*inout*/MemMap* image_reservation,
                                           /*out*/std::string* error_msg)
       REQUIRES_SHARED(Locks::mutator_lock_) {
@@ -856,18 +826,6 @@ class ImageSpace::Loader {
       return nullptr;
     }
 
-    const size_t kMinBlocks = 2;
-    if (thread_pool != nullptr && image_header->GetBlockCount() >= kMinBlocks) {
-      TimingLogger::ScopedTiming timing("CreateThreadPool", logger);
-      ScopedThreadStateChange stsc(Thread::Current(), kNative);
-      constexpr size_t kStackSize = 64 * KB;
-      constexpr size_t kMaxRuntimeWorkers = 4u;
-      const size_t num_workers =
-          std::min(static_cast<size_t>(std::thread::hardware_concurrency()), kMaxRuntimeWorkers);
-      thread_pool->reset(new ThreadPool("Image", num_workers, /*create_peers=*/false, kStackSize));
-      thread_pool->get()->StartWorkers(Thread::Current());
-    }
-
     // GetImageBegin is the preferred address to map the image. If we manage to map the
     // image at the image begin, the amount of fixup work required is minimized.
     // If it is pic we will retry with error_msg for the failure case. Pass a null error_msg to
@@ -880,7 +838,6 @@ class ImageSpace::Loader {
         *image_header,
         file->Fd(),
         logger,
-        thread_pool != nullptr ? thread_pool->get() : nullptr,
         image_reservation,
         error_msg);
     if (!map.IsValid()) {
@@ -971,7 +928,6 @@ class ImageSpace::Loader {
                               const ImageHeader& image_header,
                               int fd,
                               TimingLogger* logger,
-                              ThreadPool* pool,
                               /*inout*/MemMap* image_reservation,
                               /*out*/std::string* error_msg) {
     TimingLogger::ScopedTiming timing("MapImageFile", logger);
@@ -1015,9 +971,12 @@ class ImageSpace::Loader {
       }
       memcpy(map.Begin(), &image_header, sizeof(ImageHeader));
 
+      Runtime::ScopedThreadPoolUsage stpu;
+      ThreadPool* const pool = stpu.GetThreadPool();
       const uint64_t start = NanoTime();
       Thread* const self = Thread::Current();
-      const bool use_parallel = pool != nullptr;
+      static constexpr size_t kMinBlocks = 2u;
+      const bool use_parallel = pool != nullptr && image_header.GetBlockCount() >= kMinBlocks;
       for (const ImageHeader::Block& block : image_header.GetBlocks(temp_map.Begin())) {
         auto function = [&](Thread*) {
           const uint64_t start2 = NanoTime();
@@ -1062,32 +1021,30 @@ class ImageSpace::Loader {
           app_oat_(app_oat) {}
 
     // Return the relocated address of a heap object.
+    // Null checks must be performed in the caller (for performance reasons).
     template <typename T>
     ALWAYS_INLINE T* ForwardObject(T* src) const {
+      DCHECK(src != nullptr);
       const uintptr_t uint_src = reinterpret_cast<uintptr_t>(src);
       if (boot_image_.InSource(uint_src)) {
         return reinterpret_cast<T*>(boot_image_.ToDest(uint_src));
       }
-      if (app_image_.InSource(uint_src)) {
-        return reinterpret_cast<T*>(app_image_.ToDest(uint_src));
-      }
       // Since we are fixing up the app image, there should only be pointers to the app image and
       // boot image.
-      DCHECK(src == nullptr) << reinterpret_cast<const void*>(src);
-      return src;
+      DCHECK(app_image_.InSource(uint_src)) << reinterpret_cast<const void*>(src);
+      return reinterpret_cast<T*>(app_image_.ToDest(uint_src));
     }
 
     // Return the relocated address of a code pointer (contained by an oat file).
+    // Null checks must be performed in the caller (for performance reasons).
     ALWAYS_INLINE const void* ForwardCode(const void* src) const {
+      DCHECK(src != nullptr);
       const uintptr_t uint_src = reinterpret_cast<uintptr_t>(src);
       if (boot_image_.InSource(uint_src)) {
         return reinterpret_cast<const void*>(boot_image_.ToDest(uint_src));
       }
-      if (app_oat_.InSource(uint_src)) {
-        return reinterpret_cast<const void*>(app_oat_.ToDest(uint_src));
-      }
-      DCHECK(src == nullptr) << src;
-      return src;
+      DCHECK(app_oat_.InSource(uint_src)) << src;
+      return reinterpret_cast<const void*>(app_oat_.ToDest(uint_src));
     }
 
     // Must be called on pointers that already have been relocated to the destination relocation.
@@ -1157,9 +1114,12 @@ class ImageSpace::Loader {
       // Space is not yet added to the heap, don't do a read barrier.
       mirror::Object* ref = obj->GetFieldObject<mirror::Object, kVerifyNone, kWithoutReadBarrier>(
           offset);
-      // Use SetFieldObjectWithoutWriteBarrier to avoid card marking since we are writing to the
-      // image.
-      obj->SetFieldObjectWithoutWriteBarrier<false, true, kVerifyNone>(offset, ForwardObject(ref));
+      if (ref != nullptr) {
+        // Use SetFieldObjectWithoutWriteBarrier to avoid card marking since we are writing to the
+        // image.
+        obj->SetFieldObjectWithoutWriteBarrier<false, true, kVerifyNone>(
+            offset, ForwardObject(ref));
+      }
     }
 
     // java.lang.ref.Reference visitor.
@@ -1167,9 +1127,11 @@ class ImageSpace::Loader {
                     ObjPtr<mirror::Reference> ref) const
         REQUIRES_SHARED(Locks::mutator_lock_) REQUIRES(Locks::heap_bitmap_lock_) {
       mirror::Object* obj = ref->GetReferent<kWithoutReadBarrier>();
-      ref->SetFieldObjectWithoutWriteBarrier<false, true, kVerifyNone>(
-          mirror::Reference::ReferentOffset(),
-          ForwardObject(obj));
+      if (obj != nullptr) {
+        ref->SetFieldObjectWithoutWriteBarrier<false, true, kVerifyNone>(
+            mirror::Reference::ReferentOffset(),
+            ForwardObject(obj));
+      }
     }
 
     void operator()(mirror::Object* obj) const
@@ -1915,7 +1877,6 @@ class ImageSpace::BootImageLoader {
                         image_location.c_str(),
                         /*oat_file=*/ nullptr,
                         logger,
-                        /*thread_pool=*/ nullptr,
                         image_reservation,
                         error_msg);
   }
