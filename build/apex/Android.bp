@@ -18,11 +18,15 @@ art_runtime_base_native_shared_libs = [
     "libopenjdkjvm",
     "libopenjdkjvmti",
     "libadbconnection",
+    "libjavacrypto",
 ]
 bionic_native_shared_libs = [
     "libc",
     "libm",
     "libdl",
+]
+bionic_binaries_both = [
+    "linker",
 ]
 // - Fake library that avoids namespace issues and gives some warnings for nosy apps.
 art_runtime_fake_native_shared_libs = [
@@ -51,6 +55,7 @@ art_runtime_debug_native_shared_libs = [
     "libopenjdkjvmd",
     "libopenjdkjvmtid",
     "libadbconnectiond",
+    "libjavacrypto",
 ]
 
 // Files associated with bionic / managed core library time zone APIs.
@@ -113,7 +118,8 @@ apex {
         both: {
             // TODO: Add logic to create a `dalvikvm` symlink to `dalvikvm32` or `dalvikvm64`
             // (see `symlink_preferred_arch` in art/dalvikvm/Android.bp).
-            binaries: art_runtime_base_binaries_both,
+            binaries: art_runtime_base_binaries_both
+                + bionic_binaries_both,
         },
         prefer32: {
             binaries: art_runtime_base_binaries_prefer32,
@@ -142,7 +148,8 @@ apex {
         both: {
             // TODO: Add logic to create a `dalvikvm` symlink to `dalvikvm32` or `dalvikvm64`
             // (see `symlink_preferred_arch` in art/dalvikvm/Android.bp).
-            binaries: art_runtime_base_binaries_both,
+            binaries: art_runtime_base_binaries_both
+                + bionic_binaries_both,
         },
         prefer32: {
             binaries: art_runtime_base_binaries_prefer32
