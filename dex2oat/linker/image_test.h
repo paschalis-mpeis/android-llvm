@@ -36,6 +36,7 @@
 #include "compiler_callbacks.h"
 #include "debug/method_debug_info.h"
 #include "dex/quick_compiler_callbacks.h"
+#include "dex/signature-inl.h"
 #include "driver/compiler_driver.h"
 #include "driver/compiler_options.h"
 #include "gc/space/image_space.h"
@@ -492,7 +493,7 @@ inline void ImageTest::TestWriteRead(ImageHeader::StorageMode storage_mode,
       CHECK_EQ(kRequestedImageBase, reinterpret_cast<uintptr_t>(image_begin));
     }
     for (size_t j = 0; j < dex->NumClassDefs(); ++j) {
-      const DexFile::ClassDef& class_def = dex->GetClassDef(j);
+      const dex::ClassDef& class_def = dex->GetClassDef(j);
       const char* descriptor = dex->GetClassDescriptor(class_def);
       ObjPtr<mirror::Class> klass = class_linker_->FindSystemClass(soa.Self(), descriptor);
       EXPECT_TRUE(klass != nullptr) << descriptor;

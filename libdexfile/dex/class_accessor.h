@@ -18,14 +18,21 @@
 #define ART_LIBDEXFILE_DEX_CLASS_ACCESSOR_H_
 
 #include "code_item_accessors.h"
-#include "dex_file.h"
+#include "dex_file_types.h"
 #include "invoke_type.h"
-#include "method_reference.h"
 #include "modifiers.h"
 
 namespace art {
 
+namespace dex {
+struct ClassDef;
+struct CodeItem;
+}  // namespace dex
+
 class ClassIteratorData;
+class DexFile;
+template <typename Iter> class IterationRange;
+class MethodReference;
 
 // Classes to access Dex data.
 class ClassAccessor {
@@ -92,14 +99,12 @@ class ClassAccessor {
           : GetVirtualMethodInvokeType(class_access_flags);
     }
 
-    MethodReference GetReference() const {
-      return MethodReference(&dex_file_, GetIndex());
-    }
+    MethodReference GetReference() const;
 
     CodeItemInstructionAccessor GetInstructions() const;
     CodeItemDataAccessor GetInstructionsAndData() const;
 
-    const DexFile::CodeItem* GetCodeItem() const;
+    const dex::CodeItem* GetCodeItem() const;
 
     bool IsStaticOrDirect() const {
       return is_static_or_direct_;
@@ -266,18 +271,18 @@ class ClassAccessor {
   ALWAYS_INLINE ClassAccessor(const ClassIteratorData& data);  // NOLINT [runtime/explicit] [5]
 
   ALWAYS_INLINE ClassAccessor(const DexFile& dex_file,
-                              const DexFile::ClassDef& class_def,
+                              const dex::ClassDef& class_def,
                               bool parse_hiddenapi_class_data = false);
 
   ALWAYS_INLINE ClassAccessor(const DexFile& dex_file, uint32_t class_def_index);
 
   ClassAccessor(const DexFile& dex_file,
                 const uint8_t* class_data,
-                uint32_t class_def_index = DexFile::kDexNoIndex32,
+                uint32_t class_def_index = dex::kDexNoIndex,
                 bool parse_hiddenapi_class_data = false);
 
   // Return the code item for a method.
-  const DexFile::CodeItem* GetCodeItem(const Method& method) const;
+  const dex::CodeItem* GetCodeItem(const Method& method) const;
 
   // Iterator data is not very iterator friendly, use visitors to get around this.
   template <typename StaticFieldVisitor,
@@ -361,9 +366,7 @@ class ClassAccessor {
     return class_def_index_;
   }
 
-  const DexFile::ClassDef& GetClassDef() const {
-    return dex_file_.GetClassDef(GetClassDefIndex());
-  }
+  const dex::ClassDef& GetClassDef() const;
 
  protected:
   // Template visitor to reduce copy paste for visiting elements.

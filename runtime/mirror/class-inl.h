@@ -22,6 +22,7 @@
 #include "art_field.h"
 #include "art_method.h"
 #include "base/array_slice.h"
+#include "base/iteration_range.h"
 #include "base/length_prefixed_array.h"
 #include "base/utils.h"
 #include "class_linker.h"
@@ -31,6 +32,7 @@
 #include "dex/invoke_type.h"
 #include "dex_cache.h"
 #include "iftable.h"
+#include "imtable.h"
 #include "object-inl.h"
 #include "object_array.h"
 #include "read_barrier-inl.h"
@@ -825,7 +827,7 @@ inline bool Class::DescriptorEquals(const char* match) {
     return ProxyDescriptorEquals(match);
   } else {
     const DexFile& dex_file = GetDexFile();
-    const DexFile::TypeId& type_id = dex_file.GetTypeId(GetClassDef()->class_idx_);
+    const dex::TypeId& type_id = dex_file.GetTypeId(GetClassDef()->class_idx_);
     return strcmp(dex_file.GetTypeDescriptor(type_id), match) == 0;
   }
 }
@@ -899,7 +901,7 @@ inline uint32_t Class::NumDirectInterfaces() {
     ObjectArray<Class>* interfaces = GetProxyInterfaces();
     return interfaces != nullptr ? interfaces->GetLength() : 0;
   } else {
-    const DexFile::TypeList* interfaces = GetInterfaceTypeList();
+    const dex::TypeList* interfaces = GetInterfaceTypeList();
     if (interfaces == nullptr) {
       return 0;
     } else {

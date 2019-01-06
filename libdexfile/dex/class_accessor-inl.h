@@ -24,6 +24,8 @@
 #include "base/utils.h"
 #include "class_iterator.h"
 #include "code_item_accessors-inl.h"
+#include "dex_file.h"
+#include "method_reference.h"
 
 namespace art {
 
@@ -31,7 +33,7 @@ inline ClassAccessor::ClassAccessor(const ClassIteratorData& data)
     : ClassAccessor(data.dex_file_, data.class_def_idx_) {}
 
 inline ClassAccessor::ClassAccessor(const DexFile& dex_file,
-                                    const DexFile::ClassDef& class_def,
+                                    const dex::ClassDef& class_def,
                                     bool parse_hiddenapi_class_data)
     : ClassAccessor(dex_file,
                     dex_file.GetClassData(class_def),
@@ -54,7 +56,7 @@ inline ClassAccessor::ClassAccessor(const DexFile& dex_file,
       num_direct_methods_(ptr_pos_ != nullptr ? DecodeUnsignedLeb128(&ptr_pos_) : 0u),
       num_virtual_methods_(ptr_pos_ != nullptr ? DecodeUnsignedLeb128(&ptr_pos_) : 0u) {
   if (parse_hiddenapi_class_data && class_def_index != DexFile::kDexNoIndex32) {
-    const DexFile::HiddenapiClassData* hiddenapi_class_data = dex_file.GetHiddenapiClassData();
+    const dex::HiddenapiClassData* hiddenapi_class_data = dex_file.GetHiddenapiClassData();
     if (hiddenapi_class_data != nullptr) {
       hiddenapi_ptr_pos_ = hiddenapi_class_data->GetFlagsPointer(class_def_index);
     }
@@ -70,6 +72,11 @@ inline void ClassAccessor::Method::Read() {
     DCHECK(hiddenapi::AreValidDexFlags(hiddenapi_flags_));
   }
 }
+
+inline MethodReference ClassAccessor::Method::GetReference() const {
+  return MethodReference(&dex_file_, GetIndex());
+}
+
 
 inline void ClassAccessor::Field::Read() {
   index_ += DecodeUnsignedLeb128(&ptr_pos_);
@@ -131,7 +138,7 @@ inline void ClassAccessor::VisitFields(const StaticFieldVisitor& static_field_vi
                         VoidFunctor());
 }
 
-inline const DexFile::CodeItem* ClassAccessor::GetCodeItem(const Method& method) const {
+inline const dex::CodeItem* ClassAccessor::GetCodeItem(const Method& method) const {
   return dex_file_.GetCodeItem(method.GetCodeItemOffset());
 }
 
@@ -147,7 +154,7 @@ inline const char* ClassAccessor::GetDescriptor() const {
   return dex_file_.StringByTypeIdx(GetClassIdx());
 }
 
-inline const DexFile::CodeItem* ClassAccessor::Method::GetCodeItem() const {
+inline const dex::CodeItem* ClassAccessor::Method::GetCodeItem() const {
   return dex_file_.GetCodeItem(code_off_);
 }
 
@@ -229,6 +236,10 @@ inline IterationRange<ClassAccessor::DataIterator<ClassAccessor::Method>>
 
 inline dex::TypeIndex ClassAccessor::GetClassIdx() const {
   return dex_file_.GetClassDef(class_def_index_).class_idx_;
+}
+
+inline const dex::ClassDef& ClassAccessor::GetClassDef() const {
+  return dex_file_.GetClassDef(GetClassDefIndex());
 }
 
 }  // namespace art
