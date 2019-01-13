@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 The Android Open Source Project
+ * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,83 +14,21 @@
  * limitations under the License.
  */
 
-#ifndef ART_LIBDEXFILE_EXTERNAL_INCLUDE_ART_API_EXT_DEX_FILE_H_
-#define ART_LIBDEXFILE_EXTERNAL_INCLUDE_ART_API_EXT_DEX_FILE_H_
+#ifndef ART_LIBDEXFILE_EXTERNAL_INCLUDE_ART_API_DEX_FILE_SUPPORT_H_
+#define ART_LIBDEXFILE_EXTERNAL_INCLUDE_ART_API_DEX_FILE_SUPPORT_H_
 
-// Dex file external API
-
-#include <sys/types.h>
+// C++ wrapper for the dex file external API.
 
 #include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <android-base/macros.h>
 
-extern "C" {
-
-// This is the stable C ABI that backs art_api::dex below. Structs and functions
-// may only be added here.
-// TODO(b/120978655): Move this to a separate pure C header.
-//
-// Clients should use the C++ wrappers in art_api::dex instead.
-
-// Opaque wrapper for an std::string allocated in libdexfile which must be freed
-// using ExtDexFileFreeString.
-class ExtDexFileString;
-
-// Returns an ExtDexFileString initialized to the given string.
-const ExtDexFileString* ExtDexFileMakeString(const char* str);
-
-// Returns a pointer to the underlying null-terminated character array and its
-// size for the given ExtDexFileString.
-const char* ExtDexFileGetString(const ExtDexFileString* ext_string, /*out*/ size_t* size);
-
-// Frees an ExtDexFileString.
-void ExtDexFileFreeString(const ExtDexFileString* ext_string);
-
-struct ExtDexFileMethodInfo {
-  int32_t offset;
-  int32_t len;
-  const ExtDexFileString* name;
-};
-
-class ExtDexFile;
-
-// See art_api::dex::DexFile::OpenFromMemory. Returns true on success.
-int ExtDexFileOpenFromMemory(const void* addr,
-                             /*inout*/ size_t* size,
-                             const char* location,
-                             /*out*/ const ExtDexFileString** error_msg,
-                             /*out*/ ExtDexFile** ext_dex_file);
-
-// See art_api::dex::DexFile::OpenFromFd. Returns true on success.
-int ExtDexFileOpenFromFd(int fd,
-                         off_t offset,
-                         const char* location,
-                         /*out*/ const ExtDexFileString** error_msg,
-                         /*out*/ ExtDexFile** ext_dex_file);
-
-// See art_api::dex::DexFile::GetMethodInfoForOffset. Returns true on success.
-int ExtDexFileGetMethodInfoForOffset(ExtDexFile* ext_dex_file,
-                                     int64_t dex_offset,
-                                     /*out*/ ExtDexFileMethodInfo* method_info);
-
-typedef void ExtDexFileMethodInfoCallback(const ExtDexFileMethodInfo* ext_method_info,
-                                          void* user_data);
-
-// See art_api::dex::DexFile::GetAllMethodInfos.
-void ExtDexFileGetAllMethodInfos(ExtDexFile* ext_dex_file,
-                                 int with_signature,
-                                 ExtDexFileMethodInfoCallback* method_info_cb,
-                                 void* user_data);
-
-// Frees an ExtDexFile.
-void ExtDexFileFree(ExtDexFile* ext_dex_file);
-
-}  // extern "C"
+#include "art_api/dex_file_external.h"
 
 namespace art_api {
 namespace dex {
@@ -98,12 +36,17 @@ namespace dex {
 // Minimal std::string look-alike for a string returned from libdexfile.
 class DexString final {
  public:
-  DexString(DexString&& dex_str) noexcept { ReplaceExtString(std::move(dex_str)); }
-  explicit DexString(const char* str = "") : ext_string_(ExtDexFileMakeString(str)) {}
+  DexString(DexString&& dex_str) noexcept : ext_string_(dex_str.ext_string_) {
+    dex_str.ext_string_ = ExtDexFileMakeString("", 0);
+  }
+  explicit DexString(const char* str = "")
+      : ext_string_(ExtDexFileMakeString(str, std::strlen(str))) {}
+  explicit DexString(std::string_view str)
+      : ext_string_(ExtDexFileMakeString(str.data(), str.size())) {}
   ~DexString() { ExtDexFileFreeString(ext_string_); }
 
   DexString& operator=(DexString&& dex_str) noexcept {
-    ReplaceExtString(std::move(dex_str));
+    std::swap(ext_string_, dex_str.ext_string_);
     return *this;
   }
 
@@ -131,11 +74,6 @@ class DexString final {
   friend bool operator==(const DexString&, const DexString&);
   explicit DexString(const ExtDexFileString* ext_string) : ext_string_(ext_string) {}
   const ExtDexFileString* ext_string_;  // Owned instance. Never nullptr.
-
-  void ReplaceExtString(DexString&& dex_str) {
-    ext_string_ = dex_str.ext_string_;
-    dex_str.ext_string_ = ExtDexFileMakeString("");
-  }
 
   DISALLOW_COPY_AND_ASSIGN(DexString);
 };
@@ -211,10 +149,15 @@ class DexFile {
 
   // Given an offset relative to the start of the dex file header, if there is a
   // method whose instruction range includes that offset then returns info about
-  // it, otherwise returns a struct with offset == 0.
-  MethodInfo GetMethodInfoForOffset(int64_t dex_offset) {
+  // it, otherwise returns a struct with offset == 0. MethodInfo.name receives
+  // the full function signature if with_signature is set, otherwise it gets the
+  // class and method name only.
+  MethodInfo GetMethodInfoForOffset(int64_t dex_offset, bool with_signature) {
     ExtDexFileMethodInfo ext_method_info;
-    if (ExtDexFileGetMethodInfoForOffset(ext_dex_file_, dex_offset, &ext_method_info)) {
+    if (ExtDexFileGetMethodInfoForOffset(ext_dex_file_,
+                                         dex_offset,
+                                         with_signature,
+                                         &ext_method_info)) {
       return AbsorbMethodInfo(ext_method_info);
     }
     return {/*offset=*/0, /*len=*/0, /*name=*/DexString()};
@@ -223,10 +166,12 @@ class DexFile {
   // Returns info structs about all methods in the dex file. MethodInfo.name
   // receives the full function signature if with_signature is set, otherwise it
   // gets the class and method name only.
-  std::vector<MethodInfo> GetAllMethodInfos(bool with_signature = true) {
+  std::vector<MethodInfo> GetAllMethodInfos(bool with_signature) {
     MethodInfoVector res;
-    ExtDexFileGetAllMethodInfos(
-        ext_dex_file_, with_signature, AddMethodInfoCallback, static_cast<void*>(&res));
+    ExtDexFileGetAllMethodInfos(ext_dex_file_,
+                                with_signature,
+                                AddMethodInfoCallback,
+                                static_cast<void*>(&res));
     return res;
   }
 
@@ -245,4 +190,4 @@ class DexFile {
 }  // namespace dex
 }  // namespace art_api
 
-#endif  // ART_LIBDEXFILE_EXTERNAL_INCLUDE_ART_API_EXT_DEX_FILE_H_
+#endif  // ART_LIBDEXFILE_EXTERNAL_INCLUDE_ART_API_DEX_FILE_SUPPORT_H_

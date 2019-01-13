@@ -27,7 +27,6 @@
 #include <memory>
 #include <vector>
 
-#include "arch/instruction_set.h"
 #include "base/locks.h"
 #include "base/macros.h"
 #include "base/mem_map.h"
@@ -84,6 +83,7 @@ enum class CalleeSaveType: uint32_t;
 class ClassLinker;
 class CompilerCallbacks;
 class DexFile;
+enum class InstructionSet;
 class InternTable;
 class IsMarkedVisitor;
 class JavaVMExt;
@@ -634,7 +634,7 @@ class Runtime {
   void SetJavaDebuggable(bool value);
 
   // Deoptimize the boot image, called for Java debuggable apps.
-  void DeoptimizeBootImage();
+  void DeoptimizeBootImage() REQUIRES(Locks::mutator_lock_);
 
   bool IsNativeDebuggable() const {
     return is_native_debuggable_;

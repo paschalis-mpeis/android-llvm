@@ -73,7 +73,7 @@ elif [[ $mode == "target" ]]; then
     exit 1
   fi
   make_command="make $j_arg $extra_args $showcommands build-art-target-tests $common_targets"
-  make_command+=" libjavacrypto-target libnetd_client-target linker toybox toolbox sh"
+  make_command+=" libjavacrypto-target libnetd_client-target linker toybox toolbox sh unzip"
   make_command+=" debuggerd su"
   make_command+=" libstdc++ "
   make_command+=" ${ANDROID_PRODUCT_OUT#"${ANDROID_BUILD_TOP}/"}/system/etc/public.libraries.txt"
@@ -81,8 +81,17 @@ elif [[ $mode == "target" ]]; then
     # These targets are needed for the chroot environment.
     make_command+=" crash_dump event-log-tags"
   fi
-  # Build the Runtime APEX.
-  make_command+=" com.android.runtime"
+  # Build the Debug Runtime APEX (which is a superset of the Release Runtime APEX).
+  make_command+=" com.android.runtime.debug"
+  # Create a copy of the ICU .dat prebuilt files in /system/etc/icu on target,
+  # so that it can found even if the Runtime APEX is not available, by setting
+  # the environment variable `ART_TEST_ANDROID_RUNTIME_ROOT` to "/system" on
+  # device. This is a temporary change needed until both the ART Buildbot and
+  # Golem fully support the Runtime APEX.
+  #
+  # TODO(b/121117762): Remove this when the ART Buildbot and Golem have full
+  # support for the Runtime APEX.
+  make_command+=" icu-data-art-test"
   mode_suffix="-target"
 fi
 

@@ -17,12 +17,12 @@
 #ifndef ART_RUNTIME_OBJ_PTR_H_
 #define ART_RUNTIME_OBJ_PTR_H_
 
-#include <ostream>
+#include <iosfwd>
 #include <type_traits>
 
-#include "base/globals.h"
 #include "base/locks.h"  // For Locks::mutator_lock_.
 #include "base/macros.h"
+#include "runtime_globals.h"
 
 // Always inline ObjPtr methods even in debug builds.
 #define OBJPTR_INLINE __attribute__ ((always_inline))

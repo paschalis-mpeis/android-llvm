@@ -18,7 +18,7 @@
 #define ART_LIBARTBASE_BASE_ENUMS_H_
 
 #include <cstddef>
-#include <ostream>
+#include <iosfwd>
 
 namespace art {
 
@@ -27,14 +27,7 @@ enum class PointerSize : size_t {
   k64 = 8
 };
 
-inline std::ostream& operator<<(std::ostream& os, const PointerSize& rhs) {
-  switch (rhs) {
-    case PointerSize::k32: os << "k32"; break;
-    case PointerSize::k64: os << "k64"; break;
-    default: os << "PointerSize[" << static_cast<int>(rhs) << "]"; break;
-  }
-  return os;
-}
+std::ostream& operator<<(std::ostream& os, const PointerSize& rhs);
 
 static constexpr PointerSize kRuntimePointerSize = sizeof(void*) == 8U
                                                        ? PointerSize::k64

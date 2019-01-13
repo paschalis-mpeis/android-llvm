@@ -1,4 +1,6 @@
-# Copyright (C) 2016 The Android Open Source Project
+#!/bin/bash
+#
+# Copyright 2019 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,25 +13,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
 
-LOCAL_PATH := $(my-dir)
+# make us exit on a failure
+set -e
 
-include $(CLEAR_VARS)
+count=10000
+echo "LMain;" >> profile
+for i in $(seq 1 "$count"); do
+  echo "LOther\$Inner${i};" >> "profile"
+done
 
-LOCAL_MODULE := libart_fake
-LOCAL_INSTALLED_MODULE_STEM := libart.so
-LOCAL_SDK_VERSION := 9
-LOCAL_CPP_EXTENSION := .cc
-LOCAL_SRC_FILES := fake.cc
-LOCAL_CFLAGS := -Wall -Werror
-LOCAL_SHARED_LIBRARIES := liblog
+# Generate the other class.
+other_file="src/Other.java"
+echo "class Other {" >> "${other_file}"
+for i in $(seq 1 "$count"); do
+  echo "  static class Inner${i} { void test(){} }" >> "${other_file}"
+done
+echo "}" >> "${other_file}"
 
-ifdef TARGET_2ND_ARCH
-    LOCAL_MODULE_PATH_32 := $(TARGET_OUT)/fake-libs
-    LOCAL_MODULE_PATH_64 := $(TARGET_OUT)/fake-libs64
-else
-    LOCAL_MODULE_PATH := $(TARGET_OUT)/fake-libs
-endif
-
-include $(BUILD_SHARED_LIBRARY)
+./default-build "$@"

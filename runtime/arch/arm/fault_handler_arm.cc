@@ -18,12 +18,13 @@
 
 #include <sys/ucontext.h>
 
+#include "arch/instruction_set.h"
 #include "art_method.h"
 #include "base/enums.h"
-#include "base/globals.h"
 #include "base/hex_dump.h"
 #include "base/logging.h"  // For VLOG.
 #include "base/macros.h"
+#include "runtime_globals.h"
 #include "thread-current-inl.h"
 
 //
