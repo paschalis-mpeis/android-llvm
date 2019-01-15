@@ -464,7 +464,7 @@ ISA=$(LD_LIBRARY_PATH=$LD_LIBRARY_PATH $ART_BINARY_PATH -showversion | (read art
 # Extract the dex2oat flags from the list of arguments.
 # -Xcompiler-options arguments are stored in DEX2OAT_FLAGS array
 # -cp argument is split by ':' and stored in DEX2OAT_CLASSPATH
-# -Ximage argument is stored in DEX2OAT_BOOTIMAGE
+# -Ximage argument is stored in DEX2OAT_BOOT_IMAGE
 extract_dex2oat_flags "$@"
 
 # If ANDROID_DATA is the system ANDROID_DATA or is not set, use our own,
@@ -486,7 +486,7 @@ if [[ "$DEX2OAT_BCP" = "" && "$DEX2OAT_BCP_LOCS" != "" ]]; then
   exit 1
 fi
 
-if [[ "$DEX2OAT_BOOT_IMAGE" = *core.art && "$DEX2OAT_BCP" = "" ]]; then
+if [[ "$DEX2OAT_BOOT_IMAGE" = *core*.art && "$DEX2OAT_BCP" = "" ]]; then
   # Note: This must start with the CORE_IMG_JARS in Android.common_path.mk
   # because that's what we use for compiling the core.art image.
   # It may contain additional modules from TEST_CORE_JARS.
