@@ -198,7 +198,7 @@ ART_GTEST_jni_internal_test_DEX_DEPS := AllFields StaticLeafMethods MyClassNativ
 ART_GTEST_oat_file_assistant_test_DEX_DEPS := $(ART_GTEST_dex2oat_environment_tests_DEX_DEPS)
 ART_GTEST_dexoptanalyzer_test_DEX_DEPS := $(ART_GTEST_dex2oat_environment_tests_DEX_DEPS)
 ART_GTEST_image_space_test_DEX_DEPS := $(ART_GTEST_dex2oat_environment_tests_DEX_DEPS)
-ART_GTEST_oat_file_test_DEX_DEPS := Main MultiDex MainUncompressed MultiDexUncompressed
+ART_GTEST_oat_file_test_DEX_DEPS := Main MultiDex MainUncompressed MultiDexUncompressed MainStripped Nested MultiDexModifiedSecondary
 ART_GTEST_oat_test_DEX_DEPS := Main
 ART_GTEST_oat_writer_test_DEX_DEPS := Main
 ART_GTEST_object_test_DEX_DEPS := ProtoCompare ProtoCompare2 StaticsFromCode XandY
@@ -216,6 +216,7 @@ ART_GTEST_heap_verification_test_DEX_DEPS := ProtoCompare ProtoCompare2 StaticsF
 ART_GTEST_verifier_deps_test_DEX_DEPS := VerifierDeps VerifierDepsMulti MultiDex
 ART_GTEST_dex_to_dex_decompiler_test_DEX_DEPS := VerifierDeps DexToDexDecompiler
 ART_GTEST_oatdump_app_test_DEX_DEPS := ProfileTestMultiDex
+ART_GTEST_oatdump_test_DEX_DEPS := ProfileTestMultiDex
 
 # The elf writer test has dependencies on core.oat.
 ART_GTEST_elf_writer_test_HOST_DEPS := $(HOST_CORE_IMAGE_DEFAULT_64) $(HOST_CORE_IMAGE_DEFAULT_32)
