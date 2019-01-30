@@ -1088,6 +1088,7 @@
                   "999-redefine-hiddenapi",
                   "1000-non-moving-space-stress",
                   "1001-app-image-regions",
+                  "1339-dead-reference-safe",
                   "1951-monitor-enter-no-suspend",
                   "1957-error-ext"],
         "variant": "jvm",
@@ -1170,6 +1171,11 @@
         "tests": ["454-get-vreg", "457-regs"],
         "variant": "baseline",
         "description": ["Tests are expected to fail with baseline."]
+    },
+    {
+        "tests": ["1339-dead-reference-safe"],
+        "variant": "debuggable",
+        "description": [ "Fails to eliminate dead reference when debuggable." ]
     },
     {
         "tests": ["708-jit-cache-churn"],
