@@ -197,6 +197,7 @@ function check_release_contents {
   check_library libart.so
   check_library libartbase.so
   check_library libdexfile.so
+  check_library libdexfile_external.so
   check_library libopenjdkjvm.so
   check_library libopenjdkjvmti.so
   check_library libprofile.so
@@ -223,14 +224,11 @@ function check_release_contents {
   #
   # ?
 
-  # TODO: Enable for host
-  if [ $1 != "com.android.runtime.host" ]; then
-    check_java_library core-oj.jar
-    check_java_library core-libart.jar
-    check_java_library okhttp.jar
-    check_java_library bouncycastle.jar
-    check_java_library apache-xml.jar
-  fi
+  check_java_library core-oj.jar
+  check_java_library core-libart.jar
+  check_java_library okhttp.jar
+  check_java_library bouncycastle.jar
+  check_java_library apache-xml.jar
 }
 
 # Check debug contents of APEX payload located in `$mount_point`.
