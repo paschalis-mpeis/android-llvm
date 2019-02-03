@@ -30,7 +30,6 @@ namespace.platform.search.paths = /system/${LIB}
 namespace.platform.asan.search.paths = /data/asan/system/${LIB}
 namespace.platform.links = default
 namespace.platform.link.default.shared_libs  = libart.so:libartd.so
-namespace.platform.link.default.shared_libs += libdexfile_external.so
 namespace.platform.link.default.shared_libs += libnativebridge.so
 namespace.platform.link.default.shared_libs += libnativehelper.so
 namespace.platform.link.default.shared_libs += libnativeloader.so
@@ -62,7 +61,8 @@ namespace.conscrypt.visible = true
 
 namespace.conscrypt.search.paths = /apex/com.android.conscrypt/${LIB}
 namespace.conscrypt.asan.search.paths = /apex/com.android.conscrypt/${LIB}
-namespace.conscrypt.links = platform
+namespace.conscrypt.links = runtime,platform
+namespace.conscrypt.link.runtime.shared_libs   = libjavacore.so
 namespace.conscrypt.link.platform.shared_libs  = libc.so
 namespace.conscrypt.link.platform.shared_libs += libm.so
 namespace.conscrypt.link.platform.shared_libs += libdl.so
