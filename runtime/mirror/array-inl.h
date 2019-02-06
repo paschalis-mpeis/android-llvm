@@ -224,14 +224,30 @@ inline void PrimitiveArray<T>::Memcpy(int32_t dst_pos,
   }
 }
 
-template<typename T, VerifyObjectFlags kVerifyFlags>
-inline T PointerArray::GetElementPtrSize(uint32_t idx, PointerSize ptr_size) {
+template<typename T, PointerSize kPointerSize, VerifyObjectFlags kVerifyFlags>
+inline T PointerArray::GetElementPtrSize(uint32_t idx) {
   // C style casts here since we sometimes have T be a pointer, or sometimes an integer
   // (for stack traces).
-  if (ptr_size == PointerSize::k64) {
+  if (kPointerSize == PointerSize::k64) {
     return (T)static_cast<uintptr_t>(AsLongArray<kVerifyFlags>()->GetWithoutChecks(idx));
   }
   return (T)static_cast<uintptr_t>(AsIntArray<kVerifyFlags>()->GetWithoutChecks(idx));
+}
+template<typename T, PointerSize kPointerSize, VerifyObjectFlags kVerifyFlags>
+inline T PointerArray::GetElementPtrSizeUnchecked(uint32_t idx) {
+  // C style casts here since we sometimes have T be a pointer, or sometimes an integer
+  // (for stack traces).
+  if (kPointerSize == PointerSize::k64) {
+    return (T)static_cast<uintptr_t>(AsLongArrayUnchecked<kVerifyFlags>()->GetWithoutChecks(idx));
+  }
+  return (T)static_cast<uintptr_t>(AsIntArrayUnchecked<kVerifyFlags>()->GetWithoutChecks(idx));
+}
+template<typename T, VerifyObjectFlags kVerifyFlags>
+inline T PointerArray::GetElementPtrSize(uint32_t idx, PointerSize ptr_size) {
+  if (ptr_size == PointerSize::k64) {
+    return GetElementPtrSize<T, PointerSize::k64, kVerifyFlags>(idx);
+  }
+  return GetElementPtrSize<T, PointerSize::k32, kVerifyFlags>(idx);
 }
 
 template<bool kTransactionActive, bool kUnchecked>
