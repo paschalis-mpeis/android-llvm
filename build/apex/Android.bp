@@ -13,11 +13,15 @@ art_runtime_base_binaries_prefer32 = [
 ]
 // - Base requirements (libraries).
 art_runtime_base_native_shared_libs = [
+    "libadbconnection",
     "libart",
     "libart-compiler",
+    "libdexfile_external",
+    "libnativebridge",
+    "libnativehelper",
+    "libnativeloader",
     "libopenjdkjvm",
     "libopenjdkjvmti",
-    "libadbconnection",
 ]
 bionic_native_shared_libs = [
     "libc",
@@ -41,11 +45,11 @@ art_runtime_debug_binaries_both_host = [
 
 // - Debug variants (libraries).
 art_runtime_debug_native_shared_libs = [
+    "libadbconnectiond",
     "libartd",
     "libartd-compiler",
     "libopenjdkjvmd",
     "libopenjdkjvmtid",
-    "libadbconnectiond",
 ]
 libcore_debug_native_shared_libs = [
     "libopenjdkd",
@@ -85,6 +89,11 @@ art_tools_host_only_binaries = [
 art_tools_device_binaries = art_tools_common_binaries + art_tools_device_only_binaries
 art_tools_host_binaries = art_tools_common_binaries + art_tools_host_only_binaries
 
+// Libraries needed to use com.android.runtime.host for zipapex run-tests
+art_runtime_host_run_test_libs = [
+    "libartd-disassembler"
+]
+
 // Libcore native libraries.
 libcore_native_shared_libs = [
     "libjavacore",
@@ -101,6 +110,14 @@ libcore_target_java_libs = [
     "okhttp",
     "bouncycastle",
     "apache-xml",
+]
+
+// Temporary library includes for b/123591866 as all libraries are moved into the main art-apex.
+art_runtime_libraries_zipapex = [
+    "libnativebridge",
+    "libnativeloader",
+    "libnativehelper",
+    "libcutils",
 ]
 
 apex_key {
@@ -188,7 +205,7 @@ apex {
 // because binaries have different multilib classes and 'multilib: {}' isn't
 // supported by target: { ... }.
 // See b/120617876 for more information.
-art_apex {
+art_apex_test {
     name: "com.android.runtime.host",
     compile_multilib: "both",
     payload_type: "zip",
@@ -200,7 +217,9 @@ art_apex {
     native_shared_libs: art_runtime_base_native_shared_libs
         + art_runtime_debug_native_shared_libs
         + libcore_native_shared_libs
-        + libcore_debug_native_shared_libs,
+        + libcore_debug_native_shared_libs
+        + art_runtime_libraries_zipapex
+        + art_runtime_host_run_test_libs,
     multilib: {
         both: {
             // TODO: Add logic to create a `dalvikvm` symlink to `dalvikvm32` or `dalvikvm64`
