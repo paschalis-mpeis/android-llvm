@@ -29,8 +29,6 @@ namespace dwarf {
 // Run the tests only on host since we need objdump.
 #ifndef ART_TARGET_ANDROID
 
-constexpr CFIFormat kCFIFormat = DW_DEBUG_FRAME_FORMAT;
-
 TEST_F(DwarfTest, DebugFrame) {
   const bool is64bit = false;
 
@@ -122,31 +120,30 @@ TEST_F(DwarfTest, DebugFrame) {
   DW_CHECK_NEXT("DW_CFA_restore: r5 (ebp)");
 
   DebugFrameOpCodeWriter<> initial_opcodes;
-  WriteCIE(is64bit, Reg(is64bit ? 16 : 8),
-           initial_opcodes, kCFIFormat, &debug_frame_data_);
-  std::vector<uintptr_t> debug_frame_patches;
-  std::vector<uintptr_t> expected_patches = { 28 };
-  WriteFDE(is64bit, 0, 0, 0x01000000, 0x01000000, ArrayRef<const uint8_t>(*opcodes.data()),
-           kCFIFormat, 0, &debug_frame_data_, &debug_frame_patches);
+  WriteCIE(is64bit, Reg(is64bit ? 16 : 8), initial_opcodes, &debug_frame_data_);
+  WriteFDE(is64bit,
+           /* cie_pointer= */ 0,
+           0x01000000,
+           0x01000000,
+           ArrayRef<const uint8_t>(*opcodes.data()),
+           &debug_frame_data_);
 
-  EXPECT_EQ(expected_patches, debug_frame_patches);
   CheckObjdumpOutput(is64bit, "-W");
 }
 
 TEST_F(DwarfTest, DebugFrame64) {
   constexpr bool is64bit = true;
   DebugFrameOpCodeWriter<> initial_opcodes;
-  WriteCIE(is64bit, Reg(16),
-           initial_opcodes, kCFIFormat, &debug_frame_data_);
+  WriteCIE(is64bit, Reg(16), initial_opcodes, &debug_frame_data_);
   DebugFrameOpCodeWriter<> opcodes;
-  std::vector<uintptr_t> debug_frame_patches;
-  std::vector<uintptr_t> expected_patches = { 32 };
-  WriteFDE(is64bit, 0, 0, 0x0100000000000000, 0x0200000000000000,
+  WriteFDE(is64bit,
+           /* cie_pointer= */ 0,
+           0x0100000000000000,
+           0x0200000000000000,
            ArrayRef<const uint8_t>(*opcodes.data()),
-                     kCFIFormat, 0, &debug_frame_data_, &debug_frame_patches);
+           &debug_frame_data_);
   DW_CHECK("FDE cie=00000000 pc=100000000000000..300000000000000");
 
-  EXPECT_EQ(expected_patches, debug_frame_patches);
   CheckObjdumpOutput(is64bit, "-W");
 }
 
@@ -176,12 +173,13 @@ TEST_F(DwarfTest, x86_64_RegisterMapping) {
   DW_CHECK_NEXT("DW_CFA_offset: r14 (r14)");
   DW_CHECK_NEXT("DW_CFA_offset: r15 (r15)");
   DebugFrameOpCodeWriter<> initial_opcodes;
-  WriteCIE(is64bit, Reg(16),
-           initial_opcodes, kCFIFormat, &debug_frame_data_);
-  std::vector<uintptr_t> debug_frame_patches;
-  WriteFDE(is64bit, 0, 0, 0x0100000000000000, 0x0200000000000000,
+  WriteCIE(is64bit, Reg(16), initial_opcodes, &debug_frame_data_);
+  WriteFDE(is64bit,
+           /* cie_pointer= */ 0,
+           0x0100000000000000,
+           0x0200000000000000,
            ArrayRef<const uint8_t>(*opcodes.data()),
-                     kCFIFormat, 0, &debug_frame_data_, &debug_frame_patches);
+           &debug_frame_data_);
 
   CheckObjdumpOutput(is64bit, "-W");
 }
@@ -236,12 +234,8 @@ TEST_F(DwarfTest, DebugLine) {
   DW_CHECK_NEXT("Entry\tDir\tTime\tSize\tName");
   DW_CHECK_NEXT("1\t0\t1000\t2000\tfile.c");
 
-  std::vector<uintptr_t> debug_line_patches;
-  std::vector<uintptr_t> expected_patches = { 87 };
-  WriteDebugLineTable(include_directories, files, opcodes,
-                      0, &debug_line_data_, &debug_line_patches);
+  WriteDebugLineTable(include_directories, files, opcodes, &debug_line_data_);
 
-  EXPECT_EQ(expected_patches, debug_line_patches);
   CheckObjdumpOutput(is64bit, "-W");
 }
 
@@ -276,9 +270,7 @@ TEST_F(DwarfTest, DebugLineSpecialOpcodes) {
 
   std::vector<std::string> directories;
   std::vector<FileEntry> files = { { "file.c", 0, 1000, 2000 } };
-  std::vector<uintptr_t> debug_line_patches;
-  WriteDebugLineTable(directories, files, opcodes,
-                      0, &debug_line_data_, &debug_line_patches);
+  WriteDebugLineTable(directories, files, opcodes, &debug_line_data_);
 
   CheckObjdumpOutput(is64bit, "-W -WL");
 }
@@ -332,12 +324,8 @@ TEST_F(DwarfTest, DebugInfo) {
   DW_CHECK_NEXT("DW_AT_high_pc      DW_FORM_addr");
   DW_CHECK("3      DW_TAG_compile_unit    [no children]");
 
-  std::vector<uintptr_t> debug_info_patches;
-  std::vector<uintptr_t> expected_patches = { 16, 20, 29, 33, 42, 46 };
-  dwarf::WriteDebugInfoCU(/* debug_abbrev_offset= */ 0, info,
-                          0, &debug_info_data_, &debug_info_patches);
+  dwarf::WriteDebugInfoCU(/* debug_abbrev_offset= */ 0, info, &debug_info_data_);
 
-  EXPECT_EQ(expected_patches, debug_info_patches);
   CheckObjdumpOutput(is64bit, "-W");
 }
 
