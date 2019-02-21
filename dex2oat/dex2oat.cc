@@ -808,8 +808,7 @@ class Dex2Oat final {
     }
 
     if (!IsBootImage() && parser_options->boot_image_filename.empty()) {
-      parser_options->boot_image_filename += android_root_;
-      parser_options->boot_image_filename += "/framework/boot.art";
+      parser_options->boot_image_filename = GetDefaultBootImageLocation(android_root_);
     }
     if (!parser_options->boot_image_filename.empty()) {
       boot_image_filename_ = parser_options->boot_image_filename;
@@ -958,7 +957,7 @@ class Dex2Oat final {
     compiler_options_->passes_to_run_ = passes_to_run_.get();
     compiler_options_->compiling_with_core_image_ =
         !boot_image_filename_.empty() &&
-        CompilerDriver::IsCoreImageFilename(boot_image_filename_);
+        CompilerOptions::IsCoreImageFilename(boot_image_filename_);
   }
 
   static bool SupportsDeterministicCompilation() {
