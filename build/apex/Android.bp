@@ -168,8 +168,6 @@ apex_defaults {
         + libcore_native_device_only_shared_libs,
     multilib: {
         both: {
-            // TODO: Add logic to create a `dalvikvm` symlink to `dalvikvm32` or `dalvikvm64`
-            // (see `symlink_preferred_arch` in art/dalvikvm/Android.bp).
             binaries: art_runtime_base_binaries_both
                 + bionic_binaries_both,
         },
@@ -180,6 +178,13 @@ apex_defaults {
             binaries: [],
         }
     },
+    binaries: [
+        "art_postinstall_hook",
+        "art_preinstall_hook",
+        "art_preinstall_hook_boot",
+        "art_preinstall_hook_system_server",
+        "art_prepostinstall_utils",
+    ],
     prebuilts: art_runtime_data_file_prebuilts
         + ["com.android.runtime.ld.config.txt"],
     key: "com.android.runtime.key",
@@ -236,8 +241,6 @@ art_apex_test {
         + art_runtime_host_run_test_libs,
     multilib: {
         both: {
-            // TODO: Add logic to create a `dalvikvm` symlink to `dalvikvm32` or `dalvikvm64`
-            // (see `symlink_preferred_arch` in art/dalvikvm/Android.bp).
             binaries: art_runtime_base_binaries_both
                 + art_runtime_debug_binaries_both_host,
         },
@@ -331,4 +334,27 @@ cc_prebuilt_binary {
             enabled: false,  // No python3.
         },
     },
+}
+
+// Pre-install scripts.
+
+sh_binary {
+    name: "art_preinstall_hook",
+    src: "art_preinstall_hook.sh",
+}
+sh_binary {
+    name: "art_preinstall_hook_boot",
+    src: "art_preinstall_hook_boot.sh",
+}
+sh_binary {
+    name: "art_preinstall_hook_system_server",
+    src: "art_preinstall_hook_system_server.sh",
+}
+sh_binary {
+    name: "art_prepostinstall_utils",
+    src: "art_prepostinstall_utils.sh",
+}
+sh_binary {
+    name: "art_postinstall_hook",
+    src: "art_postinstall_hook.sh",
 }
