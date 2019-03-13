@@ -799,8 +799,10 @@ extern "C" uint64_t artQuickToInterpreterBridge(ArtMethod* method, Thread* self,
   ArtMethod* caller = QuickArgumentVisitor::GetCallingMethod(sp);
   uintptr_t caller_pc = QuickArgumentVisitor::GetCallingPc(sp);
   // If caller_pc is the instrumentation exit stub, the stub will check to see if deoptimization
-  // should be done and it knows the real return pc.
+  // should be done and it knows the real return pc. NB If the upcall is null we don't need to do
+  // anything. This can happen during shutdown or early startup.
   if (UNLIKELY(
+          caller != nullptr &&
           caller_pc != reinterpret_cast<uintptr_t>(GetQuickInstrumentationExitPc()) &&
           (self->IsForceInterpreter() || Dbg::IsForcedInterpreterNeededForUpcall(self, caller)))) {
     if (!Runtime::Current()->IsAsyncDeoptimizeable(caller_pc)) {
