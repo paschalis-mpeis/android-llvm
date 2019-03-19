@@ -973,7 +973,8 @@ bool ClassLinker::InitFromBootImage(std::string* error_msg) {
     *error_msg = StringPrintf("Invalid image pointer size: %u", pointer_size_unchecked);
     return false;
   }
-  image_pointer_size_ = spaces[0]->GetImageHeader().GetPointerSize();
+  const ImageHeader& image_header = spaces[0]->GetImageHeader();
+  image_pointer_size_ = image_header.GetPointerSize();
   if (!runtime->IsAotCompiler()) {
     // Only the Aot compiler supports having an image with a different pointer size than the
     // runtime. This happens on the host for compiling 32 bit tests since we use a 64 bit libart
@@ -985,6 +986,30 @@ bool ClassLinker::InitFromBootImage(std::string* error_msg) {
       return false;
     }
   }
+  DCHECK(!runtime->HasResolutionMethod());
+  runtime->SetResolutionMethod(image_header.GetImageMethod(ImageHeader::kResolutionMethod));
+  runtime->SetImtConflictMethod(image_header.GetImageMethod(ImageHeader::kImtConflictMethod));
+  runtime->SetImtUnimplementedMethod(
+      image_header.GetImageMethod(ImageHeader::kImtUnimplementedMethod));
+  runtime->SetCalleeSaveMethod(
+      image_header.GetImageMethod(ImageHeader::kSaveAllCalleeSavesMethod),
+      CalleeSaveType::kSaveAllCalleeSaves);
+  runtime->SetCalleeSaveMethod(
+      image_header.GetImageMethod(ImageHeader::kSaveRefsOnlyMethod),
+      CalleeSaveType::kSaveRefsOnly);
+  runtime->SetCalleeSaveMethod(
+      image_header.GetImageMethod(ImageHeader::kSaveRefsAndArgsMethod),
+      CalleeSaveType::kSaveRefsAndArgs);
+  runtime->SetCalleeSaveMethod(
+      image_header.GetImageMethod(ImageHeader::kSaveEverythingMethod),
+      CalleeSaveType::kSaveEverything);
+  runtime->SetCalleeSaveMethod(
+      image_header.GetImageMethod(ImageHeader::kSaveEverythingMethodForClinit),
+      CalleeSaveType::kSaveEverythingForClinit);
+  runtime->SetCalleeSaveMethod(
+      image_header.GetImageMethod(ImageHeader::kSaveEverythingMethodForSuspendCheck),
+      CalleeSaveType::kSaveEverythingForSuspendCheck);
+
   std::vector<const OatFile*> oat_files =
       runtime->GetOatFileManager().RegisterImageOatFiles(spaces);
   DCHECK(!oat_files.empty());
@@ -4777,8 +4802,9 @@ ObjPtr<mirror::Class> ClassLinker::CreateProxyClass(ScopedObjectAccessAlreadyRun
   // Object has an empty iftable, copy it for that reason.
   temp_klass->SetIfTable(GetClassRoot<mirror::Object>(this)->GetIfTable());
   mirror::Class::SetStatus(temp_klass, ClassStatus::kIdx, self);
-  std::string descriptor(GetDescriptorForProxy(temp_klass.Get()));
-  const size_t hash = ComputeModifiedUtf8Hash(descriptor.c_str());
+  std::string storage;
+  const char* descriptor = temp_klass->GetDescriptor(&storage);
+  const size_t hash = ComputeModifiedUtf8Hash(descriptor);
 
   // Needs to be before we insert the class so that the allocator field is set.
   LinearAlloc* const allocator = GetOrCreateAllocatorForClassLoader(temp_klass->GetClassLoader());
@@ -4787,7 +4813,7 @@ ObjPtr<mirror::Class> ClassLinker::CreateProxyClass(ScopedObjectAccessAlreadyRun
   // (ArtField::declaring_class_) are only visited from the class
   // table. There can't be any suspend points between inserting the
   // class and setting the field arrays below.
-  ObjPtr<mirror::Class> existing = InsertClass(descriptor.c_str(), temp_klass.Get(), hash);
+  ObjPtr<mirror::Class> existing = InsertClass(descriptor, temp_klass.Get(), hash);
   CHECK(existing == nullptr);
 
   // Instance fields are inherited, but we add a couple of static fields...
@@ -4859,7 +4885,7 @@ ObjPtr<mirror::Class> ClassLinker::CreateProxyClass(ScopedObjectAccessAlreadyRun
     // The new class will replace the old one in the class table.
     Handle<mirror::ObjectArray<mirror::Class>> h_interfaces(
         hs.NewHandle(soa.Decode<mirror::ObjectArray<mirror::Class>>(interfaces)));
-    if (!LinkClass(self, descriptor.c_str(), temp_klass, h_interfaces, &klass)) {
+    if (!LinkClass(self, descriptor, temp_klass, h_interfaces, &klass)) {
       mirror::Class::SetStatus(temp_klass, ClassStatus::kErrorUnresolved, self);
       return nullptr;
     }
@@ -4920,13 +4946,6 @@ ObjPtr<mirror::Class> ClassLinker::CreateProxyClass(ScopedObjectAccessAlreadyRun
              soa.Decode<mirror::ObjectArray<mirror::ObjectArray<mirror::Class>>>(throws));
   }
   return klass.Get();
-}
-
-std::string ClassLinker::GetDescriptorForProxy(ObjPtr<mirror::Class> proxy_class) {
-  DCHECK(proxy_class->IsProxyClass());
-  ObjPtr<mirror::String> name = proxy_class->GetName();
-  DCHECK(name != nullptr);
-  return DotToDescriptor(name->ToModifiedUtf8().c_str());
 }
 
 void ClassLinker::CreateProxyConstructor(Handle<mirror::Class> klass, ArtMethod* out) {
