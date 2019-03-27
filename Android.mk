@@ -441,18 +441,26 @@ endif
 
 include $(BUILD_PHONY_PACKAGE)
 
-# The art-tools package depends on helpers and tools that are useful for developers and on-device
-# investigations.
+# The art-tools package depends on helpers and tools that are useful for developers. Similar
+# dependencies exist for the APEX builds for these tools (see build/apex/Android.bp).
 
 include $(CLEAR_VARS)
 LOCAL_MODULE := art-tools
-LOCAL_REQUIRED_MODULES := \
+LOCAL_HOST_REQUIRED_MODULES := \
     ahat \
-    dexdiag \
     dexdump \
-    dexlist \
     hprof-conv \
+
+# A subset of the tools are disabled when HOST_PREFER_32_BIT is defined as make reports that
+# they are not supported on host (b/129323791). This is likely due to art_apex disabling host
+# APEX builds when HOST_PREFER_32_BIT is set (b/120617876).
+ifneq ($(HOST_PREFER_32_BIT),true)
+LOCAL_HOST_REQUIRED_MODULES += \
+    dexdiag \
+    dexlist \
     oatdump \
+
+endif
 
 include $(BUILD_PHONY_PACKAGE)
 
@@ -520,6 +528,8 @@ PRIVATE_RUNTIME_DEPENDENCY_LIBS := \
   lib64/libdexfile_external.so \
   lib/libnativeloader.so \
   lib64/libnativeloader.so \
+  lib/libandroidio.so \
+  lib64/libandroidio.so \
 
 .PHONY: standalone-apex-files
 standalone-apex-files: libc.bootstrap libdl.bootstrap libm.bootstrap linker com.android.runtime.debug

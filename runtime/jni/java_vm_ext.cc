@@ -161,8 +161,8 @@ class SharedLibrary {
   void* FindSymbol(const std::string& symbol_name, const char* shorty = nullptr)
       REQUIRES(!Locks::mutator_lock_) {
     return NeedsNativeBridge()
-        ? FindSymbolWithNativeBridge(symbol_name.c_str(), shorty)
-        : FindSymbolWithoutNativeBridge(symbol_name.c_str());
+        ? FindSymbolWithNativeBridge(symbol_name, shorty)
+        : FindSymbolWithoutNativeBridge(symbol_name);
   }
 
   // No mutator lock since dlsym may block for a while if another thread is doing dlopen.
@@ -272,7 +272,8 @@ class Libraries {
       REQUIRES_SHARED(Locks::mutator_lock_) {
     std::string jni_short_name(m->JniShortName());
     std::string jni_long_name(m->JniLongName());
-    mirror::ClassLoader* const declaring_class_loader = m->GetDeclaringClass()->GetClassLoader();
+    ObjPtr<mirror::ClassLoader> const declaring_class_loader =
+        m->GetDeclaringClass()->GetClassLoader();
     ScopedObjectAccessUnchecked soa(Thread::Current());
     void* const declaring_class_loader_allocator =
         Runtime::Current()->GetClassLinker()->GetAllocatorForClassLoader(declaring_class_loader);

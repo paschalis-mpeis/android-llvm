@@ -1793,11 +1793,11 @@ class ImageSanityChecks final {
         for (ArtField& field : klass->GetSFields()) {
           CHECK_EQ(field.GetDeclaringClass(), klass);
         }
-        const auto pointer_size = isc.pointer_size_;
-        for (auto& m : klass->GetMethods(pointer_size)) {
+        const PointerSize pointer_size = isc.pointer_size_;
+        for (ArtMethod& m : klass->GetMethods(pointer_size)) {
           isc.SanityCheckArtMethod(&m, klass);
         }
-        auto* vtable = klass->GetVTable();
+        ObjPtr<mirror::PointerArray> vtable = klass->GetVTable();
         if (vtable != nullptr) {
           isc.SanityCheckArtMethodPointerArray(vtable, nullptr);
         }
@@ -1812,7 +1812,7 @@ class ImageSanityChecks final {
             isc.SanityCheckArtMethod(klass->GetEmbeddedVTableEntry(i, pointer_size), nullptr);
           }
         }
-        mirror::IfTable* iftable = klass->GetIfTable();
+        ObjPtr<mirror::IfTable> iftable = klass->GetIfTable();
         for (int32_t i = 0; i < klass->GetIfTableCount(); ++i) {
           if (iftable->GetMethodArrayCount(i) > 0) {
             isc.SanityCheckArtMethodPointerArray(iftable->GetMethodArray(i), nullptr);
@@ -6217,7 +6217,7 @@ bool ClassLinker::LinkVirtualMethods(
       }
     } else {
       DCHECK(super_class->IsAbstract() && !super_class->IsArrayClass());
-      auto* super_vtable = super_class->GetVTable();
+      ObjPtr<mirror::PointerArray> super_vtable = super_class->GetVTable();
       CHECK(super_vtable != nullptr) << super_class->PrettyClass();
       // We might need to change vtable if we have new virtual methods or new interfaces (since that
       // might give us new default methods). See comment above.
@@ -6766,7 +6766,7 @@ void ClassLinker::FillIMTFromIfTable(ObjPtr<mirror::IfTable> if_table,
     if (method_array_count == 0) {
       continue;
     }
-    auto* method_array = if_table->GetMethodArray(i);
+    ObjPtr<mirror::PointerArray> method_array = if_table->GetMethodArray(i);
     for (size_t j = 0; j < method_array_count; ++j) {
       ArtMethod* implementation_method =
           method_array->GetElementPtrSize<ArtMethod*>(j, image_pointer_size_);
@@ -6824,7 +6824,7 @@ void ClassLinker::FillIMTFromIfTable(ObjPtr<mirror::IfTable> if_table,
       if (method_array_count == 0) {
         continue;
       }
-      auto* method_array = if_table->GetMethodArray(i);
+      ObjPtr<mirror::PointerArray> method_array = if_table->GetMethodArray(i);
       for (size_t j = 0; j < method_array_count; ++j) {
         ArtMethod* implementation_method =
             method_array->GetElementPtrSize<ArtMethod*>(j, image_pointer_size_);
@@ -7784,8 +7784,8 @@ void ClassLinker::LinkInterfaceMethodsHelper::UpdateIfTable(Handle<mirror::IfTab
   // Go fix up all the stale iftable pointers.
   for (size_t i = 0; i < ifcount; ++i) {
     for (size_t j = 0, count = iftable->GetMethodArrayCount(i); j < count; ++j) {
-      auto* method_array = iftable->GetMethodArray(i);
-      auto* m = method_array->GetElementPtrSize<ArtMethod*>(j, pointer_size);
+      ObjPtr<mirror::PointerArray> method_array = iftable->GetMethodArray(i);
+      ArtMethod* m = method_array->GetElementPtrSize<ArtMethod*>(j, pointer_size);
       DCHECK(m != nullptr) << klass_->PrettyClass();
       auto it = move_table_.find(m);
       if (it != move_table_.end()) {
