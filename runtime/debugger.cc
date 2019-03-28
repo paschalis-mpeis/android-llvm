@@ -527,7 +527,7 @@ static JDWP::JdwpTag TagFromClass(const ScopedObjectAccessUnchecked& soa, mirror
  *
  * Null objects are tagged JT_OBJECT.
  */
-JDWP::JdwpTag Dbg::TagFromObject(const ScopedObjectAccessUnchecked& soa, mirror::Object* o) {
+JDWP::JdwpTag Dbg::TagFromObject(const ScopedObjectAccessUnchecked& soa, ObjPtr<mirror::Object> o) {
   return (o == nullptr) ? JDWP::JT_OBJECT : TagFromClass(soa, o->GetClass());
 }
 
@@ -1277,7 +1277,7 @@ JDWP::JdwpError Dbg::OutputArray(JDWP::ObjectId array_id, int offset, int count,
     ScopedObjectAccessUnchecked soa(Thread::Current());
     mirror::ObjectArray<mirror::Object>* oa = a->AsObjectArray<mirror::Object>();
     for (int i = 0; i < count; ++i) {
-      mirror::Object* element = oa->Get(offset + i);
+      ObjPtr<mirror::Object> element = oa->Get(offset + i);
       JDWP::JdwpTag specific_tag = (element != nullptr) ? TagFromObject(soa, element)
                                                         : element_tag;
       expandBufAdd1(pReply, specific_tag);
@@ -2261,6 +2261,7 @@ JDWP::JdwpThreadStatus Dbg::ToJdwpThreadStatus(ThreadState state) {
     case kWaitingPerformingGc:
     case kWaitingWeakGcRootRead:
     case kWaitingForGcThreadFlip:
+    case kNativeForAbort:
     case kWaiting:
       return JDWP::TS_WAIT;
       // Don't add a 'default' here so the compiler can spot incompatible enum changes.

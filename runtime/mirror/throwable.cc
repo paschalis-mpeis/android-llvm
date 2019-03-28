@@ -25,6 +25,7 @@
 #include "class_root.h"
 #include "dex/dex_file-inl.h"
 #include "gc/accounting/card_table-inl.h"
+#include "obj_ptr-inl.h"
 #include "object-inl.h"
 #include "object_array-inl.h"
 #include "object_array.h"
@@ -134,7 +135,7 @@ std::string Throwable::Dump() {
         result += "(Throwable with empty stack trace)\n";
       } else {
         for (int32_t i = 0; i < ste_array->GetLength(); ++i) {
-          StackTraceElement* ste = ste_array->Get(i);
+          ObjPtr<StackTraceElement> ste = ste_array->Get(i);
           DCHECK(ste != nullptr);
           auto* method_name = ste->GetMethodName();
           auto* file_name = ste->GetFileName();
@@ -157,15 +158,15 @@ std::string Throwable::Dump() {
   return result;
 }
 
-Object* Throwable::GetStackState() {
+ObjPtr<Object> Throwable::GetStackState() {
   return GetFieldObjectVolatile<Object>(OFFSET_OF_OBJECT_MEMBER(Throwable, backtrace_));
 }
 
-Object* Throwable::GetStackTrace() {
+ObjPtr<Object> Throwable::GetStackTrace() {
   return GetFieldObjectVolatile<Object>(OFFSET_OF_OBJECT_MEMBER(Throwable, backtrace_));
 }
 
-String* Throwable::GetDetailMessage() {
+ObjPtr<String> Throwable::GetDetailMessage() {
   return GetFieldObject<String>(OFFSET_OF_OBJECT_MEMBER(Throwable, detail_message_));
 }
 
