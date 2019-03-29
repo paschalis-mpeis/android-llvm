@@ -44,6 +44,7 @@
 #include "base/scoped_arena_containers.h"
 #include "base/scoped_flock.h"
 #include "base/stl_util.h"
+#include "base/string_view_cpp20.h"
 #include "base/systrace.h"
 #include "base/time_utils.h"
 #include "base/unix_file/fd_file.h"
@@ -927,28 +928,6 @@ void ClassLinker::RunRootClinits(Thread* self) {
   }
 }
 
-// Set image methods' entry point to interpreter.
-class SetInterpreterEntrypointArtMethodVisitor : public ArtMethodVisitor {
- public:
-  explicit SetInterpreterEntrypointArtMethodVisitor(PointerSize image_pointer_size)
-    : image_pointer_size_(image_pointer_size) {}
-
-  void Visit(ArtMethod* method) override REQUIRES_SHARED(Locks::mutator_lock_) {
-    if (kIsDebugBuild && !method->IsRuntimeMethod()) {
-      CHECK(method->GetDeclaringClass() != nullptr);
-    }
-    if (!method->IsNative() && !method->IsRuntimeMethod() && !method->IsResolutionMethod()) {
-      method->SetEntryPointFromQuickCompiledCodePtrSize(GetQuickToInterpreterBridge(),
-                                                        image_pointer_size_);
-    }
-  }
-
- private:
-  const PointerSize image_pointer_size_;
-
-  DISALLOW_COPY_AND_ASSIGN(SetInterpreterEntrypointArtMethodVisitor);
-};
-
 struct TrampolineCheckData {
   const void* quick_resolution_trampoline;
   const void* quick_imt_conflict_trampoline;
@@ -1334,23 +1313,6 @@ class CHAOnDeleteUpdateClassVisitor {
   const Thread* self_;
 };
 
-class VerifyDeclaringClassVisitor : public ArtMethodVisitor {
- public:
-  VerifyDeclaringClassVisitor() REQUIRES_SHARED(Locks::mutator_lock_, Locks::heap_bitmap_lock_)
-      : live_bitmap_(Runtime::Current()->GetHeap()->GetLiveBitmap()) {}
-
-  void Visit(ArtMethod* method) override
-      REQUIRES_SHARED(Locks::mutator_lock_, Locks::heap_bitmap_lock_) {
-    ObjPtr<mirror::Class> klass = method->GetDeclaringClassUnchecked();
-    if (klass != nullptr) {
-      CHECK(live_bitmap_->Test(klass.Ptr())) << "Image method has unmarked declaring class";
-    }
-  }
-
- private:
-  gc::accounting::HeapBitmap* const live_bitmap_;
-};
-
 /*
  * A class used to ensure that all strings in an AppImage have been properly
  * interned, and is only ever run in debug mode.
@@ -1570,8 +1532,14 @@ void AppImageLoadingHelper::Update(
   if (kVerifyArtMethodDeclaringClasses) {
     ScopedTrace timing("AppImage:VerifyDeclaringClasses");
     ReaderMutexLock rmu(self, *Locks::heap_bitmap_lock_);
-    VerifyDeclaringClassVisitor visitor;
-    header.VisitPackedArtMethods(&visitor, space->Begin(), kRuntimePointerSize);
+    gc::accounting::HeapBitmap* live_bitmap = heap->GetLiveBitmap();
+    header.VisitPackedArtMethods([&](ArtMethod& method)
+        REQUIRES_SHARED(Locks::mutator_lock_, Locks::heap_bitmap_lock_) {
+      ObjPtr<mirror::Class> klass = method.GetDeclaringClassUnchecked();
+      if (klass != nullptr) {
+        CHECK(live_bitmap->Test(klass.Ptr())) << "Image method has unmarked declaring class";
+      }
+    }, space->Begin(), kRuntimePointerSize);
   }
 }
 
@@ -1954,25 +1922,13 @@ static void VerifyAppImage(const ImageHeader& header,
                            const Handle<mirror::ObjectArray<mirror::DexCache> >& dex_caches,
                            ClassTable* class_table, gc::space::ImageSpace* space)
     REQUIRES_SHARED(Locks::mutator_lock_) {
-  {
-    class VerifyClassInTableArtMethodVisitor : public ArtMethodVisitor {
-     public:
-      explicit VerifyClassInTableArtMethodVisitor(ClassTable* table) : table_(table) {}
-
-      void Visit(ArtMethod* method) override
-          REQUIRES_SHARED(Locks::mutator_lock_, Locks::classlinker_classes_lock_) {
-        ObjPtr<mirror::Class> klass = method->GetDeclaringClass();
-        if (klass != nullptr && !Runtime::Current()->GetHeap()->ObjectIsInBootImageSpace(klass)) {
-          CHECK_EQ(table_->LookupByDescriptor(klass), klass) << mirror::Class::PrettyClass(klass);
-        }
-      }
-
-     private:
-      ClassTable* const table_;
-    };
-    VerifyClassInTableArtMethodVisitor visitor(class_table);
-    header.VisitPackedArtMethods(&visitor, space->Begin(), kRuntimePointerSize);
-  }
+  header.VisitPackedArtMethods([&](ArtMethod& method) REQUIRES_SHARED(Locks::mutator_lock_) {
+    ObjPtr<mirror::Class> klass = method.GetDeclaringClass();
+    if (klass != nullptr && !Runtime::Current()->GetHeap()->ObjectIsInBootImageSpace(klass)) {
+      CHECK_EQ(class_table->LookupByDescriptor(klass), klass)
+          << mirror::Class::PrettyClass(klass);
+    }
+  }, space->Begin(), kRuntimePointerSize);
   {
     // Verify that all direct interfaces of classes in the class table are also resolved.
     std::vector<ObjPtr<mirror::Class>> classes;
@@ -2179,8 +2135,16 @@ bool ClassLinker::AddImageSpace(
 
   // Set entry point to interpreter if in InterpretOnly mode.
   if (!runtime->IsAotCompiler() && runtime->GetInstrumentation()->InterpretOnly()) {
-    SetInterpreterEntrypointArtMethodVisitor visitor(image_pointer_size_);
-    header.VisitPackedArtMethods(&visitor, space->Begin(), image_pointer_size_);
+    // Set image methods' entry point to interpreter.
+    header.VisitPackedArtMethods([&](ArtMethod& method) REQUIRES_SHARED(Locks::mutator_lock_) {
+      if (!method.IsRuntimeMethod()) {
+        DCHECK(method.GetDeclaringClass() != nullptr);
+        if (!method.IsNative() && !method.IsResolutionMethod()) {
+          method.SetEntryPointFromQuickCompiledCodePtrSize(GetQuickToInterpreterBridge(),
+                                                            image_pointer_size_);
+        }
+      }
+    }, space->Begin(), image_pointer_size_);
   }
 
   ClassTable* class_table = nullptr;
@@ -3044,6 +3008,13 @@ ObjPtr<mirror::Class> ClassLinker::FindClass(Thread* self,
   return result_ptr;
 }
 
+static bool IsReservedBootClassPathDescriptor(const char* descriptor) {
+  std::string_view descriptor_sv(descriptor);
+  // Reserved conscrypt packages (includes sub-packages under these paths).
+  return StartsWith(descriptor_sv, "Landroid/net/ssl/") ||
+         StartsWith(descriptor_sv, "Lcom/android/org/conscrypt/");
+}
+
 ObjPtr<mirror::Class> ClassLinker::DefineClass(Thread* self,
                                                const char* descriptor,
                                                size_t hash,
@@ -3069,6 +3040,18 @@ ObjPtr<mirror::Class> ClassLinker::DefineClass(Thread* self,
     } else if (strcmp(descriptor, "Ldalvik/system/ClassExt;") == 0) {
       klass.Assign(GetClassRoot<mirror::ClassExt>(this));
     }
+  }
+
+  // For AOT-compilation of an app, we may use a shortened boot class path that excludes
+  // some runtime modules. Prevent definition of classes in app class loader that could clash
+  // with these modules as these classes could be resolved differently during execution.
+  if (class_loader != nullptr &&
+      Runtime::Current()->IsAotCompiler() &&
+      IsReservedBootClassPathDescriptor(descriptor)) {
+    ObjPtr<mirror::Throwable> pre_allocated =
+        Runtime::Current()->GetPreAllocatedNoClassDefFoundError();
+    self->SetException(pre_allocated);
+    return nullptr;
   }
 
   // This is to prevent the calls to ClassLoad and ClassPrepare which can cause java/user-supplied
@@ -3757,15 +3740,18 @@ void ClassLinker::RegisterDexFileLocked(const DexFile& dex_file,
   const size_t dex_cache_length = dex_cache_location.length();
   CHECK_GT(dex_cache_length, 0u) << dex_file.GetLocation();
   std::string dex_file_location = dex_file.GetLocation();
-  CHECK_GE(dex_file_location.length(), dex_cache_length)
-      << dex_cache_location << " " << dex_file.GetLocation();
-  // Take suffix.
-  const std::string dex_file_suffix = dex_file_location.substr(
-      dex_file_location.length() - dex_cache_length,
-      dex_cache_length);
-  // Example dex_cache location is SettingsProvider.apk and
-  // dex file location is /system/priv-app/SettingsProvider/SettingsProvider.apk
-  CHECK_EQ(dex_cache_location, dex_file_suffix);
+  // The following paths checks don't work on preopt when using boot dex files, where the dex
+  // cache location is the one on device, and the dex_file's location is the one on host.
+  if (!(Runtime::Current()->IsAotCompiler() && class_loader == nullptr && !kIsTargetBuild)) {
+    CHECK_GE(dex_file_location.length(), dex_cache_length)
+        << dex_cache_location << " " << dex_file.GetLocation();
+    const std::string dex_file_suffix = dex_file_location.substr(
+        dex_file_location.length() - dex_cache_length,
+        dex_cache_length);
+    // Example dex_cache location is SettingsProvider.apk and
+    // dex file location is /system/priv-app/SettingsProvider/SettingsProvider.apk
+    CHECK_EQ(dex_cache_location, dex_file_suffix);
+  }
   const OatFile* oat_file =
       (dex_file.GetOatDexFile() != nullptr) ? dex_file.GetOatDexFile()->GetOatFile() : nullptr;
   // Clean up pass to remove null dex caches; null dex caches can occur due to class unloading
@@ -9457,7 +9443,9 @@ jobject ClassLinker::CreateWellKnownClassLoader(Thread* self,
   CHECK(self->GetJniEnv()->IsSameObject(loader_class,
                                         WellKnownClasses::dalvik_system_PathClassLoader) ||
         self->GetJniEnv()->IsSameObject(loader_class,
-                                        WellKnownClasses::dalvik_system_DelegateLastClassLoader));
+                                        WellKnownClasses::dalvik_system_DelegateLastClassLoader) ||
+        self->GetJniEnv()->IsSameObject(loader_class,
+                                        WellKnownClasses::dalvik_system_InMemoryDexClassLoader));
 
   // SOAAlreadyRunnable is protected, and we need something to add a global reference.
   // We could move the jobject to the callers, but all call-sites do this...

@@ -44,6 +44,7 @@ namespace art {
 
 static constexpr char kPathClassLoaderString[] = "PCL";
 static constexpr char kDelegateLastClassLoaderString[] = "DLC";
+static constexpr char kInMemoryDexClassLoaderString[] = "IMC";
 static constexpr char kClassLoaderOpeningMark = '[';
 static constexpr char kClassLoaderClosingMark = ']';
 static constexpr char kClassLoaderSharedLibraryOpeningMark = '{';
@@ -154,6 +155,24 @@ std::unique_ptr<ClassLoaderContext::ClassLoaderInfo> ClassLoaderContext::ParseCl
   if (class_loader_type == kInvalidClassLoader) {
     return nullptr;
   }
+
+  // InMemoryDexClassLoader's dex location is always bogus. Special-case it.
+  if (class_loader_type == kInMemoryDexClassLoader) {
+    if (parse_checksums) {
+      // Make sure that OpenDexFiles() will never be attempted on this context
+      // because the dex locations of IMC do not correspond to real files.
+      CHECK(!dex_files_open_attempted_ || !dex_files_open_result_)
+          << "Parsing spec not supported when context created from a ClassLoader object";
+      dex_files_open_attempted_ = true;
+      dex_files_open_result_ = false;
+    } else {
+      // Checksums are not provided and dex locations themselves have no meaning
+      // (although we keep them in the spec to simplify parsing). Treat this as
+      // an unknown class loader.
+      return nullptr;
+    }
+  }
+
   const char* class_loader_type_str = GetClassLoaderTypeName(class_loader_type);
   size_t type_str_size = strlen(class_loader_type_str);
 
@@ -192,6 +211,7 @@ std::unique_ptr<ClassLoaderContext::ClassLoaderInfo> ClassLoaderContext::ParseCl
       if (!android::base::ParseUint(dex_file_with_checksum[1].c_str(), &checksum)) {
         return nullptr;
       }
+
       info->classpath.push_back(dex_file_with_checksum[0]);
       info->checksums.push_back(checksum);
     }
@@ -261,7 +281,9 @@ std::unique_ptr<ClassLoaderContext::ClassLoaderInfo> ClassLoaderContext::ParseCl
 // recognized.
 ClassLoaderContext::ClassLoaderType
 ClassLoaderContext::ExtractClassLoaderType(const std::string& class_loader_spec) {
-  const ClassLoaderType kValidTypes[] = {kPathClassLoader, kDelegateLastClassLoader};
+  const ClassLoaderType kValidTypes[] = { kPathClassLoader,
+                                          kDelegateLastClassLoader,
+                                          kInMemoryDexClassLoader };
   for (const ClassLoaderType& type : kValidTypes) {
     const char* type_str = GetClassLoaderTypeName(type);
     if (class_loader_spec.compare(0, strlen(type_str), type_str) == 0) {
@@ -365,7 +387,9 @@ ClassLoaderContext::ClassLoaderInfo* ClassLoaderContext::ParseInternal(
 
 // Opens requested class path files and appends them to opened_dex_files. If the dex files have
 // been stripped, this opens them from their oat files (which get added to opened_oat_files).
-bool ClassLoaderContext::OpenDexFiles(InstructionSet isa, const std::string& classpath_dir) {
+bool ClassLoaderContext::OpenDexFiles(InstructionSet isa,
+                                      const std::string& classpath_dir,
+                                      const std::vector<int>& fds) {
   if (dex_files_open_attempted_) {
     // Do not attempt to re-open the files if we already tried.
     return dex_files_open_result_;
@@ -388,6 +412,7 @@ bool ClassLoaderContext::OpenDexFiles(InstructionSet isa, const std::string& cla
   std::vector<ClassLoaderInfo*> work_list;
   CHECK(class_loader_chain_ != nullptr);
   work_list.push_back(class_loader_chain_.get());
+  size_t dex_file_index = 0;
   while (!work_list.empty()) {
     ClassLoaderInfo* info = work_list.back();
     work_list.pop_back();
@@ -399,34 +424,59 @@ bool ClassLoaderContext::OpenDexFiles(InstructionSet isa, const std::string& cla
         location = classpath_dir + (classpath_dir.back() == '/' ? "" : "/") + location;
       }
 
+      // If file descriptors were provided for the class loader context dex paths,
+      // get the descriptor which correponds to this dex path. We assume the `fds`
+      // vector follows the same order as a flattened class loader context.
+      int fd = -1;
+      if (!fds.empty()) {
+        if (dex_file_index >= fds.size()) {
+          LOG(WARNING) << "Number of FDs is smaller than number of dex files in the context";
+          dex_files_open_result_ = false;
+          return false;
+        }
+
+        fd = fds[dex_file_index++];
+        DCHECK_GE(fd, 0);
+      }
+
       std::string error_msg;
       // When opening the dex files from the context we expect their checksum to match their
       // contents. So pass true to verify_checksum.
-      if (!dex_file_loader.Open(location.c_str(),
-                                location.c_str(),
-                                Runtime::Current()->IsVerificationEnabled(),
-                                /*verify_checksum=*/ true,
-                                &error_msg,
-                                &info->opened_dex_files)) {
-        // If we fail to open the dex file because it's been stripped, try to open the dex file
-        // from its corresponding oat file.
-        // This could happen when we need to recompile a pre-build whose dex code has been stripped.
-        // (for example, if the pre-build is only quicken and we want to re-compile it
-        // speed-profile).
-        // TODO(calin): Use the vdex directly instead of going through the oat file.
-        OatFileAssistant oat_file_assistant(location.c_str(), isa, false);
-        std::unique_ptr<OatFile> oat_file(oat_file_assistant.GetBestOatFile());
-        std::vector<std::unique_ptr<const DexFile>> oat_dex_files;
-        if (oat_file != nullptr &&
-            OatFileAssistant::LoadDexFiles(*oat_file, location, &oat_dex_files)) {
-          info->opened_oat_files.push_back(std::move(oat_file));
-          info->opened_dex_files.insert(info->opened_dex_files.end(),
-                                        std::make_move_iterator(oat_dex_files.begin()),
-                                        std::make_move_iterator(oat_dex_files.end()));
-        } else {
-          LOG(WARNING) << "Could not open dex files from location: " << location;
-          dex_files_open_result_ = false;
+      if (fd < 0) {
+        if (!dex_file_loader.Open(location.c_str(),
+                                  location.c_str(),
+                                  Runtime::Current()->IsVerificationEnabled(),
+                                  /*verify_checksum=*/ true,
+                                  &error_msg,
+                                  &info->opened_dex_files)) {
+          // If we fail to open the dex file because it's been stripped, try to
+          // open the dex file from its corresponding oat file.
+          // This could happen when we need to recompile a pre-build whose dex
+          // code has been stripped (for example, if the pre-build is only
+          // quicken and we want to re-compile it speed-profile).
+          // TODO(calin): Use the vdex directly instead of going through the oat file.
+          OatFileAssistant oat_file_assistant(location.c_str(), isa, false);
+          std::unique_ptr<OatFile> oat_file(oat_file_assistant.GetBestOatFile());
+          std::vector<std::unique_ptr<const DexFile>> oat_dex_files;
+          if (oat_file != nullptr &&
+              OatFileAssistant::LoadDexFiles(*oat_file, location, &oat_dex_files)) {
+            info->opened_oat_files.push_back(std::move(oat_file));
+            info->opened_dex_files.insert(info->opened_dex_files.end(),
+                                          std::make_move_iterator(oat_dex_files.begin()),
+                                          std::make_move_iterator(oat_dex_files.end()));
+          } else {
+            LOG(WARNING) << "Could not open dex files from location: " << location;
+            dex_files_open_result_ = false;
+          }
         }
+      } else if (!dex_file_loader.Open(fd,
+                                       location.c_str(),
+                                       Runtime::Current()->IsVerificationEnabled(),
+                                       /*verify_checksum=*/ true,
+                                       &error_msg,
+                                       &info->opened_dex_files)) {
+        LOG(WARNING) << "Could not open dex files from fd " << fd << " for location: " << location;
+        dex_files_open_result_ = false;
       }
     }
 
@@ -448,6 +498,14 @@ bool ClassLoaderContext::OpenDexFiles(InstructionSet isa, const std::string& cla
       info->checksums.push_back(dex->GetLocationChecksum());
     }
     AddToWorkList(info, work_list);
+  }
+
+  // Check that if file descriptors were provided, there were exactly as many
+  // as we have encountered while iterating over this class loader context.
+  if (dex_file_index != fds.size()) {
+    LOG(WARNING) << fds.size() << " FDs provided but only " << dex_file_index
+        << " dex files are in the class loader context";
+    dex_files_open_result_ = false;
   }
 
   return dex_files_open_result_;
@@ -613,6 +671,8 @@ static jclass GetClassLoaderClass(ClassLoaderContext::ClassLoaderType type) {
       return WellKnownClasses::dalvik_system_PathClassLoader;
     case ClassLoaderContext::kDelegateLastClassLoader:
       return WellKnownClasses::dalvik_system_DelegateLastClassLoader;
+    case ClassLoaderContext::kInMemoryDexClassLoader:
+      return WellKnownClasses::dalvik_system_InMemoryDexClassLoader;
     case ClassLoaderContext::kInvalidClassLoader: break;  // will fail after the switch.
   }
   LOG(FATAL) << "Invalid class loader type " << type;
@@ -759,10 +819,30 @@ std::vector<const DexFile*> ClassLoaderContext::FlattenOpenedDexFiles() const {
   return result;
 }
 
+std::string ClassLoaderContext::FlattenDexPaths() const {
+  if (class_loader_chain_ == nullptr) {
+    return "";
+  }
+
+  std::vector<std::string> result;
+  std::vector<ClassLoaderInfo*> work_list;
+  work_list.push_back(class_loader_chain_.get());
+  while (!work_list.empty()) {
+    ClassLoaderInfo* info = work_list.back();
+    work_list.pop_back();
+    for (const std::string& dex_path : info->classpath) {
+      result.push_back(dex_path);
+    }
+    AddToWorkList(info, work_list);
+  }
+  return FlattenClasspath(result);
+}
+
 const char* ClassLoaderContext::GetClassLoaderTypeName(ClassLoaderType type) {
   switch (type) {
     case kPathClassLoader: return kPathClassLoaderString;
     case kDelegateLastClassLoader: return kDelegateLastClassLoaderString;
+    case kInMemoryDexClassLoader: return kInMemoryDexClassLoaderString;
     default:
       LOG(FATAL) << "Invalid class loader type " << type;
       UNREACHABLE();
@@ -812,7 +892,9 @@ static bool CollectDexFilesFromSupportedClassLoader(ScopedObjectAccessAlreadyRun
                                                     Handle<mirror::ClassLoader> class_loader,
                                                     std::vector<const DexFile*>* out_dex_files)
       REQUIRES_SHARED(Locks::mutator_lock_) {
-  CHECK(IsPathOrDexClassLoader(soa, class_loader) || IsDelegateLastClassLoader(soa, class_loader));
+  CHECK(IsPathOrDexClassLoader(soa, class_loader) ||
+        IsDelegateLastClassLoader(soa, class_loader) ||
+        IsInMemoryDexClassLoader(soa, class_loader));
 
   // All supported class loaders inherit from BaseDexClassLoader.
   // We need to get the DexPathList and loop through it.
@@ -931,6 +1013,8 @@ bool ClassLoaderContext::CreateInfoFromClassLoader(
     type = kPathClassLoader;
   } else if (IsDelegateLastClassLoader(soa, class_loader)) {
     type = kDelegateLastClassLoader;
+  } else if (IsInMemoryDexClassLoader(soa, class_loader)) {
+    type = kInMemoryDexClassLoader;
   } else {
     LOG(WARNING) << "Unsupported class loader";
     return false;

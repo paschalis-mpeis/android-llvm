@@ -1176,14 +1176,15 @@ TEST_F(OatFileAssistantTest, LongDexExtension) {
   EXPECT_EQ(OatFileAssistant::kOatCannotOpen, oat_file_assistant.OatFileStatus());
 }
 
-
 // A task to generate a dex location. Used by the RaceToGenerate test.
 class RaceGenerateTask : public Task {
  public:
-  RaceGenerateTask(const std::string& dex_location,
+  RaceGenerateTask(OatFileAssistantTest& test,
+                   const std::string& dex_location,
                    const std::string& oat_location,
                    Mutex* lock)
-      : dex_location_(dex_location),
+      : test_(test),
+        dex_location_(dex_location),
         oat_location_(oat_location),
         lock_(lock),
         loaded_oat_file_(nullptr)
@@ -1202,7 +1203,7 @@ class RaceGenerateTask : public Task {
       args.push_back("--dex-file=" + dex_location_);
       args.push_back("--oat-file=" + oat_location_);
       std::string error_msg;
-      ASSERT_TRUE(DexoptTest::Dex2Oat(args, &error_msg)) << error_msg;
+      ASSERT_TRUE(test_.Dex2Oat(args, &error_msg)) << error_msg;
     }
 
     dex_files = Runtime::Current()->GetOatFileManager().OpenDexFilesFromOat(
@@ -1223,6 +1224,7 @@ class RaceGenerateTask : public Task {
   }
 
  private:
+  OatFileAssistantTest& test_;
   std::string dex_location_;
   std::string oat_location_;
   Mutex* lock_;
@@ -1249,7 +1251,8 @@ TEST_F(OatFileAssistantTest, RaceToGenerate) {
   std::vector<std::unique_ptr<RaceGenerateTask>> tasks;
   Mutex lock("RaceToGenerate");
   for (size_t i = 0; i < kNumThreads; i++) {
-    std::unique_ptr<RaceGenerateTask> task(new RaceGenerateTask(dex_location, oat_location, &lock));
+    std::unique_ptr<RaceGenerateTask> task(
+        new RaceGenerateTask(*this, dex_location, oat_location, &lock));
     thread_pool.AddTask(self, task.get());
     tasks.push_back(std::move(task));
   }
@@ -1379,6 +1382,128 @@ TEST_F(OatFileAssistantTest, GetDexOptNeededWithOutOfDateContext) {
                   /* profile_changed= */ false,
                   /* downgrade= */ false,
                   updated_context.get()));
+}
+
+// Test that GetLocation of a dex file is the same whether the dex
+// filed is backed by an oat file or not.
+TEST_F(OatFileAssistantTest, GetDexLocation) {
+  std::string dex_location = GetScratchDir() + "/TestDex.jar";
+  std::string oat_location = GetOdexDir() + "/TestDex.odex";
+
+  // Start the runtime to initialize the system's class loader.
+  Thread::Current()->TransitionFromSuspendedToRunnable();
+  runtime_->Start();
+
+  Copy(GetDexSrc1(), dex_location);
+
+  std::vector<std::unique_ptr<const DexFile>> dex_files;
+  std::vector<std::string> error_msgs;
+  const OatFile* oat_file = nullptr;
+
+  dex_files = Runtime::Current()->GetOatFileManager().OpenDexFilesFromOat(
+      dex_location.c_str(),
+      Runtime::Current()->GetSystemClassLoader(),
+      /*dex_elements=*/nullptr,
+      &oat_file,
+      &error_msgs);
+  EXPECT_EQ(dex_files.size(), 1u);
+  EXPECT_EQ(oat_file, nullptr);
+  std::string stored_dex_location = dex_files[0]->GetLocation();
+  {
+    // Create the oat file.
+    std::vector<std::string> args;
+    args.push_back("--dex-file=" + dex_location);
+    args.push_back("--dex-location=TestDex.jar");
+    args.push_back("--oat-file=" + oat_location);
+    std::string error_msg;
+    ASSERT_TRUE(DexoptTest::Dex2Oat(args, &error_msg)) << error_msg;
+  }
+  dex_files = Runtime::Current()->GetOatFileManager().OpenDexFilesFromOat(
+      dex_location.c_str(),
+      Runtime::Current()->GetSystemClassLoader(),
+      /*dex_elements=*/nullptr,
+      &oat_file,
+      &error_msgs);
+  EXPECT_EQ(dex_files.size(), 1u);
+  EXPECT_NE(oat_file, nullptr);
+  std::string oat_stored_dex_location = dex_files[0]->GetLocation();
+  EXPECT_EQ(oat_stored_dex_location, stored_dex_location);
+}
+
+// Test that a dex file on the platform location gets the right hiddenapi domain,
+// regardless of whether it has a backing oat file.
+TEST_F(OatFileAssistantTest, SystemFrameworkDir) {
+  std::string filebase = "OatFileAssistantTestSystemFrameworkDir";
+  std::string dex_location = GetAndroidRoot() + "/framework/" + filebase + ".jar";
+  Copy(GetDexSrc1(), dex_location);
+
+  std::string odex_dir = GetAndroidRoot() + "/framework/oat/";
+  mkdir(odex_dir.c_str(), 0700);
+  odex_dir = odex_dir + std::string(GetInstructionSetString(kRuntimeISA));
+  mkdir(odex_dir.c_str(), 0700);
+  std::string oat_location = odex_dir + "/" + filebase + ".odex";
+  // Clean up in case previous run crashed.
+  remove(oat_location.c_str());
+
+  // Start the runtime to initialize the system's class loader.
+  Thread::Current()->TransitionFromSuspendedToRunnable();
+  runtime_->Start();
+
+  std::vector<std::unique_ptr<const DexFile>> dex_files_first;
+  std::vector<std::unique_ptr<const DexFile>> dex_files_second;
+  std::vector<std::string> error_msgs;
+  const OatFile* oat_file = nullptr;
+
+  dex_files_first = Runtime::Current()->GetOatFileManager().OpenDexFilesFromOat(
+      dex_location.c_str(),
+      Runtime::Current()->GetSystemClassLoader(),
+      /*dex_elements=*/nullptr,
+      &oat_file,
+      &error_msgs);
+  EXPECT_EQ(dex_files_first.size(), 1u);
+  EXPECT_EQ(oat_file, nullptr) << dex_location;
+  EXPECT_EQ(dex_files_first[0]->GetOatDexFile(), nullptr);
+
+  // Register the dex file to get a domain.
+  {
+    ScopedObjectAccess soa(Thread::Current());
+    Runtime::Current()->GetClassLinker()->RegisterDexFile(
+        *dex_files_first[0],
+        soa.Decode<mirror::ClassLoader>(Runtime::Current()->GetSystemClassLoader()));
+  }
+  std::string stored_dex_location = dex_files_first[0]->GetLocation();
+  EXPECT_EQ(dex_files_first[0]->GetHiddenapiDomain(), hiddenapi::Domain::kPlatform);
+  {
+    // Create the oat file.
+    std::vector<std::string> args;
+    args.push_back("--dex-file=" + dex_location);
+    args.push_back("--dex-location=" + filebase + ".jar");
+    args.push_back("--oat-file=" + oat_location);
+    std::string error_msg;
+    ASSERT_TRUE(DexoptTest::Dex2Oat(args, &error_msg)) << error_msg;
+  }
+  dex_files_second = Runtime::Current()->GetOatFileManager().OpenDexFilesFromOat(
+      dex_location.c_str(),
+      Runtime::Current()->GetSystemClassLoader(),
+      /*dex_elements=*/nullptr,
+      &oat_file,
+      &error_msgs);
+  EXPECT_EQ(dex_files_second.size(), 1u);
+  EXPECT_NE(oat_file, nullptr);
+  EXPECT_NE(dex_files_second[0]->GetOatDexFile(), nullptr);
+  EXPECT_NE(dex_files_second[0]->GetOatDexFile()->GetOatFile(), nullptr);
+
+  // Register the dex file to get a domain.
+  {
+    ScopedObjectAccess soa(Thread::Current());
+    Runtime::Current()->GetClassLinker()->RegisterDexFile(
+        *dex_files_second[0],
+        soa.Decode<mirror::ClassLoader>(Runtime::Current()->GetSystemClassLoader()));
+  }
+  std::string oat_stored_dex_location = dex_files_second[0]->GetLocation();
+  EXPECT_EQ(oat_stored_dex_location, stored_dex_location);
+  EXPECT_EQ(dex_files_second[0]->GetHiddenapiDomain(), hiddenapi::Domain::kPlatform);
+  EXPECT_EQ(0, remove(oat_location.c_str()));
 }
 
 // TODO: More Tests:

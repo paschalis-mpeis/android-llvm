@@ -28,6 +28,7 @@
 #include "base/macros.h"
 #include "base/os.h"
 #include "base/stl_util.h"
+#include "base/string_view_cpp20.h"
 #include "base/utils.h"
 #include "class_linker.h"
 #include "compiler_filter.h"
@@ -181,12 +182,14 @@ bool OatFileAssistant::IsInBootClassPath() {
 int OatFileAssistant::GetDexOptNeeded(CompilerFilter::Filter target,
                                       bool profile_changed,
                                       bool downgrade,
-                                      ClassLoaderContext* class_loader_context) {
+                                      ClassLoaderContext* class_loader_context,
+                                      const std::vector<int>& context_fds) {
   OatFileInfo& info = GetBestInfo();
   DexOptNeeded dexopt_needed = info.GetDexOptNeeded(target,
                                                     profile_changed,
                                                     downgrade,
-                                                    class_loader_context);
+                                                    class_loader_context,
+                                                    context_fds);
   if (info.IsOatLocation() || dexopt_needed == kDex2OatFromScratch) {
     return dexopt_needed;
   }
@@ -403,23 +406,7 @@ OatFileAssistant::OatStatus OatFileAssistant::GivenOatFileStatus(const OatFile& 
 
   // Verify the image checksum
   if (CompilerFilter::DependsOnImageChecksum(current_compiler_filter)) {
-    const ImageInfo* image_info = GetImageInfo();
-    if (image_info == nullptr) {
-      VLOG(oat) << "No image for oat image checksum to match against.";
-
-      if (HasOriginalDexFiles()) {
-        return kOatBootImageOutOfDate;
-      }
-
-      // If there is no original dex file to fall back to, grudgingly accept
-      // the oat file. This could technically lead to crashes, but there's no
-      // way we could find a better oat file to use for this dex location,
-      // and it's better than being stuck in a boot loop with no way out.
-      // The problem will hopefully resolve itself the next time the runtime
-      // starts up.
-      LOG(WARNING) << "Dex location " << dex_location_ << " does not seem to include dex file. "
-        << "Allow oat file use. This is potentially dangerous.";
-    } else if (!image_info->ValidateBootClassPathChecksums(file)) {
+    if (!ValidateBootClassPathChecksums(file)) {
       VLOG(oat) << "Oat image checksum does not match image checksum.";
       return kOatBootImageOutOfDate;
     }
@@ -560,51 +547,79 @@ const std::vector<uint32_t>* OatFileAssistant::GetRequiredDexChecksums() {
   return required_dex_checksums_found_ ? &cached_required_dex_checksums_ : nullptr;
 }
 
-bool OatFileAssistant::ImageInfo::ValidateBootClassPathChecksums(const OatFile& oat_file) const {
+bool OatFileAssistant::ValidateBootClassPathChecksums(const OatFile& oat_file) {
+  // Get the BCP from the oat file.
+  const char* oat_boot_class_path =
+      oat_file.GetOatHeader().GetStoreValueByKey(OatHeader::kBootClassPathKey);
+  if (oat_boot_class_path == nullptr) {
+    return false;
+  }
+
+  // Check that the oat BCP is a prefix of current BCP locations and count components.
+  Runtime* runtime = Runtime::Current();
+  size_t component_count = 0u;
+  std::string_view remaining_bcp(oat_boot_class_path);
+  bool bcp_ok = false;
+  for (const std::string& location : runtime->GetBootClassPathLocations()) {
+    if (!StartsWith(remaining_bcp, location)) {
+      break;
+    }
+    remaining_bcp.remove_prefix(location.size());
+    ++component_count;
+    if (remaining_bcp.empty()) {
+      bcp_ok = true;
+      break;
+    }
+    if (!StartsWith(remaining_bcp, ":")) {
+      break;
+    }
+    remaining_bcp.remove_prefix(1u);
+  }
+  if (!bcp_ok) {
+    return false;
+  }
+
+  // Get the checksums.
   const char* oat_boot_class_path_checksums =
       oat_file.GetOatHeader().GetStoreValueByKey(OatHeader::kBootClassPathChecksumsKey);
   if (oat_boot_class_path_checksums == nullptr) {
     return false;
   }
-  // The checksums can be either the same or a prefix of the expected checksums,
-  // ending before the ':' delimiter.
-  size_t length = strlen(oat_boot_class_path_checksums);
-  if (length > boot_class_path_checksums.length() ||
-      (length < boot_class_path_checksums.length() && boot_class_path_checksums[length] != ':')) {
-    return false;
-  }
-  return boot_class_path_checksums.compare(0u, length, oat_boot_class_path_checksums) == 0;
-}
 
-std::unique_ptr<OatFileAssistant::ImageInfo>
-OatFileAssistant::ImageInfo::GetRuntimeImageInfo(InstructionSet isa, std::string* error_msg) {
-  CHECK(error_msg != nullptr);
-
-  Runtime* runtime = Runtime::Current();
-  std::unique_ptr<ImageInfo> info(new ImageInfo());
-  info->location = runtime->GetImageLocation();
-  info->boot_class_path_checksums = gc::space::ImageSpace::GetBootClassPathChecksums(
-      runtime->GetBootClassPath(),
-      info->location,
-      isa,
-      runtime->GetImageSpaceLoadingOrder(),
-      error_msg);
-  if (info->boot_class_path_checksums.empty()) {
-    return nullptr;
-  }
-  return info;
-}
-
-const OatFileAssistant::ImageInfo* OatFileAssistant::GetImageInfo() {
-  if (!image_info_load_attempted_) {
-    image_info_load_attempted_ = true;
+  // Retrieve checksums for this portion of the BCP if we do not have them cached.
+  if (cached_boot_class_path_checksum_component_count_ != component_count) {
+    ArrayRef<const std::string> boot_class_path(runtime->GetBootClassPath());
     std::string error_msg;
-    cached_image_info_ = ImageInfo::GetRuntimeImageInfo(isa_, &error_msg);
-    if (cached_image_info_ == nullptr) {
-      LOG(WARNING) << "Unable to get runtime image info: " << error_msg;
+    std::string boot_class_path_checksums = gc::space::ImageSpace::GetBootClassPathChecksums(
+        boot_class_path.SubArray(/* pos= */ 0u, component_count),
+        runtime->GetImageLocation(),
+        isa_,
+        runtime->GetImageSpaceLoadingOrder(),
+        &error_msg);
+    if (boot_class_path_checksums.empty()) {
+      VLOG(oat) << "No image for oat image checksum to match against.";
+
+      if (HasOriginalDexFiles()) {
+        return false;
+      }
+
+      // If there is no original dex file to fall back to, grudgingly accept
+      // the oat file. This could technically lead to crashes, but there's no
+      // way we could find a better oat file to use for this dex location,
+      // and it's better than being stuck in a boot loop with no way out.
+      // The problem will hopefully resolve itself the next time the runtime
+      // starts up.
+      LOG(WARNING) << "Dex location " << dex_location_ << " does not seem to include dex file. "
+          << "Allow oat file use. This is potentially dangerous.";
+
+      return true;
     }
+    cached_boot_class_path_checksum_component_count_ = component_count;
+    cached_boot_class_path_checksums_ = boot_class_path_checksums;
   }
-  return cached_image_info_.get();
+
+  // Compare the checksums.
+  return cached_boot_class_path_checksums_ == oat_boot_class_path_checksums;
 }
 
 OatFileAssistant::OatFileInfo& OatFileAssistant::GetBestInfo() {
@@ -748,10 +763,11 @@ OatFileAssistant::DexOptNeeded OatFileAssistant::OatFileInfo::GetDexOptNeeded(
     CompilerFilter::Filter target,
     bool profile_changed,
     bool downgrade,
-    ClassLoaderContext* context) {
+    ClassLoaderContext* context,
+    const std::vector<int>& context_fds) {
 
   bool filter_okay = CompilerFilterIsOkay(target, profile_changed, downgrade);
-  bool class_loader_context_okay = ClassLoaderContextIsOkay(context);
+  bool class_loader_context_okay = ClassLoaderContextIsOkay(context, context_fds);
 
   // Only check the filter and relocation if the class loader context is ok.
   // If it is not, we will return kDex2OatFromScratch as the compilation needs to be redone.
@@ -838,7 +854,8 @@ bool OatFileAssistant::OatFileInfo::CompilerFilterIsOkay(
     CompilerFilter::IsAsGoodAs(current, target);
 }
 
-bool OatFileAssistant::OatFileInfo::ClassLoaderContextIsOkay(ClassLoaderContext* context) {
+bool OatFileAssistant::OatFileInfo::ClassLoaderContextIsOkay(ClassLoaderContext* context,
+                                                             const std::vector<int>& context_fds) {
   if (context == nullptr) {
     VLOG(oat) << "ClassLoaderContext check ignored: null context";
     return true;
@@ -855,11 +872,10 @@ bool OatFileAssistant::OatFileInfo::ClassLoaderContextIsOkay(ClassLoaderContext*
       ? oat_file_assistant_->dex_location_.substr(0, dir_index)
       : "";
 
-  if (!context->OpenDexFiles(oat_file_assistant_->isa_, classpath_dir)) {
+  if (!context->OpenDexFiles(oat_file_assistant_->isa_, classpath_dir, context_fds)) {
     VLOG(oat) << "ClassLoaderContext check failed: dex files from the context could not be opened";
     return false;
   }
-
 
   const bool result = context->VerifyClassLoaderContextMatch(file->GetClassLoaderContext()) !=
       ClassLoaderContext::VerificationResult::kMismatch;

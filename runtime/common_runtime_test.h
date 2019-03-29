@@ -100,8 +100,8 @@ class CommonRuntimeTestImpl : public CommonArtTestImpl {
   void MakeInterpreted(ObjPtr<mirror::Class> klass)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
-  static bool StartDex2OatCommandLine(/*out*/std::vector<std::string>* argv,
-                                      /*out*/std::string* error_msg);
+  bool StartDex2OatCommandLine(/*out*/std::vector<std::string>* argv,
+                               /*out*/std::string* error_msg);
 
  protected:
   // Allow subclases such as CommonCompilerTest to add extra options.
@@ -125,6 +125,7 @@ class CommonRuntimeTestImpl : public CommonArtTestImpl {
                                    jobject parent_loader,
                                    jobject shared_libraries = nullptr);
   jobject LoadDexInDelegateLastClassLoader(const std::string& dex_name, jobject parent_loader);
+  jobject LoadDexInInMemoryDexClassLoader(const std::string& dex_name, jobject parent_loader);
   jobject LoadDexInWellKnownClassLoader(const std::string& dex_name,
                                         jclass loader_class,
                                         jobject parent_loader,

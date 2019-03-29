@@ -146,7 +146,8 @@ class OatFileAssistant {
   int GetDexOptNeeded(CompilerFilter::Filter target_compiler_filter,
                       bool profile_changed = false,
                       bool downgrade = false,
-                      ClassLoaderContext* context = nullptr);
+                      ClassLoaderContext* context = nullptr,
+                      const std::vector<int>& context_fds = std::vector<int>());
 
   // Returns true if there is up-to-date code for this dex location,
   // irrespective of the compiler filter of the up-to-date code.
@@ -245,16 +246,6 @@ class OatFileAssistant {
                                        std::string* error_msg);
 
  private:
-  struct ImageInfo {
-    bool ValidateBootClassPathChecksums(const OatFile& oat_file) const;
-
-    std::string location;
-    std::string boot_class_path_checksums;
-
-    static std::unique_ptr<ImageInfo> GetRuntimeImageInfo(InstructionSet isa,
-                                                          std::string* error_msg);
-  };
-
   class OatFileInfo {
    public:
     // Initially the info is for no file in particular. It will treat the
@@ -288,7 +279,8 @@ class OatFileAssistant {
     DexOptNeeded GetDexOptNeeded(CompilerFilter::Filter target_compiler_filter,
                                  bool profile_changed,
                                  bool downgrade,
-                                 ClassLoaderContext* context);
+                                 ClassLoaderContext* context,
+                                 const std::vector<int>& context_fds);
 
     // Returns the loaded file.
     // Loads the file if needed. Returns null if the file failed to load.
@@ -329,7 +321,7 @@ class OatFileAssistant {
     // compiler filter.
     bool CompilerFilterIsOkay(CompilerFilter::Filter target, bool profile_changed, bool downgrade);
 
-    bool ClassLoaderContextIsOkay(ClassLoaderContext* context);
+    bool ClassLoaderContextIsOkay(ClassLoaderContext* context, const std::vector<int>& context_fds);
 
     // Release the loaded oat file.
     // Returns null if the oat file hasn't been loaded.
@@ -393,11 +385,8 @@ class OatFileAssistant {
   // dex_location_ dex file.
   const std::vector<uint32_t>* GetRequiredDexChecksums();
 
-  // Returns the loaded image info.
-  // Loads the image info if needed. Returns null if the image info failed
-  // to load.
-  // The caller shouldn't clean up or free the returned pointer.
-  const ImageInfo* GetImageInfo();
+  // Validates the boot class path checksum of an OatFile.
+  bool ValidateBootClassPathChecksums(const OatFile& oat_file);
 
   // To implement Lock(), we lock a dummy file where the oat file would go
   // (adding ".flock" to the target file name) and retain the lock for the
@@ -435,12 +424,8 @@ class OatFileAssistant {
   // File descriptor corresponding to apk, dex file, or zip.
   int zip_fd_;
 
-  // Cached value of the image info.
-  // Use the GetImageInfo method rather than accessing these directly.
-  // TODO: The image info should probably be moved out of the oat file
-  // assistant to an image file manager.
-  bool image_info_load_attempted_ = false;
-  std::unique_ptr<ImageInfo> cached_image_info_;
+  size_t cached_boot_class_path_checksum_component_count_ = 0u;
+  std::string cached_boot_class_path_checksums_;
 
   friend class OatFileAssistantTest;
 
