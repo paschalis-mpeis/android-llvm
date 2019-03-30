@@ -31,9 +31,11 @@
 #include "method_handles.h"
 #include "mirror/array-alloc-inl.h"
 #include "mirror/array-inl.h"
+#include "mirror/call_site-inl.h"
 #include "mirror/class.h"
 #include "mirror/emulated_stack_frame.h"
 #include "mirror/method_handle_impl-inl.h"
+#include "mirror/method_type-inl.h"
 #include "mirror/object_array-alloc-inl.h"
 #include "mirror/object_array-inl.h"
 #include "mirror/var_handle.h"
@@ -669,8 +671,7 @@ static bool DoMethodHandleInvokeCommon(Thread* self,
   // and not the method that we'll dispatch to in the end.
   StackHandleScope<2> hs(self);
   Handle<mirror::MethodHandle> method_handle(hs.NewHandle(
-      ObjPtr<mirror::MethodHandle>::DownCast(
-          MakeObjPtr(shadow_frame.GetVRegReference(vRegC)))));
+      ObjPtr<mirror::MethodHandle>::DownCast(shadow_frame.GetVRegReference(vRegC))));
   if (UNLIKELY(method_handle == nullptr)) {
     // Note that the invoke type is kVirtual here because a call to a signature
     // polymorphic method is shaped like a virtual call at the bytecode level.
@@ -1409,8 +1410,7 @@ static ObjPtr<mirror::CallSite> InvokeBootstrapMethod(Thread* self,
   }
 
   // Check the call site target is not null as we're going to invoke it.
-  ObjPtr<mirror::CallSite> call_site =
-      ObjPtr<mirror::CallSite>::DownCast(ObjPtr<mirror::Object>(result.GetL()));
+  ObjPtr<mirror::CallSite> call_site = ObjPtr<mirror::CallSite>::DownCast(result.GetL());
   ObjPtr<mirror::MethodHandle> target = call_site->GetTarget();
   if (UNLIKELY(target == nullptr)) {
     ThrowClassCastException("Bootstrap method returned a CallSite with a null target");
@@ -1833,12 +1833,12 @@ bool DoFilledNewArray(const Instruction* inst,
 
 // TODO: Use ObjPtr here.
 template<typename T>
-static void RecordArrayElementsInTransactionImpl(mirror::PrimitiveArray<T>* array,
+static void RecordArrayElementsInTransactionImpl(ObjPtr<mirror::PrimitiveArray<T>> array,
                                                  int32_t count)
     REQUIRES_SHARED(Locks::mutator_lock_) {
   Runtime* runtime = Runtime::Current();
   for (int32_t i = 0; i < count; ++i) {
-    runtime->RecordWriteArray(array, i, array->GetWithoutChecks(i));
+    runtime->RecordWriteArray(array.Ptr(), i, array->GetWithoutChecks(i));
   }
 }
 

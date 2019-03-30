@@ -40,7 +40,7 @@
 #include "handle.h"
 #include "handle_scope-inl.h"
 #include "mirror/class-inl.h"
-#include "mirror/class_ext.h"
+#include "mirror/class_ext-inl.h"
 #include "mirror/object-inl.h"
 #include "reflection.h"
 #include "thread.h"
@@ -154,8 +154,7 @@ static void GetDexDataForRetransformation(art::Handle<art::mirror::Class> klass,
     if (!orig_dex.IsNull()) {
       if (orig_dex->IsArrayInstance()) {
         DCHECK(orig_dex->GetClass()->GetComponentType()->IsPrimitiveByte());
-        art::Handle<art::mirror::ByteArray> orig_dex_bytes(
-            hs.NewHandle(art::down_cast<art::mirror::ByteArray*>(orig_dex->AsArray())));
+        art::Handle<art::mirror::ByteArray> orig_dex_bytes(hs.NewHandle(orig_dex->AsByteArray()));
         dex_data->resize(orig_dex_bytes->GetLength());
         memcpy(dex_data->data(), orig_dex_bytes->GetData(), dex_data->size());
         return;

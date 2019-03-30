@@ -1347,7 +1347,7 @@ void Thread::Dump(std::ostream& os, bool dump_native_stack, BacktraceMap* backtr
   DumpStack(os, dump_native_stack, backtrace_map, force_dump_stack);
 }
 
-mirror::String* Thread::GetThreadName() const {
+ObjPtr<mirror::String> Thread::GetThreadName() const {
   ArtField* f = jni::DecodeArtField(WellKnownClasses::java_lang_Thread_name);
   if (tlsPtr_.opeer == nullptr) {
     return nullptr;
@@ -2766,7 +2766,7 @@ class BuildInternalStackTraceVisitor : public StackVisitor {
   }
 
   ObjPtr<mirror::PointerArray> GetTraceMethodsAndPCs() const REQUIRES_SHARED(Locks::mutator_lock_) {
-    return ObjPtr<mirror::PointerArray>::DownCast(MakeObjPtr(trace_->Get(0)));
+    return ObjPtr<mirror::PointerArray>::DownCast(trace_->Get(0));
   }
 
   mirror::ObjectArray<mirror::Object>* GetInternalStackTrace() const {
@@ -2938,13 +2938,13 @@ jobjectArray Thread::InternalStackTraceToStackTraceElementArray(
         soa.Decode<mirror::Object>(internal)->AsObjectArray<mirror::Object>();
     // Methods and dex PC trace is element 0.
     DCHECK(decoded_traces->Get(0)->IsIntArray() || decoded_traces->Get(0)->IsLongArray());
-    ObjPtr<mirror::PointerArray> const method_trace =
-        ObjPtr<mirror::PointerArray>::DownCast(MakeObjPtr(decoded_traces->Get(0)));
+    const ObjPtr<mirror::PointerArray> method_trace =
+        ObjPtr<mirror::PointerArray>::DownCast(decoded_traces->Get(0));
     // Prepare parameters for StackTraceElement(String cls, String method, String file, int line)
     ArtMethod* method = method_trace->GetElementPtrSize<ArtMethod*>(i, kRuntimePointerSize);
     uint32_t dex_pc = method_trace->GetElementPtrSize<uint32_t>(
         i + method_trace->GetLength() / 2, kRuntimePointerSize);
-    ObjPtr<mirror::StackTraceElement> obj = CreateStackTraceElement(soa, method, dex_pc);
+    const ObjPtr<mirror::StackTraceElement> obj = CreateStackTraceElement(soa, method, dex_pc);
     if (obj == nullptr) {
       return nullptr;
     }
@@ -4235,7 +4235,7 @@ void Thread::SetReadBarrierEntrypoints() {
 
 void Thread::ClearAllInterpreterCaches() {
   static struct ClearInterpreterCacheClosure : Closure {
-    virtual void Run(Thread* thread) {
+    void Run(Thread* thread) override {
       thread->GetInterpreterCache()->Clear(thread);
     }
   } closure;

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import dalvik.system.VMRuntime;
 import java.util.concurrent.CountDownLatch;
 import static java.util.concurrent.TimeUnit.MINUTES;
 
@@ -41,9 +42,11 @@ public class Main {
 
         // Now fall asleep with a timeout. The timeout is large enough that we expect the
         // finalizer daemon to have killed the process before the deadline elapses.
+        // The timeout is also large enough to cover the extra 5 seconds we wait
+        // to dump threads, plus potentially substantial gcstress overhead.
         // Note: the timeout is here (instead of an infinite sleep) to protect the test
         //       environment (e.g., in case this is run without a timeout wrapper).
-        final long timeout = 60 * 1000;  // 1 minute.
+        final long timeout = 100 * 1000 + VMRuntime.getRuntime().getFinalizerTimeoutMs();
         long remainingWait = timeout;
         final long waitStart = System.currentTimeMillis();
         while (remainingWait > 0) {

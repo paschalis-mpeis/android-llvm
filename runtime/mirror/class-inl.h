@@ -65,8 +65,8 @@ inline ObjPtr<Class> Class::GetSuperClass() {
   DCHECK(IsLoaded<kVerifyFlags>() ||
          IsErroneous<kVerifyFlags>() ||
          !Runtime::Current()->IsStarted()) << IsLoaded();
-  return ObjPtr<Class>(GetFieldObject<Class, kVerifyFlags, kReadBarrierOption>(
-      OFFSET_OF_OBJECT_MEMBER(Class, super_class_)));
+  return GetFieldObject<Class, kVerifyFlags, kReadBarrierOption>(
+      OFFSET_OF_OBJECT_MEMBER(Class, super_class_));
 }
 
 inline void Class::SetSuperClass(ObjPtr<Class> new_super_class) {
@@ -1044,7 +1044,7 @@ template<VerifyObjectFlags kVerifyFlags>
 inline bool Class::IsObjectArrayClass() {
   // We do not need a read barrier here as the primitive type is constant,
   // both from-space and to-space component type classes shall yield the same result.
-  ObjPtr<Class> const component_type = GetComponentType<kVerifyFlags, kWithoutReadBarrier>();
+  const ObjPtr<Class> component_type = GetComponentType<kVerifyFlags, kWithoutReadBarrier>();
   constexpr VerifyObjectFlags kNewFlags = RemoveThisFlags(kVerifyFlags);
   return component_type != nullptr && !component_type->IsPrimitive<kNewFlags>();
 }
@@ -1053,7 +1053,7 @@ template<VerifyObjectFlags kVerifyFlags>
 bool Class::IsPrimitiveArray() {
   // We do not need a read barrier here as the primitive type is constant,
   // both from-space and to-space component type classes shall yield the same result.
-  ObjPtr<Class> const component_type = GetComponentType<kVerifyFlags, kWithoutReadBarrier>();
+  const ObjPtr<Class> component_type = GetComponentType<kVerifyFlags, kWithoutReadBarrier>();
   constexpr VerifyObjectFlags kNewFlags = RemoveThisFlags(kVerifyFlags);
   return component_type != nullptr && component_type->IsPrimitive<kNewFlags>();
 }

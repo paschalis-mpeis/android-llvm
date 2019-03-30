@@ -24,7 +24,7 @@
 #include "jvalue-inl.h"
 #include "method_handles-inl.h"
 #include "method_handles.h"
-#include "method_type.h"
+#include "method_type-inl.h"
 #include "object_array-alloc-inl.h"
 #include "object_array-inl.h"
 #include "reflection-inl.h"
@@ -107,7 +107,7 @@ class EmulatedStackFrameAccessor {
   }
 
   ALWAYS_INLINE ObjPtr<mirror::Object> GetReference() REQUIRES_SHARED(Locks::mutator_lock_) {
-    return ObjPtr<mirror::Object>(references_->Get(reference_idx_++));
+    return references_->Get(reference_idx_++);
   }
 
   ALWAYS_INLINE uint32_t Get() REQUIRES_SHARED(Locks::mutator_lock_) {

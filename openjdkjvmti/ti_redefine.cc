@@ -67,7 +67,7 @@
 #include "mirror/array-alloc-inl.h"
 #include "mirror/class-alloc-inl.h"
 #include "mirror/class-inl.h"
-#include "mirror/class_ext.h"
+#include "mirror/class_ext-inl.h"
 #include "mirror/object.h"
 #include "mirror/object_array-alloc-inl.h"
 #include "mirror/object_array-inl.h"
@@ -468,7 +468,7 @@ jvmtiError Redefiner::AddRedefinition(ArtJvmTiEnv* env, const ArtClassDefinition
   return OK;
 }
 
-art::mirror::Class* Redefiner::ClassRedefinition::GetMirrorClass() {
+art::ObjPtr<art::mirror::Class> Redefiner::ClassRedefinition::GetMirrorClass() {
   return driver_->self_->DecodeJObject(klass_)->AsClass();
 }
 
@@ -1239,7 +1239,7 @@ bool Redefiner::ClassRedefinition::FinishRemainingAllocations(
 }
 
 void Redefiner::ClassRedefinition::UnregisterJvmtiBreakpoints() {
-  BreakpointUtil::RemoveBreakpointsInClass(driver_->env_, GetMirrorClass());
+  BreakpointUtil::RemoveBreakpointsInClass(driver_->env_, GetMirrorClass().Ptr());
 }
 
 void Redefiner::ClassRedefinition::UnregisterBreakpoints() {

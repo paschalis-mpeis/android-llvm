@@ -37,25 +37,6 @@ art_clang_tidy_errors = [
     "performance-unnecessary-value-param",
     "misc-unused-using-decls",
 ]
-// Should be: strings.Join(art_clang_tidy_errors, ",").
-art_clang_tidy_errors_str = "android-cloexec-dup"
-        + ",android-cloexec-open"
-        + ",bugprone-argument-comment"
-        + ",bugprone-lambda-function-name"
-        + ",bugprone-unused-raii"
-        + ",bugprone-unused-return-value"
-        + ",bugprone-virtual-near-miss"
-        + ",modernize-redundant-void-arg"
-        + ",modernize-use-bool-literals"
-        + ",modernize-use-nullptr"
-        + ",modernize-use-using"
-        + ",performance-faster-string-find"
-        + ",performance-for-range-copy"
-        + ",performance-implicit-conversion-in-loop"
-        + ",performance-noexcept-move-constructor"
-        + ",performance-unnecessary-copy-initialization"
-        + ",performance-unnecessary-value-param"
-        + ",misc-unused-using-decls"
 
 art_clang_tidy_disabled = [
     "-google-default-arguments",
@@ -118,6 +99,10 @@ art_global_defaults {
         // Disable warning for use of offsetof on non-standard layout type.
         // We use it to implement OFFSETOF_MEMBER - see macros.h.
         "-Wno-invalid-offsetof",
+
+        // Enable inconsistent-missing-override warning. This warning is disabled by default in
+        // Android.
+        "-Winconsistent-missing-override",
 
         // Enable thread annotations for std::mutex, etc.
         "-D_LIBCPP_ENABLE_THREAD_SAFETY_ANNOTATIONS",
@@ -194,6 +179,7 @@ art_global_defaults {
     ],
 
     tidy_checks: art_clang_tidy_errors + art_clang_tidy_disabled,
+    tidy_checks_as_errors: art_clang_tidy_errors,
 
     tidy_flags: [
         // The static analyzer treats DCHECK as always enabled; we sometimes get
@@ -208,8 +194,6 @@ art_global_defaults {
         // code detection in Clang for tidy builds. It is still on for regular build steps, so we
         // will still get the "real" errors.
         "-extra-arg=-Wno-unreachable-code",
-        // Use art_clang_tidy_errors for build errors.
-        "-warnings-as-errors=" + art_clang_tidy_errors_str,
     ],
 }
 

@@ -375,7 +375,8 @@
         "tests": ["530-checker-lse",
                   "530-checker-lse2",
                   "030-bad-finalizer",
-                  "080-oom-throw"],
+                  "080-oom-throw",
+                  "1336-short-finalizer-timeout"],
         "bug": "http://b/36377828",
         "variant": "interp-ac"
     },
@@ -1064,6 +1065,7 @@
           "993-breakpoints",
           "1002-notify-startup",
           "1003-metadata-section-strings",
+          "1336-short-finalizer-timeout",
           "1900-track-alloc",
           "1906-suspend-list-me-first",
           "1914-get-local-instance",
@@ -1149,6 +1151,12 @@
         "description": ["Test timing out under gcstress possibly due to slower unwinding by libbacktrace"]
     },
     {
+        "tests": ["1336-short-finalizer-timeout"],
+        "variant": "gcstress",
+        "bug": "b/68792448",
+        "description": ["Timing margins are too tight for gcstress"]
+    },
+    {
         "tests": ["021-string2"],
         "variant": "jit & debuggable",
         "bug": "b/109791792",
@@ -1173,6 +1181,15 @@
         "env_vars": {"SANITIZE_HOST": "address"},
         "bug": "b/112993554",
         "description": ["Timeout with ASan and interp-ac on 32-bit host (x86)."]
+    },
+    {
+        "tests": ["980-redefine-object"],
+        "description": ["This test appears to be unusally flaky on no-image + jit. The cause of ",
+                        "this flakiness is unknown but appears to be related to the ",
+                        "jit-compilation of JNI bridges. Until more investigation is done we skip ",
+                        "this test."],
+        "bug": "http://b/73333076",
+        "variant": "no-image & jit"
     },
     {
         "tests": ["454-get-vreg", "457-regs"],

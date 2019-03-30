@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 The Android Open Source Project
+ * Copyright (C) 2016 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,29 @@
  * limitations under the License.
  */
 
-#include "call_site.h"
+#ifndef ART_RUNTIME_MIRROR_METHOD_TYPE_INL_H_
+#define ART_RUNTIME_MIRROR_METHOD_TYPE_INL_H_
 
-#include "class-alloc-inl.h"
-#include "class_root.h"
-#include "obj_ptr-inl.h"
+#include "method_type.h"
+
+#include "mirror/object-inl.h"
 
 namespace art {
 namespace mirror {
 
-mirror::CallSite* CallSite::Create(Thread* const self, Handle<MethodHandle> target) {
-  ObjPtr<mirror::CallSite> cs =
-      ObjPtr<CallSite>::DownCast(GetClassRoot<CallSite>()->AllocObject(self));
-  CHECK(!Runtime::Current()->IsActiveTransaction());
-  cs->SetFieldObject<false>(TargetOffset(), target.Get());
-  return cs.Ptr();
+inline ObjPtr<ObjectArray<Class>> MethodType::GetPTypes() {
+  return GetFieldObject<ObjectArray<Class>>(OFFSET_OF_OBJECT_MEMBER(MethodType, p_types_));
+}
+
+inline int MethodType::GetNumberOfPTypes() {
+  return GetPTypes()->GetLength();
+}
+
+inline ObjPtr<Class> MethodType::GetRType() {
+  return GetFieldObject<Class>(OFFSET_OF_OBJECT_MEMBER(MethodType, r_type_));
 }
 
 }  // namespace mirror
 }  // namespace art
+
+#endif  // ART_RUNTIME_MIRROR_METHOD_TYPE_INL_H_

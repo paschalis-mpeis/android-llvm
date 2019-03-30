@@ -25,7 +25,7 @@ namespace art {
 namespace mirror {
 
 ArtField* Field::GetArtField() {
-  mirror::Class* declaring_class = GetDeclaringClass();
+  ObjPtr<mirror::Class> declaring_class = GetDeclaringClass();
   if (UNLIKELY(declaring_class->IsProxyClass())) {
     DCHECK(IsStatic());
     DCHECK_EQ(declaring_class->NumStaticFields(), 2U);
@@ -37,7 +37,7 @@ ArtField* Field::GetArtField() {
       return &declaring_class->GetSFieldsPtr()->At(1);
     }
   }
-  ObjPtr<mirror::DexCache> const dex_cache = declaring_class->GetDexCache();
+  const ObjPtr<mirror::DexCache> dex_cache = declaring_class->GetDexCache();
   ArtField* art_field = dex_cache->GetResolvedField(GetDexFieldIndex(), kRuntimePointerSize);
   if (UNLIKELY(art_field == nullptr)) {
     if (IsStatic()) {
