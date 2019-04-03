@@ -38,6 +38,7 @@ class ImageSpace;
 class ClassLoaderContext;
 class DexFile;
 class OatFile;
+class ThreadPool;
 
 // Class for dealing with oat file management.
 //
@@ -101,7 +102,25 @@ class OatFileManager {
 
   void DumpForSigQuit(std::ostream& os);
 
-  void SetOnlyUseSystemOatFiles(bool assert_no_files_loaded);
+  void SetOnlyUseSystemOatFiles(bool enforce, bool assert_no_files_loaded);
+
+  // Spawn a background thread which verifies all classes in the given dex files.
+  void RunBackgroundVerification(const std::vector<const DexFile*>& dex_files,
+                                 jobject class_loader,
+                                 const char* class_loader_context);
+
+  // Wait for thread pool workers to be created. This is used during shutdown as
+  // threads are not allowed to attach while runtime is in shutdown lock.
+  void WaitForWorkersToBeCreated();
+
+  // If allocated, delete a thread pool of background verification threads.
+  void DeleteThreadPool();
+
+  // Wait for all background verification tasks to finish. This is only used by tests.
+  void WaitForBackgroundVerificationTasks();
+
+  // Maximum number of anonymous vdex files kept in the process' data folder.
+  static constexpr size_t kAnonymousVdexCacheSize = 8u;
 
  private:
   enum class CheckCollisionResult {
@@ -142,6 +161,9 @@ class OatFileManager {
   // Only use the compiled code in an OAT file when the file is on /system. If the OAT file
   // is not on /system, don't load it "executable".
   bool only_use_system_oat_files_;
+
+  // Single-thread pool used to run the verifier in the background.
+  std::unique_ptr<ThreadPool> verification_thread_pool_;
 
   DISALLOW_COPY_AND_ASSIGN(OatFileManager);
 };

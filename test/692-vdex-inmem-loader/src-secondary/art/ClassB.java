@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 The Android Open Source Project
+ * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,18 +14,10 @@
  * limitations under the License.
  */
 
-#ifndef ART_LIBELFFILE_ELF_XZ_UTILS_H_
-#define ART_LIBELFFILE_ELF_XZ_UTILS_H_
+package art;
 
-#include <vector>
-
-#include "base/array_ref.h"
-
-namespace art {
-
-void XzCompress(ArrayRef<const uint8_t> src, std::vector<uint8_t>* dst, int level = 1 /* speed */);
-void XzDecompress(ArrayRef<const uint8_t> src, std::vector<uint8_t>* dst);
-
-}  // namespace art
-
-#endif  // ART_LIBELFFILE_ELF_XZ_UTILS_H_
+public class ClassB {
+  public static void printHello() {
+    System.out.println(ClassA.getHello());
+  }
+}
