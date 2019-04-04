@@ -24,9 +24,17 @@ public class Main {
   public static void main(String[] args) throws Exception {
     System.loadLibrary(args[0]);
 
+    // Feature only enabled for target SDK version Q and later.
+    setTargetSdkVersion(/* Q */ 29);
+
     if (isDebuggable()) {
       // Background verification is disabled in debuggable mode. This test makes
       // no sense then.
+      return;
+    }
+
+    if (!hasOatFile()) {
+      // We only generate vdex files if the oat directories are created.
       return;
     }
 
@@ -60,6 +68,8 @@ public class Main {
   }
 
   private static native boolean isDebuggable();
+  private static native boolean hasOatFile();
+  private static native int setTargetSdkVersion(int version);
   private static native void setProcessDataDir(String path);
   private static native void waitForVerifier();
   private static native boolean hasVdexFile(ClassLoader loader);
