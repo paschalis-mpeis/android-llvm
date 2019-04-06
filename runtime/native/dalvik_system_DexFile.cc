@@ -297,6 +297,16 @@ static jobject DexFile_openInMemoryDexFilesNative(JNIEnv* env,
                                                                   dex_elements,
                                                                   /*out*/ &oat_file,
                                                                   /*out*/ &error_msgs);
+
+  // Part of temporary logging, to be removed by dbrazdil@ ASAP.
+  // Record information on whether the in-memory dex files were loaded with
+  // public API (class_loader set) or with reflection on DexPathList
+  // (class_loader not set).
+  for (std::unique_ptr<const DexFile>& dex_file : dex_files) {
+    dex_file->loaded_with_imc_ = (class_loader == nullptr) ? DexFile::kLoadedWithImcHiddenApi
+                                                           : DexFile::kLoadedWithImcPublicApi;
+  }
+
   return CreateCookieFromOatFileManagerResult(env, dex_files, oat_file, error_msgs);
 }
 
