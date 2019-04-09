@@ -3745,7 +3745,7 @@ void ClassLinker::RegisterDexFileLocked(const DexFile& dex_file,
   // (b) class loader context
   // (c) if it used the public API, as opposed to using reflection on DexPathList
   // (d) if the dex files are being registered with IMC
-  // "76m1yHF5" is used as a random char sequence for easy grep-ing.
+  // "APPCOMPAT_IMC" is used as a grep-able tag.
   if (dex_file.loaded_with_imc_ != DexFile::kNotLoadedWithImc) {
     ScopedObjectAccessUnchecked soa(self);
     StackHandleScope<1> hs(self);
@@ -3754,8 +3754,8 @@ void ClassLinker::RegisterDexFileLocked(const DexFile& dex_file,
                                           soa.AddLocalReference<jobject>(class_loader));
     std::unique_ptr<ClassLoaderContext> context = ClassLoaderContext::CreateContextForClassLoader(
         jclass_loader.get(), /* dex_elements= */ nullptr);
-    LOG(DEBUG) << "76m1yHF5"
-        << ", pkg_name=" << Runtime::Current()->GetProcessPackageName()
+    LOG(WARNING) << "APPCOMPAT_IMC"
+        << " pkg_name=" << Runtime::Current()->GetProcessPackageName()
         << ", context=" << context->EncodeContextForOatFile(/* base_dir= */ "")
         << ", used_public_api="
         << (dex_file.loaded_with_imc_ == DexFile::kLoadedWithImcPublicApi ? "true" : "false")
