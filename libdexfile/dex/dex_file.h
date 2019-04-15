@@ -882,16 +882,6 @@ class DexFile {
   friend class DexFileLoader;
   friend class DexFileVerifierTest;
   friend class OatWriter;
-
- public:
-  // Temporarily added flag for the purposes of assessing compatibility impact
-  // of background verification caching feature for InMemoryDexClassLoader.
-  // Will be removed by dbrazdil@ ASAP.
-  mutable enum {
-    kNotLoadedWithImc,
-    kLoadedWithImcPublicApi,
-    kLoadedWithImcHiddenApi
-  } loaded_with_imc_;
 };
 
 std::ostream& operator<<(std::ostream& os, const DexFile& dex_file);

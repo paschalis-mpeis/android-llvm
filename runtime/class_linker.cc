@@ -1077,6 +1077,14 @@ bool ClassLinker::InitFromBootImage(std::string* error_msg) {
                        error_msg)) {
       return false;
     }
+    // Assert that if absolute boot classpath locations were provided, they were
+    // assigned to the loaded dex files.
+    if (kIsDebugBuild && IsAbsoluteLocation(boot_class_path_locations[i])) {
+      for (const auto& dex_file : dex_files) {
+        DCHECK_EQ(DexFileLoader::GetBaseLocation(dex_file->GetLocation()),
+                  boot_class_path_locations[i]);
+      }
+    }
     // Append opened dex files at the end.
     boot_dex_files_.insert(boot_dex_files_.end(),
                            std::make_move_iterator(dex_files.begin()),
@@ -2027,10 +2035,8 @@ bool ClassLinker::AddImageSpace(
 
   for (int32_t i = 0; i < dex_caches->GetLength(); i++) {
     ObjPtr<mirror::DexCache> dex_cache = dex_caches->Get(i);
-    std::string dex_file_location(dex_cache->GetLocation()->ToModifiedUtf8());
-    // TODO: Only store qualified paths.
-    // If non qualified, qualify it.
-    dex_file_location = OatFile::ResolveRelativeEncodedDexLocation(dex_location, dex_file_location);
+    std::string dex_file_location = dex_cache->GetLocation()->ToModifiedUtf8();
+    DCHECK_EQ(dex_location, DexFileLoader::GetBaseLocation(dex_file_location));
     std::unique_ptr<const DexFile> dex_file = OpenOatDexFile(oat_file,
                                                              dex_file_location.c_str(),
                                                              error_msg);
@@ -3738,33 +3744,6 @@ void ClassLinker::RegisterDexFileLocked(const DexFile& dex_file,
   Thread* const self = Thread::Current();
   Locks::dex_lock_->AssertExclusiveHeld(self);
   CHECK(dex_cache != nullptr) << dex_file.GetLocation();
-
-  // Temporary logging, to be removed by dbrazdil@ ASAP.
-  // If this is an in-memory dex file (loaded with IMC code path), log:
-  // (a) package name
-  // (b) class loader context
-  // (c) if it used the public API, as opposed to using reflection on DexPathList
-  // (d) if the dex files are being registered with IMC
-  // "APPCOMPAT_IMC" is used as a grep-able tag.
-  if (dex_file.loaded_with_imc_ != DexFile::kNotLoadedWithImc) {
-    ScopedObjectAccessUnchecked soa(self);
-    StackHandleScope<1> hs(self);
-    Handle<mirror::ClassLoader> h_loader = hs.NewHandle<mirror::ClassLoader>(class_loader);
-    ScopedLocalRef<jobject> jclass_loader(self->GetJniEnv(),
-                                          soa.AddLocalReference<jobject>(class_loader));
-    std::unique_ptr<ClassLoaderContext> context = ClassLoaderContext::CreateContextForClassLoader(
-        jclass_loader.get(), /* dex_elements= */ nullptr);
-    LOG(WARNING) << "APPCOMPAT_IMC"
-        << " pkg_name=" << Runtime::Current()->GetProcessPackageName()
-        << ", context=" << context->EncodeContextForOatFile(/* base_dir= */ "")
-        << ", used_public_api="
-        << (dex_file.loaded_with_imc_ == DexFile::kLoadedWithImcPublicApi ? "true" : "false")
-        << ", reg_with_imc="
-        << (IsInMemoryDexClassLoader(soa, h_loader) ? "true" : "false");
-    // Deduplicate log messages.
-    dex_file.loaded_with_imc_ = DexFile::kNotLoadedWithImc;
-  }
-
   // For app images, the dex cache location may be a suffix of the dex file location since the
   // dex file location is an absolute path.
   const std::string dex_cache_location = dex_cache->GetLocation()->ToModifiedUtf8();
