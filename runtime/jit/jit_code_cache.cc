@@ -546,7 +546,7 @@ const void* JitCodeCache::FindCompiledCodeForInstrumentation(ArtMethod* method) 
 }
 
 const void* JitCodeCache::GetZygoteSavedEntryPoint(ArtMethod* method) {
-  if (!Runtime::Current()->IsUsingDefaultBootImageLocation() &&
+  if (Runtime::Current()->IsUsingApexBootImageLocation() &&
       // Currently only applies to boot classpath
       method->GetDeclaringClass()->GetClassLoader() == nullptr) {
     const void* entry_point = nullptr;
@@ -1125,7 +1125,7 @@ uint8_t* JitCodeCache::CommitCodeInternal(Thread* self,
           method->GetEntryPointFromQuickCompiledCode())) {
         // This situation currently only occurs in the jit-zygote mode.
         DCHECK(Runtime::Current()->IsZygote());
-        DCHECK(!Runtime::Current()->IsUsingDefaultBootImageLocation());
+        DCHECK(Runtime::Current()->IsUsingApexBootImageLocation());
         DCHECK(method->GetProfilingInfo(kRuntimePointerSize) != nullptr);
         DCHECK(method->GetDeclaringClass()->GetClassLoader() == nullptr);
         // Save the entrypoint, so it can be fethed later once the class is
@@ -1670,7 +1670,9 @@ void JitCodeCache::DoCollection(Thread* self, bool collect_profiling_info) {
     } else if (kIsDebugBuild) {
       // Sanity check that the profiling infos do not have a dangling entry point.
       for (ProfilingInfo* info : profiling_infos_) {
-        DCHECK(info->GetSavedEntryPoint() == nullptr);
+        DCHECK(!Runtime::Current()->IsZygote());
+        const void* entry_point = info->GetSavedEntryPoint();
+        DCHECK(entry_point == nullptr || IsInZygoteExecSpace(entry_point));
       }
     }
 
@@ -2015,7 +2017,7 @@ bool JitCodeCache::NotifyCompilationOf(ArtMethod* method, Thread* self, bool osr
 
   ClassLinker* class_linker = Runtime::Current()->GetClassLinker();
   if (class_linker->IsQuickResolutionStub(method->GetEntryPointFromQuickCompiledCode())) {
-    if (Runtime::Current()->IsUsingDefaultBootImageLocation() || !Runtime::Current()->IsZygote()) {
+    if (!Runtime::Current()->IsUsingApexBootImageLocation() || !Runtime::Current()->IsZygote()) {
       // Unless we're running as zygote in the jitzygote experiment, we currently don't save
       // the JIT compiled code if we cannot update the entrypoint due to having the resolution stub.
       VLOG(jit) << "Not compiling "
@@ -2060,8 +2062,9 @@ bool JitCodeCache::NotifyCompilationOf(ArtMethod* method, Thread* self, bool osr
         }
       }
       if (collection_in_progress_) {
-        CHECK(!IsInZygoteExecSpace(data->GetCode()));
-        GetLiveBitmap()->AtomicTestAndSet(FromCodeToAllocation(data->GetCode()));
+        if (!IsInZygoteExecSpace(data->GetCode())) {
+          GetLiveBitmap()->AtomicTestAndSet(FromCodeToAllocation(data->GetCode()));
+        }
       }
     }
     return new_compilation;
