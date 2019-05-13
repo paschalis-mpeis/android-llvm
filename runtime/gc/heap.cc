@@ -2097,10 +2097,14 @@ HomogeneousSpaceCompactResult Heap::PerformHomogeneousSpaceCompact() {
                static_cast<double>(space_size_before_compaction);
   }
   // Finish GC.
-  reference_processor_->EnqueueClearedReferences(self);
+  // Get the references we need to enqueue.
+  SelfDeletingTask* clear = reference_processor_->CollectClearedReferences(self);
   GrowForUtilization(semi_space_collector_);
   LogGC(kGcCauseHomogeneousSpaceCompact, collector);
   FinishGC(self, collector::kGcTypeFull);
+  // Enqueue any references after losing the GC locks.
+  clear->Run(self);
+  clear->Finalize();
   {
     ScopedObjectAccess soa(self);
     soa.Vm()->UnloadNativeLibraries();
@@ -2242,13 +2246,16 @@ void Heap::TransitionCollector(CollectorType collector_type) {
     }
     ChangeCollector(collector_type);
   }
-  // Can't call into java code with all threads suspended.
-  reference_processor_->EnqueueClearedReferences(self);
+  // Can't call into java code with all threads suspended or the GC ongoing.
+  SelfDeletingTask* clear = reference_processor_->CollectClearedReferences(self);
   uint64_t duration = NanoTime() - start_time;
   GrowForUtilization(semi_space_collector_);
   DCHECK(collector != nullptr);
   LogGC(kGcCauseCollectorTransition, collector);
   FinishGC(self, collector::kGcTypeFull);
+  // Now call into java and enqueue the references.
+  clear->Run(self);
+  clear->Finalize();
   {
     ScopedObjectAccess soa(self);
     soa.Vm()->UnloadNativeLibraries();
@@ -2784,12 +2791,16 @@ collector::GcType Heap::CollectGarbageInternal(collector::GcType gc_type,
   total_objects_freed_ever_ += GetCurrentGcIteration()->GetFreedObjects();
   total_bytes_freed_ever_ += GetCurrentGcIteration()->GetFreedBytes();
   RequestTrim(self);
-  // Enqueue cleared references.
-  reference_processor_->EnqueueClearedReferences(self);
+  // Collect cleared references.
+  SelfDeletingTask* clear = reference_processor_->CollectClearedReferences(self);
   // Grow the heap so that we know when to perform the next GC.
   GrowForUtilization(collector, bytes_allocated_before_gc);
   LogGC(gc_cause, collector);
   FinishGC(self, gc_type);
+  // Actually enqueue all cleared references. Do this after the GC has officially finished since
+  // otherwise we can deadlock.
+  clear->Run(self);
+  clear->Finalize();
   // Inform DDMS that a GC completed.
   Dbg::GcDidFinish();
 
