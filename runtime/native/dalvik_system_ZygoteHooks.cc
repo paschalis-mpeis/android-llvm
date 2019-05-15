@@ -257,6 +257,7 @@ static void ZygoteHooks_nativePostZygoteFork(JNIEnv*, jclass) {
 
 static void ZygoteHooks_nativePostForkSystemServer(JNIEnv* env ATTRIBUTE_UNUSED,
                                                    jclass klass ATTRIBUTE_UNUSED) {
+  Runtime::Current()->SetSystemServer(true);
   // This JIT code cache for system server is created whilst the runtime is still single threaded.
   // System server has a window where it can create executable pages for this purpose, but this is
   // turned off after this hook. Consequently, the only JIT mode supported is the dual-view JIT
@@ -324,7 +325,7 @@ static void ZygoteHooks_nativePostForkChild(JNIEnv* env,
           /* is_system_server= */ false, is_zygote);
     }
     // This must be called after EnableDebugFeatures.
-    runtime->GetJit()->PostForkChildAction(is_zygote);
+    runtime->GetJit()->PostForkChildAction(is_system_server, is_zygote);
   }
 
   // Update tracing.
