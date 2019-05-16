@@ -446,7 +446,7 @@ static inline ArtMethod* FindInterfaceMethodWithSignature(ObjPtr<Class> klass,
     // Search declared methods, both direct and virtual.
     // (This lookup is used also for invoke-static on interface classes.)
     for (ArtMethod& method : klass->GetDeclaredMethodsSlice(pointer_size)) {
-      if (method.GetName() == name && method.GetSignature() == signature) {
+      if (method.GetNameView() == name && method.GetSignature() == signature) {
         return &method;
       }
     }
@@ -458,7 +458,7 @@ static inline ArtMethod* FindInterfaceMethodWithSignature(ObjPtr<Class> klass,
   for (int32_t i = 0, iftable_count = iftable->Count(); i < iftable_count; ++i) {
     ObjPtr<Class> iface = iftable->GetInterface(i);
     for (ArtMethod& method : iface->GetVirtualMethodsSlice(pointer_size)) {
-      if (method.GetName() == name && method.GetSignature() == signature) {
+      if (method.GetNameView() == name && method.GetSignature() == signature) {
         return &method;
       }
     }
@@ -470,7 +470,7 @@ static inline ArtMethod* FindInterfaceMethodWithSignature(ObjPtr<Class> klass,
     DCHECK(object_class->IsObjectClass());
     for (ArtMethod& method : object_class->GetDeclaredMethodsSlice(pointer_size)) {
       if (method.IsPublic() && !method.IsStatic() &&
-          method.GetName() == name && method.GetSignature() == signature) {
+          method.GetNameView() == name && method.GetSignature() == signature) {
         return &method;
       }
     }
@@ -496,7 +496,7 @@ ArtMethod* Class::FindInterfaceMethod(ObjPtr<DexCache> dex_cache,
   // We always search by name and signature, ignoring the type index in the MethodId.
   const DexFile& dex_file = *dex_cache->GetDexFile();
   const dex::MethodId& method_id = dex_file.GetMethodId(dex_method_idx);
-  std::string_view name = dex_file.StringDataByIdx(method_id.name_idx_);
+  std::string_view name = dex_file.StringViewByIdx(method_id.name_idx_);
   const Signature signature = dex_file.GetMethodSignature(method_id);
   return FindInterfaceMethod(name, signature, pointer_size);
 }
