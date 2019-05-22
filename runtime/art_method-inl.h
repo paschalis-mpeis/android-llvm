@@ -199,26 +199,19 @@ inline const char* ArtMethod::GetName() {
     const DexFile* dex_file = GetDexFile();
     return dex_file->GetMethodName(dex_file->GetMethodId(dex_method_idx));
   }
-  Runtime* const runtime = Runtime::Current();
-  if (this == runtime->GetResolutionMethod()) {
-    return "<runtime internal resolution method>";
-  } else if (this == runtime->GetImtConflictMethod()) {
-    return "<runtime internal imt conflict method>";
-  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveAllCalleeSaves)) {
-    return "<runtime internal callee-save all registers method>";
-  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveRefsOnly)) {
-    return "<runtime internal callee-save reference registers method>";
-  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveRefsAndArgs)) {
-    return "<runtime internal callee-save reference and argument registers method>";
-  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveEverything)) {
-    return "<runtime internal save-every-register method>";
-  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveEverythingForClinit)) {
-    return "<runtime internal save-every-register method for clinit>";
-  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveEverythingForSuspendCheck)) {
-    return "<runtime internal save-every-register method for suspend check>";
-  } else {
-    return "<unknown runtime internal method>";
+  return GetRuntimeMethodName();
+}
+
+inline std::string_view ArtMethod::GetNameView() {
+  uint32_t dex_method_idx = GetDexMethodIndex();
+  if (LIKELY(dex_method_idx != dex::kDexNoIndex)) {
+    DCHECK(!IsProxyMethod());
+    const DexFile* dex_file = GetDexFile();
+    uint32_t length = 0;
+    const char* name = dex_file->GetMethodName(dex_file->GetMethodId(dex_method_idx), &length);
+    return StringViewFromUtf16Length(name, length);
   }
+  return GetRuntimeMethodName();
 }
 
 inline ObjPtr<mirror::String> ArtMethod::ResolveNameString() {

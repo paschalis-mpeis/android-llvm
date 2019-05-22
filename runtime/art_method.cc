@@ -838,6 +838,29 @@ std::string ArtMethod::JniLongName() {
   return long_name;
 }
 
+const char* ArtMethod::GetRuntimeMethodName() {
+  Runtime* const runtime = Runtime::Current();
+  if (this == runtime->GetResolutionMethod()) {
+    return "<runtime internal resolution method>";
+  } else if (this == runtime->GetImtConflictMethod()) {
+    return "<runtime internal imt conflict method>";
+  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveAllCalleeSaves)) {
+    return "<runtime internal callee-save all registers method>";
+  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveRefsOnly)) {
+    return "<runtime internal callee-save reference registers method>";
+  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveRefsAndArgs)) {
+    return "<runtime internal callee-save reference and argument registers method>";
+  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveEverything)) {
+    return "<runtime internal save-every-register method>";
+  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveEverythingForClinit)) {
+    return "<runtime internal save-every-register method for clinit>";
+  } else if (this == runtime->GetCalleeSaveMethod(CalleeSaveType::kSaveEverythingForSuspendCheck)) {
+    return "<runtime internal save-every-register method for suspend check>";
+  } else {
+    return "<unknown runtime internal method>";
+  }
+}
+
 // AssertSharedHeld doesn't work in GetAccessFlags, so use a NO_THREAD_SAFETY_ANALYSIS helper.
 // TODO: Figure out why ASSERT_SHARED_CAPABILITY doesn't work.
 template <ReadBarrierOption kReadBarrierOption>

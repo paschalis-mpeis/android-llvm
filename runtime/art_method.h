@@ -585,6 +585,8 @@ class ArtMethod final {
 
   ALWAYS_INLINE const char* GetName() REQUIRES_SHARED(Locks::mutator_lock_);
 
+  ALWAYS_INLINE std::string_view GetNameView() REQUIRES_SHARED(Locks::mutator_lock_);
+
   ObjPtr<mirror::String> ResolveNameString() REQUIRES_SHARED(Locks::mutator_lock_);
 
   const dex::CodeItem* GetCodeItem() REQUIRES_SHARED(Locks::mutator_lock_);
@@ -859,6 +861,9 @@ class ArtMethod final {
       new_access_flags = old_access_flags & ~flag;
     } while (!access_flags_.compare_exchange_weak(old_access_flags, new_access_flags));
   }
+
+  // Used by GetName and GetNameView to share common code.
+  const char* GetRuntimeMethodName() REQUIRES_SHARED(Locks::mutator_lock_);
 
   DISALLOW_COPY_AND_ASSIGN(ArtMethod);  // Need to use CopyFrom to deal with 32 vs 64 bits.
 };

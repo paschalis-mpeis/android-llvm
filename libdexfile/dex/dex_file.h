@@ -262,6 +262,7 @@ class DexFile {
   const char* StringDataAndUtf16LengthByIdx(dex::StringIndex idx, uint32_t* utf16_length) const;
 
   const char* StringDataByIdx(dex::StringIndex idx) const;
+  std::string_view StringViewByIdx(dex::StringIndex idx) const;
 
   // Looks up a string id for a given modified utf8 string.
   const dex::StringId* FindStringId(const char* string) const;
