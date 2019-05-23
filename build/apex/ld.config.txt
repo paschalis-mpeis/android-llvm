@@ -30,6 +30,9 @@ namespace.platform.search.paths = /system/${LIB}
 namespace.platform.asan.search.paths = /data/asan/system/${LIB}
 namespace.platform.links = default
 namespace.platform.link.default.shared_libs  = libdexfile_external.so
+# libicuuc.so and libicui18n.so are kept for app compat reason. http://b/130788466
+namespace.platform.link.default.shared_libs += libicui18n.so
+namespace.platform.link.default.shared_libs += libicuuc.so
 namespace.platform.link.default.shared_libs += libnativebridge.so
 namespace.platform.link.default.shared_libs += libnativehelper.so
 namespace.platform.link.default.shared_libs += libnativeloader.so
