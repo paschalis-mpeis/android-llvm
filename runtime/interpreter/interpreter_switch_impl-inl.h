@@ -20,19 +20,24 @@
 #include "interpreter_switch_impl.h"
 
 #include "base/enums.h"
+#include "base/globals.h"
 #include "base/memory_tool.h"
 #include "base/quasi_atomic.h"
 #include "dex/dex_file_types.h"
 #include "dex/dex_instruction_list.h"
 #include "experimental_flags.h"
+#include "handle_scope.h"
 #include "interpreter_common.h"
+#include "interpreter/shadow_frame.h"
 #include "jit/jit-inl.h"
 #include "jvalue-inl.h"
 #include "mirror/string-alloc-inl.h"
+#include "mirror/throwable.h"
 #include "nth_caller_visitor.h"
 #include "safe_math.h"
 #include "shadow_frame-inl.h"
 #include "thread.h"
+#include "verifier/method_verifier.h"
 
 namespace art {
 namespace interpreter {
@@ -49,12 +54,46 @@ namespace interpreter {
 template<bool do_access_check, bool transaction_active>
 class InstructionHandler {
  public:
+  template <bool kMonitorCounting>
+  static NO_INLINE void UnlockHeldMonitors(Thread* self, ShadowFrame* shadow_frame)
+      REQUIRES_SHARED(Locks::mutator_lock_) {
+    DCHECK(shadow_frame->GetForcePopFrame());
+    // Unlock all monitors.
+    if (kMonitorCounting && shadow_frame->GetMethod()->MustCountLocks()) {
+      // Get the monitors from the shadow-frame monitor-count data.
+      shadow_frame->GetLockCountData().VisitMonitors(
+        [&](mirror::Object** obj) REQUIRES_SHARED(Locks::mutator_lock_) {
+          // Since we don't use the 'obj' pointer after the DoMonitorExit everything should be fine
+          // WRT suspension.
+          DoMonitorExit<do_assignability_check>(self, shadow_frame, *obj);
+        });
+    } else {
+      std::vector<verifier::MethodVerifier::DexLockInfo> locks;
+      verifier::MethodVerifier::FindLocksAtDexPc(shadow_frame->GetMethod(),
+                                                  shadow_frame->GetDexPC(),
+                                                  &locks,
+                                                  Runtime::Current()->GetTargetSdkVersion());
+      for (const auto& reg : locks) {
+        if (UNLIKELY(reg.dex_registers.empty())) {
+          LOG(ERROR) << "Unable to determine reference locked by "
+                      << shadow_frame->GetMethod()->PrettyMethod() << " at pc "
+                      << shadow_frame->GetDexPC();
+        } else {
+          DoMonitorExit<do_assignability_check>(
+              self, shadow_frame, shadow_frame->GetVRegReference(*reg.dex_registers.begin()));
+        }
+      }
+    }
+  }
+
   ALWAYS_INLINE WARN_UNUSED bool CheckForceReturn()
       REQUIRES_SHARED(Locks::mutator_lock_) {
     if (UNLIKELY(shadow_frame.GetForcePopFrame())) {
       DCHECK(PrevFrameWillRetry(self, shadow_frame))
           << "Pop frame forced without previous frame ready to retry instruction!";
       DCHECK(Runtime::Current()->AreNonStandardExitsEnabled());
+      UnlockHeldMonitors<do_assignability_check>(self, &shadow_frame);
+      DoMonitorCheckOnExit<do_assignability_check>(self, &shadow_frame);
       if (UNLIKELY(NeedsMethodExitEvent(instrumentation))) {
         SendMethodExitEvents(self,
                              instrumentation,

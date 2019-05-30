@@ -116,3 +116,6 @@ Failed to pop frame due to java.lang.RuntimeException: JVMTI_ERROR_OPAQUE_FRAME
 	art.Test1953.runTests(Test1953.java)
 	<Additional frames hidden>
 result is NativeCallerObject { cnt: 1 } base-call count: 1
+Test stopped with monitor in enclosing frame.
+Single call with PopFrame on StandardTestObject { cnt: 0 } base-call-count: 0
+result is StandardTestObject { cnt: 2 } base-call count: 1

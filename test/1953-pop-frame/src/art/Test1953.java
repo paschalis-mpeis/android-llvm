@@ -449,9 +449,13 @@ public class Test1953 {
     public final Object lock;
 
     public SynchronizedTestObject() {
+      this(new Object());
+    }
+
+    public SynchronizedTestObject(Object l) {
       super();
       cnt = 0;
-      lock = new Object();
+      lock = l;
     }
 
     public void calledFunction() {
@@ -729,9 +733,12 @@ public class Test1953 {
     final int syncLine = Breakpoint.locationToLine(syncCalledFunction, 0) + 3;
     final long syncLoc = Breakpoint.lineToLocation(syncCalledFunction, syncLine);
     System.out.println("Test stopped using breakpoint with synchronized block");
-    runTestOn(new SynchronizedTestObject(),
+    Object lock = new Object();
+    synchronized (lock) {}
+    runTestOn(new SynchronizedTestObject(lock),
         (thr) -> setupSuspendBreakpointFor(syncCalledFunction, syncLoc, thr),
         Test1953::clearSuspendBreakpointFor);
+    synchronized (lock) {}
 
     System.out.println("Test stopped on single step");
     runTestOn(new StandardTestObject(),
@@ -907,6 +914,21 @@ public class Test1953 {
     runTestOn(new NativeCallerObject(),
         (thr) -> setupSuspendMethodEvent(nativeCallerMethod, /*enter*/ false, thr),
         Test1953::clearSuspendMethodEvent);
+
+    final Object lock2 = new Object();
+    synchronized (lock2) {}
+    System.out.println("Test stopped with monitor in enclosing frame.");
+    runTestOn(new StandardTestObject() {
+          @Override
+          public void run() {
+            synchronized (lock2) {
+              super.run();
+            }
+          }
+        },
+        (thr) -> setupSuspendBreakpointFor(calledFunction, loc, thr),
+        Test1953::clearSuspendBreakpointFor);
+    synchronized (lock2) {}
   }
 
   // Volatile is to prevent any future optimizations that could invalidate this test by doing
