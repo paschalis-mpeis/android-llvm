@@ -221,19 +221,16 @@ class Thread {
             bool dump_native_stack = true,
             BacktraceMap* backtrace_map = nullptr,
             bool force_dump_stack = false) const
-      REQUIRES(!Locks::thread_suspend_count_lock_)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   void DumpJavaStack(std::ostream& os,
                      bool check_suspended = true,
                      bool dump_locks = true) const
-      REQUIRES(!Locks::thread_suspend_count_lock_)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   // Dumps the SIGQUIT per-thread header. 'thread' can be null for a non-attached thread, in which
   // case we use 'tid' to identify the thread, and we'll include as much information as we can.
   static void DumpState(std::ostream& os, const Thread* thread, pid_t tid)
-      REQUIRES(!Locks::thread_suspend_count_lock_)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   ThreadState GetState() const {
@@ -1342,7 +1339,6 @@ class Thread {
                  bool dump_native_stack = true,
                  BacktraceMap* backtrace_map = nullptr,
                  bool force_dump_stack = false) const
-      REQUIRES(!Locks::thread_suspend_count_lock_)
       REQUIRES_SHARED(Locks::mutator_lock_);
 
   // Out-of-line conveniences for debugging in gdb.

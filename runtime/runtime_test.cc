@@ -40,4 +40,18 @@ TEST_F(RuntimeTest, AbortWithThreadListLockHeld) {
   }, kDeathRegex);
 }
 
+
+TEST_F(RuntimeTest, AbortWithThreadSuspendCountLockHeld) {
+  // This assumes the test is run single-threaded: do not start the runtime to avoid daemon threads.
+
+  constexpr const char* kDeathRegex = "Skipping all-threads dump as locks are held";
+  ASSERT_DEATH({
+    // The regex only works if we can ensure output goes to stderr.
+    android::base::SetLogger(android::base::StderrLogger);
+
+    MutexLock mu(Thread::Current(), *Locks::thread_suspend_count_lock_);
+    Runtime::Abort("Attempt to abort");
+  }, kDeathRegex);
+}
+
 }  // namespace art
