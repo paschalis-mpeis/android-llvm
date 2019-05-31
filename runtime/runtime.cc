@@ -549,13 +549,26 @@ struct AbortState {
     if (runtime != nullptr) {
       ThreadList* thread_list = runtime->GetThreadList();
       if (thread_list != nullptr) {
+        // Dump requires ThreadListLock and ThreadSuspendCountLock to not be held (they will be
+        // grabbed).
+        // TODO(b/134167395): Change Dump to work with the locks held, and have a loop with timeout
+        //                    acquiring the locks.
         bool tll_already_held = Locks::thread_list_lock_->IsExclusiveHeld(self);
+        bool tscl_already_held = Locks::thread_suspend_count_lock_->IsExclusiveHeld(self);
+        if (tll_already_held || tscl_already_held) {
+          os << "Skipping all-threads dump as locks are held:"
+             << (tll_already_held ? "" : " thread_list_lock")
+             << (tscl_already_held ? "" : " thread_suspend_count_lock")
+             << "\n";
+          return;
+        }
+        bool ml_already_exlusively_held = Locks::mutator_lock_->IsExclusiveHeld(self);
+        if (ml_already_exlusively_held) {
+          os << "Skipping all-threads dump as mutator lock is exclusively held.";
+        }
         bool ml_already_held = Locks::mutator_lock_->IsSharedHeld(self);
-        if (!tll_already_held || !ml_already_held) {
-          os << "Dumping all threads without appropriate locks held:"
-              << (!tll_already_held ? " thread list lock" : "")
-              << (!ml_already_held ? " mutator lock" : "")
-              << "\n";
+        if (!ml_already_held) {
+          os << "Dumping all threads without mutator lock held\n";
         }
         os << "All threads:\n";
         thread_list->Dump(os);

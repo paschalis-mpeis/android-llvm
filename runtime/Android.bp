@@ -642,6 +642,7 @@ art_cc_test {
         "proxy_test.cc",
         "reference_table_test.cc",
         "runtime_callbacks_test.cc",
+        "runtime_test.cc",
         "subtype_check_info_test.cc",
         "subtype_check_test.cc",
         "thread_pool_test.cc",
