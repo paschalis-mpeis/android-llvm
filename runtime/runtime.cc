@@ -565,6 +565,7 @@ struct AbortState {
         bool ml_already_exlusively_held = Locks::mutator_lock_->IsExclusiveHeld(self);
         if (ml_already_exlusively_held) {
           os << "Skipping all-threads dump as mutator lock is exclusively held.";
+          return;
         }
         bool ml_already_held = Locks::mutator_lock_->IsSharedHeld(self);
         if (!ml_already_held) {
