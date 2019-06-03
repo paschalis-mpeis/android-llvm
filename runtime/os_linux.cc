@@ -54,7 +54,7 @@ File* OS::CreateEmptyFileWriteOnly(const char* name) {
 File* OS::OpenFileWithFlags(const char* name, int flags) {
   CHECK(name != nullptr);
   std::unique_ptr<File> file(new File);
-  if (!file->Open(name, flags, 0666)) {
+  if (!file->Open(name, flags, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) {
     return nullptr;
   }
   return file.release();
