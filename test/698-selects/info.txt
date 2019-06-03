@@ -1,0 +1,2 @@
+Regression test for the compiler, which used to have wrong
+assumptions on what could be of a boolean type.
