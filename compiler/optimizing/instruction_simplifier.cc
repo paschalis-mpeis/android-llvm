@@ -753,23 +753,11 @@ static HCondition* GetOppositeConditionSwapOps(ArenaAllocator* allocator, HInstr
   }
 }
 
-static bool CmpHasBoolType(HInstruction* input, HInstruction* cmp) {
-  if (input->GetType() == DataType::Type::kBool) {
-    return true;  // input has direct boolean type
-  } else if (cmp->GetUses().HasExactlyOneElement()) {
-    // Comparison also has boolean type if both its input and the instruction
-    // itself feed into the same phi node.
-    HInstruction* user = cmp->GetUses().front().GetUser();
-    return user->IsPhi() && user->HasInput(input) && user->HasInput(cmp);
-  }
-  return false;
-}
-
 void InstructionSimplifierVisitor::VisitEqual(HEqual* equal) {
   HInstruction* input_const = equal->GetConstantRight();
   if (input_const != nullptr) {
     HInstruction* input_value = equal->GetLeastConstantLeft();
-    if (CmpHasBoolType(input_value, equal) && input_const->IsIntConstant()) {
+    if ((input_value->GetType() == DataType::Type::kBool) && input_const->IsIntConstant()) {
       HBasicBlock* block = equal->GetBlock();
       // We are comparing the boolean to a constant which is of type int and can
       // be any constant.
@@ -801,7 +789,7 @@ void InstructionSimplifierVisitor::VisitNotEqual(HNotEqual* not_equal) {
   HInstruction* input_const = not_equal->GetConstantRight();
   if (input_const != nullptr) {
     HInstruction* input_value = not_equal->GetLeastConstantLeft();
-    if (CmpHasBoolType(input_value, not_equal) && input_const->IsIntConstant()) {
+    if ((input_value->GetType() == DataType::Type::kBool) && input_const->IsIntConstant()) {
       HBasicBlock* block = not_equal->GetBlock();
       // We are comparing the boolean to a constant which is of type int and can
       // be any constant.

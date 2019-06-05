@@ -74,8 +74,13 @@ namespace jit {
 class MarkCodeClosure;
 class ScopedCodeCacheWrite;
 
-// Alignment in bits that will suit all architectures.
-static constexpr int kJitCodeAlignment = 16;
+// Alignment in bytes that will suit all architectures for JIT code cache allocations.  The
+// allocated block is used for method header followed by generated code. Allocations should be
+// aligned to avoid sharing cache lines between different allocations. The alignment should be
+// determined from the hardware, but this isn't readily exposed in userland plus some hardware
+// misreports.
+static constexpr int kJitCodeAlignment = 64;
+
 using CodeCacheBitmap = gc::accounting::MemoryRangeBitmap<kJitCodeAlignment>;
 
 class JitCodeCache {
