@@ -305,25 +305,25 @@ art_cc_binary {
             static_libs: [
                 "libz",
             ],
+            compile_multilib: "prefer32",
         },
         host: {
             shared_libs: [
                 "libz",
             ],
             compile_multilib: "both",
+            symlink_preferred_arch: true,
         },
-    },
-
-    multilib: {
-        lib32: {
+        linux_glibc_x86: {
             suffix: "32",
         },
-        lib64: {
+        linux_glibc_x86_64: {
+            suffix: "64",
+        },
+        linux_bionic_x86_64: {
             suffix: "64",
         },
     },
-
-    symlink_preferred_arch: true,
 }
 
 cc_defaults {

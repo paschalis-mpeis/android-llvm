@@ -275,10 +275,6 @@ class Checker:
     """Check bin/filename32, and/or bin/filename64, with symlink bin/filename."""
     raise NotImplementedError
 
-  def check_symlinked_prefer32_executable(self, filename):
-    """Check bin/filename32, or bin/filename64 on 64 bit only, with symlink bin/filename."""
-    raise NotImplementedError
-
   def check_multilib_executable(self, filename):
     """Check bin/filename for 32 bit, and/or bin/filename64."""
     raise NotImplementedError
@@ -298,10 +294,6 @@ class Checker:
 
 class Arch32Checker(Checker):
   def check_symlinked_multilib_executable(self, filename):
-    self.check_executable('%s32' % filename)
-    self.check_executable_symlink(filename)
-
-  def check_symlinked_prefer32_executable(self, filename):
     self.check_executable('%s32' % filename)
     self.check_executable_symlink(filename)
 
@@ -325,10 +317,6 @@ class Arch64Checker(Checker):
     self.check_executable('%s64' % filename)
     self.check_executable_symlink(filename)
 
-  def check_symlinked_prefer32_executable(self, filename):
-    self.check_executable('%s64' % filename)
-    self.check_executable_symlink(filename)
-
   def check_multilib_executable(self, filename):
     self.check_executable('%s64' % filename)
 
@@ -348,10 +336,6 @@ class MultilibChecker(Checker):
   def check_symlinked_multilib_executable(self, filename):
     self.check_executable('%s32' % filename)
     self.check_executable('%s64' % filename)
-    self.check_executable_symlink(filename)
-
-  def check_symlinked_prefer32_executable(self, filename):
-    self.check_executable('%s32' % filename)
     self.check_executable_symlink(filename)
 
   def check_multilib_executable(self, filename):
@@ -539,7 +523,6 @@ class DebugChecker:
     # Check debug binaries for ART.
     self._checker.check_executable('dexoptanalyzerd')
     self._checker.check_executable('profmand')
-    self._checker.check_symlinked_prefer32_executable('dex2oatd')
 
     # Check internal libraries for ART.
     self._checker.check_native_library('libadbconnectiond')
@@ -565,6 +548,7 @@ class DebugTargetChecker:
 
   def run(self):
     # Check ART debug binaries.
+    self._checker.check_executable('dex2oatd')
     self._checker.check_executable('oatdumpd')
 
     # Check ART internal libraries.
