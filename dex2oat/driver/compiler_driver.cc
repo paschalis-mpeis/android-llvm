@@ -680,9 +680,10 @@ void CompilerDriver::ResolveConstStrings(const std::vector<const DexFile*>& dex_
 
   for (const DexFile* dex_file : dex_files) {
     dex_cache.Assign(class_linker->FindDexCache(soa.Self(), *dex_file));
+    bool added_preresolved_string_array = false;
     if (only_startup_strings) {
       // When resolving startup strings, create the preresolved strings array.
-      dex_cache->AddPreResolvedStringsArray();
+      added_preresolved_string_array = dex_cache->AddPreResolvedStringsArray();
     }
     TimingLogger::ScopedTiming t("Resolve const-string Strings", timings);
 
@@ -709,7 +710,7 @@ void CompilerDriver::ResolveConstStrings(const std::vector<const DexFile*>& dex_
         if (profile_compilation_info != nullptr && !is_startup_clinit) {
           ProfileCompilationInfo::MethodHotness hotness =
               profile_compilation_info->GetMethodHotness(method.GetReference());
-          if (only_startup_strings ? !hotness.IsStartup() : !hotness.IsInProfile()) {
+          if (added_preresolved_string_array ? !hotness.IsStartup() : !hotness.IsInProfile()) {
             continue;
           }
         }
@@ -727,7 +728,7 @@ void CompilerDriver::ResolveConstStrings(const std::vector<const DexFile*>& dex_
                   : inst->VRegB_31c());
               ObjPtr<mirror::String> string = class_linker->ResolveString(string_index, dex_cache);
               CHECK(string != nullptr) << "Could not allocate a string when forcing determinism";
-              if (only_startup_strings) {
+              if (added_preresolved_string_array) {
                 dex_cache->GetPreResolvedStrings()[string_index.index_] =
                     GcRoot<mirror::String>(string);
               }

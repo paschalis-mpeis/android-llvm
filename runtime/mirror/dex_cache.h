@@ -473,7 +473,8 @@ class MANAGED DexCache final : public Object {
   uint32_t MethodSlotIndex(uint32_t method_idx) REQUIRES_SHARED(Locks::mutator_lock_);
   uint32_t MethodTypeSlotIndex(dex::ProtoIndex proto_idx) REQUIRES_SHARED(Locks::mutator_lock_);
 
-  void AddPreResolvedStringsArray() REQUIRES_SHARED(Locks::mutator_lock_);
+  // Returns true if we succeeded in adding the pre-resolved string array.
+  bool AddPreResolvedStringsArray() REQUIRES_SHARED(Locks::mutator_lock_);
 
  private:
   void Init(const DexFile* dex_file,
