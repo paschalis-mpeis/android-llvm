@@ -217,9 +217,14 @@ template<> size_t EntrySize(ArtMethod* art_method) REQUIRES_SHARED(Locks::mutato
   return sizeof(*art_method);
 }
 
+// entry1 and entry2 might be relocated, this means we must use the runtime image's entry
+// (image_entry) to avoid crashes.
 template <typename T>
-static bool EntriesDiffer(T* entry1, T* entry2) REQUIRES_SHARED(Locks::mutator_lock_) {
-  return memcmp(entry1, entry2, EntrySize(entry1)) != 0;
+static bool EntriesDiffer(T* image_entry,
+                          T* entry1,
+                          T* entry2) REQUIRES_SHARED(Locks::mutator_lock_) {
+  // Use the image entry since entry1 and entry2 might both be remote and relocated.
+  return memcmp(entry1, entry2, EntrySize(image_entry)) != 0;
 }
 
 template <typename T>
@@ -1065,18 +1070,18 @@ class RegionData : public RegionSpecializedBase<T> {
     // Test private dirty first.
     bool is_dirty = false;
     if (have_zygote) {
-      bool private_dirty = EntriesDiffer(entry_zygote, entry_remote);
+      bool private_dirty = EntriesDiffer(entry, entry_zygote, entry_remote);
       if (private_dirty) {
         // Private dirty, app vs zygote.
         is_dirty = true;
         RegionCommon<T>::AddImageDirtyEntry(entry);
       }
-      if (EntriesDiffer(entry_zygote, entry)) {
+      if (EntriesDiffer(entry, entry_zygote, entry)) {
         // Shared dirty, zygote vs image.
         is_dirty = true;
         RegionCommon<T>::AddZygoteDirtyEntry(entry);
       }
-    } else if (EntriesDiffer(entry_remote, entry)) {
+    } else if (EntriesDiffer(entry, entry_remote, entry)) {
       // Shared or private dirty, app vs image.
       is_dirty = true;
       RegionCommon<T>::AddImageDirtyEntry(entry);
@@ -1540,18 +1545,16 @@ class ImgDiagDumper {
       }
     }
 
-    // FIXME: Because of ASLR, this check shall fail for most processes.
-    // We need to update the entire diff to work with the ASLR. b/77856493
-    if (reinterpret_cast<uintptr_t>(image_begin) > boot_map.start ||
-        reinterpret_cast<uintptr_t>(image_end) < boot_map.end) {
-      // Sanity check that we aren't trying to read a completely different boot image
-      os << "Remote boot map is out of range of local boot map: " <<
+    // TODO: We need to update the entire diff to work with the ASLR. b/77856493
+    // Since the images may be relocated, just check the sizes.
+    if (static_cast<uintptr_t>(image_end - image_begin) != boot_map.end - boot_map.start) {
+      os << "Remote boot map is a different size than local boot map: " <<
         "local begin " << reinterpret_cast<const void*>(image_begin) <<
         ", local end " << reinterpret_cast<const void*>(image_end) <<
         ", remote begin " << reinterpret_cast<const void*>(boot_map.start) <<
         ", remote end " << reinterpret_cast<const void*>(boot_map.end);
       return false;
-      // If we wanted even more validation we could map the ImageHeader from the file
+      // For more validation should also check the ImageHeader from the file
     }
 
     MappingData mapping_data;
