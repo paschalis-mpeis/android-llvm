@@ -1208,6 +1208,9 @@ void ConcurrentCopying::PushOntoLocalMarkStack(mirror::Object* ref) {
     DCHECK(self->GetThreadLocalMarkStack() == nullptr);
   }
   DCHECK_EQ(mark_stack_mode_.load(std::memory_order_relaxed), kMarkStackModeThreadLocal);
+  if (UNLIKELY(gc_mark_stack_->IsFull())) {
+    ExpandGcMarkStack();
+  }
   gc_mark_stack_->PushBack(ref);
 }
 
