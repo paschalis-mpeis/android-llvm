@@ -1608,10 +1608,19 @@ void AppImageLoadingHelper::UpdateInternStrings(
             reinterpret_cast<mirror::DexCache*>(space->Begin() + base_offset);
         uint32_t string_index = sro_base[offset_index].second;
 
+        GcRoot<mirror::String>* preresolved_strings =
+            dex_cache->GetPreResolvedStrings();
+        // Handle calls to ClearPreResolvedStrings that might occur concurrently by the profile
+        // saver that runs shortly after startup. In case the strings are cleared, there is nothing
+        // to fix up.
+        if (preresolved_strings == nullptr) {
+          continue;
+        }
         ObjPtr<mirror::String> referred_string =
-            dex_cache->GetPreResolvedStrings()[string_index].Read();
-        DCHECK(referred_string != nullptr);
-
+            preresolved_strings[string_index].Read();
+        if (referred_string == nullptr) {
+          continue;
+        }
         auto it = intern_remap.find(referred_string.Ptr());
         if (it != intern_remap.end()) {
           // Because we are not using a helper function we need to mark the GC card manually.
