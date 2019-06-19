@@ -645,8 +645,19 @@ bool JitCodeCache::WaitForPotentialCollectionToComplete(Thread* self) {
   return in_collection;
 }
 
+static size_t GetJitCodeAlignment() {
+  if (kRuntimeISA == InstructionSet::kArm || kRuntimeISA == InstructionSet::kThumb2) {
+    // Some devices with 32-bit ARM kernels need additional JIT code alignment when using dual
+    // view JIT (b/132205399). The alignment returned here coincides with the typical ARM d-cache
+    // line (though the value should be probed ideally). Both the method header and code in the
+    // cache are aligned to this size. Anything less than 64-bytes exhibits the problem.
+    return 64;
+  }
+  return GetInstructionSetAlignment(kRuntimeISA);
+}
+
 static uintptr_t FromCodeToAllocation(const void* code) {
-  size_t alignment = GetInstructionSetAlignment(kRuntimeISA);
+  size_t alignment = GetJitCodeAlignment();
   return reinterpret_cast<uintptr_t>(code) - RoundUp(sizeof(OatQuickMethodHeader), alignment);
 }
 
@@ -990,7 +1001,7 @@ uint8_t* JitCodeCache::CommitCodeInternal(Thread* self,
   {
     ScopedCodeCacheWrite scc(this);
 
-    size_t alignment = GetInstructionSetAlignment(kRuntimeISA);
+    size_t alignment = GetJitCodeAlignment();
     // Ensure the header ends up at expected instruction alignment.
     size_t header_size = RoundUp(sizeof(OatQuickMethodHeader), alignment);
     size_t total_size = header_size + code_size;
@@ -2160,9 +2171,9 @@ void JitCodeCache::InvalidateCompiledCodeFor(ArtMethod* method,
 uint8_t* JitCodeCache::AllocateCode(size_t allocation_size) {
   // Each allocation should be on its own set of cache lines. The allocation must be large enough
   // for header, code, and any padding.
+  size_t alignment = GetJitCodeAlignment();
   uint8_t* result = reinterpret_cast<uint8_t*>(
-      mspace_memalign(exec_mspace_, kJitCodeAlignment, allocation_size));
-  size_t alignment = GetInstructionSetAlignment(kRuntimeISA);
+      mspace_memalign(exec_mspace_, alignment, allocation_size));
   size_t header_size = RoundUp(sizeof(OatQuickMethodHeader), alignment);
   // Ensure the header ends up at expected instruction alignment.
   DCHECK_ALIGNED_PARAM(reinterpret_cast<uintptr_t>(result + header_size), alignment);
