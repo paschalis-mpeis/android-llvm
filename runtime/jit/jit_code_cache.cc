@@ -992,6 +992,7 @@ uint8_t* JitCodeCache::CommitCodeInternal(Thread* self,
   }
 
   OatQuickMethodHeader* method_header = nullptr;
+  uint8_t* nox_memory = nullptr;
   uint8_t* code_ptr = nullptr;
 
   MutexLock mu(self, lock_);
@@ -1008,7 +1009,7 @@ uint8_t* JitCodeCache::CommitCodeInternal(Thread* self,
 
     // AllocateCode allocates memory in non-executable region for alignment header and code. The
     // header size may include alignment padding.
-    uint8_t* nox_memory = AllocateCode(total_size);
+    nox_memory = AllocateCode(total_size);
     if (nox_memory == nullptr) {
       return nullptr;
     }
@@ -1052,14 +1053,25 @@ uint8_t* JitCodeCache::CommitCodeInternal(Thread* self,
     // For reference, this behavior is caused by this commit:
     // https://android.googlesource.com/kernel/msm/+/3fbe6bc28a6b9939d0650f2f17eb5216c719950c
     //
+    bool cache_flush_success = true;
     if (HasDualCodeMapping()) {
       // Flush the data cache lines associated with the non-executable copy of the code just added.
-      FlushDataCache(nox_memory, nox_memory + total_size);
+      cache_flush_success = FlushCpuCaches(nox_memory, nox_memory + total_size);
     }
-    // FlushInstructionCache() flushes both data and instruction caches lines. The cacheline range
-    // flushed is for the executable mapping of the code just added.
+
+    // Invalidate i-cache for the executable mapping.
     uint8_t* x_memory = reinterpret_cast<uint8_t*>(method_header);
-    FlushInstructionCache(x_memory, x_memory + total_size);
+    if (cache_flush_success) {
+      cache_flush_success = FlushCpuCaches(x_memory, x_memory + total_size);
+    }
+
+    // If flushing the cache has failed, reject the allocation because we can't guarantee
+    // correctness of the instructions present in the processor caches.
+    if (!cache_flush_success) {
+      PLOG(ERROR) << "Cache flush failed for JIT code, code not committed.";
+      FreeCode(nox_memory);
+      return nullptr;
+    }
 
     // Ensure CPU instruction pipelines are flushed for all cores. This is necessary for
     // correctness as code may still be in instruction pipelines despite the i-cache flush. It is
@@ -1127,7 +1139,13 @@ uint8_t* JitCodeCache::CommitCodeInternal(Thread* self,
       FillRootTable(roots_data, roots);
       {
         // Flush data cache, as compiled code references literals in it.
-        FlushDataCache(roots_data, roots_data + data_size);
+        // TODO(oth): establish whether this is necessary.
+        if (!FlushCpuCaches(roots_data, roots_data + data_size)) {
+          PLOG(ERROR) << "Cache flush failed for JIT data, code not committed.";
+          ScopedCodeCacheWrite scc(this);
+          FreeCode(nox_memory);
+          return nullptr;
+        }
       }
       method_code_map_.Put(code_ptr, method);
       if (osr) {

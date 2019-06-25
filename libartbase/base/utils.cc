@@ -29,6 +29,7 @@
 #include "android-base/stringprintf.h"
 #include "android-base/strings.h"
 
+#include "bit_utils.h"
 #include "os.h"
 
 #if defined(__APPLE__)
@@ -61,6 +62,98 @@ namespace art {
 
 using android::base::ReadFileToString;
 using android::base::StringPrintf;
+
+#if defined(__arm__)
+
+namespace {
+
+// Bitmap of caches to flush for cacheflush(2). Must be zero for ARM.
+static constexpr int kCacheFlushFlags = 0x0;
+
+// Number of retry attempts when flushing cache ranges.
+static constexpr size_t kMaxFlushAttempts = 4;
+
+int CacheFlush(uintptr_t start, uintptr_t limit) {
+  // The signature of cacheflush(2) seems to vary by source. On ARM the system call wrapper
+  //    (bionic/SYSCALLS.TXT) has the form: int cacheflush(long start, long end, long flags);
+  int r = cacheflush(start, limit, kCacheFlushFlags);
+  if (r == -1) {
+    CHECK_NE(errno, EINVAL);
+  }
+  return r;
+}
+
+bool TouchAndFlushCacheLinesWithinPage(uintptr_t start, uintptr_t limit, size_t attempts) {
+  CHECK_LT(start, limit);
+  CHECK_EQ(RoundDown(start, kPageSize), RoundDown(limit - 1, kPageSize)) << "range spans pages";
+  // Declare a volatile variable so the compiler does not elide reads from the page being touched.
+  volatile uint8_t v = 0;
+  for (size_t i = 0; i < attempts; ++i) {
+    // Touch page to maximize chance page is resident.
+    v = *reinterpret_cast<uint8_t*>(start);
+
+    if (LIKELY(CacheFlush(start, limit) == 0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+bool FlushCpuCaches(void* begin, void* end) {
+  // This method is specialized for ARM as the generic implementation below uses the
+  // __builtin___clear_cache() intrinsic which is declared as void. On ARMv7 flushing the CPU
+  // caches is a privileged operation. The Linux kernel allows these operations to fail when they
+  // trigger a fault (e.g. page not resident). We use a wrapper for the ARM specific cacheflush()
+  // system call to detect the failure and potential erroneous state of the data and instruction
+  // caches.
+  //
+  // The Android bug for this is b/132205399 and there's a similar discussion on
+  // https://reviews.llvm.org/D37788. This is primarily an issue for the dual view JIT where the
+  // pages where code is executed are only ever RX and never RWX. When attempting to invalidate
+  // instruction cache lines in the RX mapping after writing fresh code in the RW mapping, the
+  // page may not be resident (due to memory pressure), and this means that a fault is raised in
+  // the midst of a cacheflush() call and the instruction cache lines are not invalidated and so
+  // have stale code.
+  //
+  // Other architectures fair better for reasons such as:
+  //
+  // (1) stronger coherence between the data and instruction caches.
+  //
+  // (2) fault handling that allows flushing/invalidation to continue after
+  //     a missing page has been faulted in.
+
+  // In the common case, this flush of the complete range succeeds.
+  uintptr_t start = reinterpret_cast<uintptr_t>(begin);
+  const uintptr_t limit = reinterpret_cast<uintptr_t>(end);
+  if (LIKELY(CacheFlush(start, limit) == 0)) {
+    return true;
+  }
+
+  // A rare failure has occurred implying that part of the range (begin, end] has been swapped
+  // out. Retry flushing but this time grouping cache-line flushes on individual pages and
+  // touching each page before flushing.
+  uintptr_t next_page = RoundUp(start + 1, kPageSize);
+  while (start < limit) {
+    uintptr_t boundary = std::min(next_page, limit);
+    if (!TouchAndFlushCacheLinesWithinPage(start, boundary, kMaxFlushAttempts)) {
+      return false;
+    }
+    start = boundary;
+    next_page += kPageSize;
+  }
+  return true;
+}
+
+#else
+
+bool FlushCpuCaches(void* begin, void* end) {
+  __builtin___clear_cache(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end));
+  return true;
+}
+
+#endif
 
 pid_t GetTid() {
 #if defined(__APPLE__)

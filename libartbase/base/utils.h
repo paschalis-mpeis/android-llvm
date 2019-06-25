@@ -113,15 +113,8 @@ static T GetRandomNumber(T min, T max) {
 // Sleep forever and never come back.
 NO_RETURN void SleepForever();
 
-inline void FlushDataCache(void* begin, void* end) {
-  __builtin___clear_cache(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end));
-}
-
-inline void FlushInstructionCache(void* begin, void* end) {
-  // Same as FlushInstructionCache for lack of other builtin. __builtin___clear_cache
-  // flushes both caches.
-  __builtin___clear_cache(reinterpret_cast<char*>(begin), reinterpret_cast<char*>(end));
-}
+// Flush CPU caches. Returns true on success, false if flush failed.
+WARN_UNUSED bool FlushCpuCaches(void* begin, void* end);
 
 template <typename T>
 constexpr PointerSize ConvertToPointerSize(T any) {
