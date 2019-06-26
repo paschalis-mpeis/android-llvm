@@ -48,6 +48,7 @@ public class Test1941 {
       CNT++;
       long env = AllocEnv();
       FreeEnv(env);
+      Thread.yield();
     }
   }
 
