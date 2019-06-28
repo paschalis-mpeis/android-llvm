@@ -1060,8 +1060,8 @@ uint8_t* JitCodeCache::CommitCodeInternal(Thread* self,
     }
 
     // Invalidate i-cache for the executable mapping.
-    uint8_t* x_memory = reinterpret_cast<uint8_t*>(method_header);
     if (cache_flush_success) {
+      uint8_t* x_memory = reinterpret_cast<uint8_t*>(FromCodeToAllocation(code_ptr));
       cache_flush_success = FlushCpuCaches(x_memory, x_memory + total_size);
     }
 
