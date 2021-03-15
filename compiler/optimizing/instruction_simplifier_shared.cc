@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2015 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +18,8 @@
 #include "instruction_simplifier_shared.h"
 
 #include "mirror/array-inl.h"
+
+#include "mcr_cc/llvm/llvm_compiler.h"
 
 namespace art {
 
@@ -88,6 +91,7 @@ bool TrySimpleMultiplyAccumulatePatterns(HMul* mul,
 }  // namespace
 
 bool TryCombineMultiplyAccumulate(HMul* mul, InstructionSet isa) {
+  DISABLE_PASS_ON_LLVM(mul->GetBlock()->GetGraph());
   DataType::Type type = mul->GetType();
   switch (isa) {
     case InstructionSet::kArm:
@@ -233,6 +237,7 @@ bool TryExtractArrayAccessAddress(HInstruction* access,
                                   HInstruction* array,
                                   HInstruction* index,
                                   size_t data_offset) {
+  DISABLE_PASS_ON_LLVM(access->GetBlock()->GetGraph());
   if (index->IsConstant() ||
       (index->IsBoundsCheck() && index->AsBoundsCheck()->GetIndex()->IsConstant())) {
     // When the index is a constant all the addressing can be fitted in the
@@ -282,6 +287,8 @@ bool TryExtractArrayAccessAddress(HInstruction* access,
 }
 
 bool TryExtractVecArrayAccessAddress(HVecMemoryOperation* access, HInstruction* index) {
+  DISABLE_PASS_ON_LLVM(access->GetBlock()->GetGraph());
+
   if (index->IsConstant()) {
     // If index is constant the whole address calculation often can be done by LDR/STR themselves.
     // TODO: Treat the case with not-embedable constant.

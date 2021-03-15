@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,6 +98,12 @@ class MANAGED Class final : public Object {
   // This is static because 'this' may be moved by GC.
   static void SetStatus(Handle<Class> h_this, ClassStatus new_status, Thread* self)
       REQUIRES_SHARED(Locks::mutator_lock_) REQUIRES(!Roles::uninterruptible_);
+
+#ifdef ART_MCR
+  static MemberOffset TypeIdxOffset() {
+    return OFFSET_OF_OBJECT_MEMBER(Class, dex_type_idx_);
+  }
+#endif
 
   static constexpr MemberOffset StatusOffset() {
     return MemberOffset(OFFSET_OF_OBJECT_MEMBER(Class, status_));

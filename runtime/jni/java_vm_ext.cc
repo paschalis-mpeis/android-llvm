@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +16,8 @@
  */
 
 #include "java_vm_ext.h"
+
+#include "mcr_rt/mcr_rt.h"
 
 #include <dlfcn.h>
 #include <string_view>
@@ -1122,6 +1125,21 @@ static void* FindCodeForNativeMethodInAgents(ArtMethod* m) REQUIRES_SHARED(Locks
 }
 
 void* JavaVMExt::FindCodeForNativeMethod(ArtMethod* m) {
+#if defined(ART_MCR_TARGET) && defined(CRDEBUG3)
+  std::stringstream ss;
+  ss << __func__ << ": ";
+  
+  LogSeverity severity = mcr::INFO;
+  if(m==nullptr) {
+    ss << "<null>";
+  } else {
+    ss << m->PrettyMethod()
+      << (m->IsNative()?": native":": NOT NATIVE (will die)");
+    severity = mcr::ERROR;
+  }
+  LOGLLVM(severity) << ss.str();
+#endif
+
   CHECK(m->IsNative());
   ObjPtr<mirror::Class> c = m->GetDeclaringClass();
   // If this is a static method, it could be called before the class has been initialized.

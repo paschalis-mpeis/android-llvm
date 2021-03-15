@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#include "mcr_rt/mcr_rt.h"
+#include "mcr_rt/art_impl.h"
 
 #include "art_method-inl.h"
 #include "base/callee_save_type.h"
@@ -57,6 +61,16 @@
 #include "thread-inl.h"
 #include "var_handles.h"
 #include "well_known_classes.h"
+
+#ifdef ART_MCR_TARGET
+#include "mcr_rt/art_impl.h"
+
+#include "mcr_rt/invoke_info.h"
+#include "mcr_rt/opt_interface.h"
+#include "mcr_rt/utils.h"
+
+#include "entrypoints/quick/quick_default_externs.h"
+#endif
 
 namespace art {
 
@@ -729,8 +743,103 @@ static void HandleDeoptimization(JValue* result,
                                               DeoptimizationMethodType::kDefault);
 }
 
+#ifdef ART_MCR_TARGET
+extern "C" void VerifyCurrentStackFrame(Thread* self);
+
+extern "C" uint64_t artQuickToLlvmBridge(ArtMethod* method, Thread* self, ArtMethod** sp)
+SHARED_LOCKS_REQUIRED(Locks::mutator_lock_) {
+  // Ensure we don't get thread suspension until the object arguments are safely in the shadow frame.
+  D4LOG(WARNING) << "QtL: " << method->PrettyMethod();
+// #define VERIF_STACK_FRAMES
+#ifdef VERIF_STACK_FRAMES
+  DLOG(WARNING) << "### 1:QtL: " << method->PrettyMethod() << " ###";
+  LLVM::VerifyStackFrames(self);
+  DLOG(WARNING) << "=============================================";
+#endif
+
+  // Ensure we don't get thread suspension until the object arguments are safely in the shadow frame.
+  ScopedQuickEntrypointChecks sqec(self);
+  ManagedStack fragment;
+
+  DCHECK(!method->IsNative()) << method->PrettyMethod();
+  uint32_t shorty_len = 0;
+  ArtMethod* non_proxy_method = method->GetInterfaceMethodIfProxy(kRuntimePointerSize);
+  DCHECK(non_proxy_method->GetCodeItem() != nullptr) << method->PrettyMethod();
+  CodeItemDataAccessor accessor(non_proxy_method->DexInstructionData());
+  const char* shorty = non_proxy_method->GetShorty(&shorty_len);
+
+  const char* old_cause = self->StartAssertNoThreadSuspension(
+      "Building LLVM shadow frame");
+  uint16_t num_regs = accessor.RegistersSize();
+
+  // No last shadow coming from quick.
+  ShadowFrameAllocaUniquePtr shadow_frame_unique_ptr =
+    CREATE_SHADOW_FRAME(num_regs, /* link= */ nullptr, method, /* dex_pc= */ 0);
+  ShadowFrame* shadow_frame = shadow_frame_unique_ptr.get();
+
+  size_t first_arg_reg = accessor.RegistersSize() - accessor.InsSize();
+  BuildQuickShadowFrameVisitor shadow_frame_builder(sp, method->IsStatic(), shorty, shorty_len,
+      shadow_frame, first_arg_reg);
+  shadow_frame_builder.VisitArguments();
+  const bool needs_initialization =
+    method->IsStatic() && !method->GetDeclaringClass()->IsInitialized();
+  // Push a transition back into managed code onto the linked list in thread.
+  self->PushManagedStackFragment(&fragment);
+  self->PushShadowFrame(shadow_frame);
+  self->EndAssertNoThreadSuspension(old_cause);
+
+#ifdef VERIF_STACK_FRAMES
+  DLOG(WARNING) << "### 2:QtL: pushed Managed and Shadow" << " ###";
+  VerifyCurrentStackFrame(self);
+  DLOG(WARNING) << "=============================================";
+#endif
+
+  if (UNLIKELY(needs_initialization)) {
+    // Ensure static method's class is initialized.
+    StackHandleScope<1> hs(self);
+    Handle<mirror::Class> h_class(hs.NewHandle(shadow_frame->GetMethod()->GetDeclaringClass()));
+    if (!Runtime::Current()->GetClassLinker()->EnsureInitialized(self, h_class, true, true)) {
+      DCHECK(Thread::Current()->IsExceptionPending())
+        << shadow_frame->GetMethod()->PrettyMethod();
+      self->PopManagedStackFragment(fragment);
+      return 0;
+    }
+  }
+
+  JValue result;
+  method->McrInvokeLLVM(self, shadow_frame, &result);
+
+  // INFO accessing the stack frames after LLVM has returned,
+  // and before shadow_frame and fragment are popped, will cause issues.
+
+#ifdef CRDEBUG2
+  bool force_frame_pop =
+#endif
+    shadow_frame->GetForcePopFrame();
+
+#ifdef CRDEBUG2
+  if(force_frame_pop) {
+    DLOG(ERROR)  << "CHECK_LLVM: force_frame_pop: " << force_frame_pop
+      << ": " << method->PrettyMethod();
+  }
+#endif
+  self->PopManagedStackFragment(fragment);
+
+#ifdef VERIF_STACK_FRAMES
+  DLOG(WARNING) << "### 3:QtL: popped SF then MF" << " ###";
+  LLVM::VerifyStackFrames(self);
+  DLOG(WARNING) << "=============================================";
+#endif
+
+  return result.GetJ();
+}
+#endif
+
 extern "C" uint64_t artQuickToInterpreterBridge(ArtMethod* method, Thread* self, ArtMethod** sp)
-    REQUIRES_SHARED(Locks::mutator_lock_) {
+REQUIRES_SHARED(Locks::mutator_lock_) {
+  // LLVM: here we also had code for 'hijacking' the route from quick to interpreter and calling LLVM instead.
+  // since we provide our artQuickToLlvmBridge we no longer need to do this
+  
   // Ensure we don't get thread suspension until the object arguments are safely in the shadow
   // frame.
   ScopedQuickEntrypointChecks sqec(self);
@@ -1244,6 +1353,10 @@ static void DumpB74410240DebugData(ArtMethod** sp) REQUIRES_SHARED(Locks::mutato
     return;
   }
 
+  if(IN_LLVM()) {
+    LOGLLVM2(WARNING) << __func__ << " from LLVM";
+  }
+
   const OatQuickMethodHeader* current_code = outer_method->GetOatQuickMethodHeader(caller_pc);
   CHECK(current_code != nullptr);
   CHECK(current_code->IsOptimized());
@@ -1451,6 +1564,17 @@ extern "C" const void* artQuickResolutionTrampoline(
                                << mirror::Object::PrettyTypeOf(receiver) << " "
                                << invoke_type << " " << orig_called->GetVtableIndex();
     }
+
+#if defined(ART_MCR_TARGET) && defined(CRDEBUG5)
+    if (mcr::McrRT::IsLlvmEnabled()) {
+      if (mcr::McrRT::DBG_QResTrampoline() 
+          && (mcr::OatAux::IsIchfSLOW(called))) {
+        std::string pretty_called = called->PrettyMethod();
+        D2LOG(WARNING) << "qResolution:" << pretty_called
+          << (called->HasOverridenQuickEntrypoint()? ": QtoLLVM":"");
+      } 
+    }
+#endif
 
     // Ensure that the called method's class is initialized.
     StackHandleScope<1> hs(soa.Self());
@@ -2351,8 +2475,10 @@ static void artQuickGenericJniEndJNINonRef(Thread* self,
  */
 extern "C" TwoWordReturn artQuickGenericJniTrampoline(Thread* self, ArtMethod** sp)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
   // Note: We cannot walk the stack properly until fixed up below.
   ArtMethod* called = *sp;
+  LOGLLVM3(WARNING) << __func__ << ": called: " << called->PrettyMethod();
   DCHECK(called->IsNative()) << called->PrettyMethod(true);
   Runtime* runtime = Runtime::Current();
   uint32_t shorty_len = 0;
@@ -2581,6 +2707,8 @@ EXPLICIT_INVOKE_COMMON_TEMPLATE_DECL(kSuper, false);
 EXPLICIT_INVOKE_COMMON_TEMPLATE_DECL(kSuper, true);
 #undef EXPLICIT_INVOKE_COMMON_TEMPLATE_DECL
 
+extern "C" void artVerifyArtObjectFromLLVM(mirror::Object* obj, Thread* self);
+
 // See comments in runtime_support_asm.S
 extern "C" TwoWordReturn artInvokeInterfaceTrampolineWithAccessCheck(
     uint32_t method_idx, mirror::Object* this_object, Thread* self, ArtMethod** sp)
@@ -2759,6 +2887,7 @@ extern "C" uint64_t artInvokePolymorphic(mirror::Object* raw_receiver, Thread* s
 
   // From the instruction, get the |callsite_shorty| and expose arguments on the stack to the GC.
   ArtMethod* caller_method = QuickArgumentVisitor::GetCallingMethod(sp);
+
   uint32_t dex_pc = QuickArgumentVisitor::GetCallingDexPc(sp);
   const Instruction& inst = caller_method->DexInstructions().InstructionAt(dex_pc);
   DCHECK(inst.Opcode() == Instruction::INVOKE_POLYMORPHIC ||
@@ -2883,6 +3012,7 @@ extern "C" uint64_t artInvokeCustom(uint32_t call_site_idx, Thread* self, ArtMet
 
   // From the instruction, get the |callsite_shorty| and expose arguments on the stack to the GC.
   ArtMethod* caller_method = QuickArgumentVisitor::GetCallingMethod(sp);
+
   uint32_t dex_pc = QuickArgumentVisitor::GetCallingDexPc(sp);
   const DexFile* dex_file = caller_method->GetDexFile();
   const dex::ProtoIndex proto_idx(dex_file->GetProtoIndexForCallSite(call_site_idx));

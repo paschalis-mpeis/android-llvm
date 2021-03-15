@@ -70,6 +70,7 @@ art_global_defaults {
         "-Wunreachable-code",
         "-Wredundant-decls",
         "-Wshadow",
+        // Issues when compiling libart-compiler
         "-Wunused",
         "-fvisibility=protected",
 
@@ -131,9 +132,6 @@ art_global_defaults {
                 // Apple, it's a pain.
                 "-Wmissing-noreturn",
             ],
-        },
-        darwin: {
-            enabled: false,
         },
         host: {
             cflags: [
@@ -217,5 +215,30 @@ art_debug_defaults {
         host: {
             cflags: ["-Wno-frame-larger-than="],
         },
+    },
+}
+
+mcr_global_defaults {
+    // MCR debug flags are computed by art.go
+    name: "mcr_defaults",
+    host_supported: false,
+    target: {
+        android: {
+            cflags: [
+                "-DART_MCR_TARGET",
+                "-DART_MCR_LLVM", // enable the LLVM backend
+                // MCR common flags
+                "-DMCR_LLVM_GEN_INVOKE_HIST_ON_CACHE_MISS",
+                "-DART_MCR_COMPILE_OS_METHODS",
+		        "-ferror-limit=0",
+		        "-DART_MCR",
+		        "-DART_MCR_ANDROID_10",
+            ],
+            lto: {
+                 thin: false,
+            }, 
+        },
+        // Disable linux and macOS host builds (they are still triggered)
+        darwin: { enabled: false },
     },
 }

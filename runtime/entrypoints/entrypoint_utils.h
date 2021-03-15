@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -211,6 +212,13 @@ CallerAndOuterMethod GetCalleeSaveMethodCallerAndOuterMethod(Thread* self, Calle
 
 ArtMethod* GetCalleeSaveOuterMethod(Thread* self, CalleeSaveType type)
     REQUIRES_SHARED(Locks::mutator_lock_);
+
+#ifdef ART_MCR
+inline ObjPtr<mirror::String> ResolveStringFromCode(
+    ArtMethod* referrer, dex::StringIndex string_idx)
+    REQUIRES_SHARED(Locks::mutator_lock_)
+    REQUIRES(!Roles::uninterruptible_);
+#endif
 
 }  // namespace art
 

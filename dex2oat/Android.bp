@@ -13,10 +13,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
+libart_cc_defaults {
+    name: "mcrdex2oat_defaults",
+    defaults: ["mcr_defaults"],
+    cflags: [
+        // Compiler driver flag
+        "-DART_MCR_D20",
+        // compile only HFs with optimizing backend
+        // "-DART_MCR_INTERPRET_NON_HOT_CODE",
+        // CRDEBUG: Delcare additional levels, i.e.,
+        "-DCRDEBUG",
+        "-DCRDEBUG1",
+        "-DCRDEBUG2",
+        // "-DCRDEBUG3",
+        // "-DCRDEBUG4",
+    ],
+}
 
 art_cc_defaults {
     name: "libart-dex2oat-defaults",
-    defaults: ["art_defaults"],
+    defaults: [
+        "art_defaults",
+        "mcrdex2oat_defaults"
+    ],
     host_supported: true,
     srcs: [
         "dex/dex_to_dex_compiler.cc",
@@ -176,7 +195,10 @@ cc_library_headers {
 cc_defaults {
     name: "dex2oat-defaults",
     host_supported: true,
-    defaults: ["art_defaults"],
+    defaults: [
+        "art_defaults",
+        "mcrdex2oat_defaults"
+    ],
     srcs: [
         "dex2oat_options.cc",
         "dex2oat.cc",

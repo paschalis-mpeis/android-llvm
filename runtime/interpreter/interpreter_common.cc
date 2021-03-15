@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "mcr_rt/mcr_rt.h"
 
 #include "interpreter_common.h"
 
@@ -47,6 +49,14 @@
 #include "transaction.h"
 #include "var_handles.h"
 #include "well_known_classes.h"
+
+#ifdef ART_MCR_TARGET
+#include "mcr_rt/oat_aux.h"
+#include "mcr_rt/opt_interface.h"
+#include "mcr_rt/utils.h"
+#include "runtime.h"
+#include "thread_list.h"
+#endif
 
 namespace art {
 namespace interpreter {
@@ -582,6 +592,12 @@ void ArtInterpreterToCompiledCodeBridge(Thread* self,
                                         JValue* result)
     REQUIRES_SHARED(Locks::mutator_lock_) {
   ArtMethod* method = shadow_frame->GetMethod();
+#ifdef ART_MCR_DBG_INVOCATION
+  if(mcr::McrRT::IsDebugInvokeProcess()) {
+    std::string pretty_method = method->PrettyMethod();
+    DLOG(INFO) << "ItoQ: " << pretty_method;
+  }
+#endif
   // Ensure static methods are initialized.
   if (method->IsStatic()) {
     ObjPtr<mirror::Class> declaringClass = method->GetDeclaringClass();
@@ -616,9 +632,19 @@ void ArtInterpreterToCompiledCodeBridge(Thread* self,
   if (jit != nullptr && caller != nullptr) {
     jit->NotifyInterpreterToCompiledCodeTransition(self, caller);
   }
+
+#if defined(ART_MCR_TARGET) && defined(ART_MCR_INTERPRETER_TO_QUICK_BRIDGE)
+  uint32_t num_vregs = shadow_frame->NumberOfVRegs();
+  uint32_t args_size = (num_vregs - arg_offset) * sizeof(uint32_t);
+  const char* shorty = method->GetInterfaceMethodIfProxy(kRuntimePointerSize)->GetShorty();
+  uint32_t* args = shadow_frame->GetVRegArgs(arg_offset);
+
+  method->McrInvokeFromInterpreter(self, args, args_size, result, shorty);
+#else
   method->Invoke(self, shadow_frame->GetVRegArgs(arg_offset),
                  (shadow_frame->NumberOfVRegs() - arg_offset) * sizeof(uint32_t),
                  result, method->GetInterfaceMethodIfProxy(kRuntimePointerSize)->GetShorty());
+#endif
 }
 
 void SetStringInitValueToAllAliases(ShadowFrame* shadow_frame,

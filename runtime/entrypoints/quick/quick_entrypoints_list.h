@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -203,6 +204,30 @@
   V(ReadBarrierSlow, mirror::Object*, mirror::Object*, mirror::Object*, uint32_t) \
   V(ReadBarrierForRootSlow, mirror::Object*, GcRoot<mirror::Object>*) \
 \
+  V(LLVMReadBarrierSlow, mirror::Object*, mirror::Object*, mirror::Object*, uint32_t) \
+  V(LLVMResolveType, void*, ArtMethod*, uint32_t, void**) \
+  V(LLVMResolveTypeAndVerifyAccess, void*, ArtMethod*, uint32_t, void**) \
+  V(LLVMResolveTypeInternal, void*, ArtMethod*, uint32_t, void**) \
+  V(LLVMResolveInternalMethod, void*, ArtMethod*, uint32_t, uint32_t) \
+  V(LLVMResolveExternalMethod, void*, ArtMethod*, const char*, const char*, uint32_t, uint32_t) \
+  V(LLVMResolveVirtualMethod, void*, mirror::Object*, ArtMethod*) \
+  V(LLVMResolveInterfaceMethod, void*, mirror::Object*, ArtMethod*) \
+  V(LLVMResolveString, void*, ArtMethod*, uint32_t, void**) \
+  V(LLVMTestSuspend, void, void) \
+  V(LLVMJValueSetL, void, JValue*, mirror::Object*) \
+  V(LLVMGetObjStatic, void*, uint32_t, ArtMethod*) \
+  V(LLVMGetObjInstance, void*, uint32_t, void*, ArtMethod*) \
+  V(LLVMInvokeQuickWrapper, void, ArtMethod*, uint32_t*, uint32_t, Thread *,JValue*, const char*) \
+  V(LLVMInvokeQuickStaticWrapper, void, ArtMethod*, uint32_t*, uint32_t, Thread *, JValue*, const char*) \
+  V(LLVMInvokeQuickDirect, void, ArtMethod*, uint32_t*, uint32_t, Thread *,JValue*, const char*) \
+  V(LLVMInvokeQuickStaticDirect, void, ArtMethod*, uint32_t*, uint32_t, Thread *, JValue*, const char*) \
+  V(LLVMPushQuickFrame, void, ManagedStack*) \
+  V(LLVMPopQuickFrame, void, ManagedStack*) \
+  V(LLVMClearTopOfStack, void) \
+  V(LLVMVerifyArtMethod, void, ArtMethod*) \
+  V(LLVMVerifyArtClass, void, mirror::Class*) \
+  V(LLVMVerifyArtObject, void, mirror::Object*) \
+  V(LLVMVerifyStackFrameCurrent, void) \
 
 #endif  // ART_RUNTIME_ENTRYPOINTS_QUICK_QUICK_ENTRYPOINTS_LIST_H_
 #undef ART_RUNTIME_ENTRYPOINTS_QUICK_QUICK_ENTRYPOINTS_LIST_H_   // #define is only for lint.

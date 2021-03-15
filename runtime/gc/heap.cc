@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +16,8 @@
  */
 
 #include "heap.h"
+
+#include "mcr_rt/mcr_rt.h"
 
 #include <limits>
 #if defined(__BIONIC__) || defined(__GLIBC__)
@@ -1725,6 +1728,16 @@ mirror::Object* Heap::AllocateInternalWithGc(Thread* self,
                                              size_t* usable_size,
                                              size_t* bytes_tl_bulk_allocated,
                                              ObjPtr<mirror::Class>* klass) {
+#ifdef ART_MCR_TARGET
+  D2LOG(ERROR) << __func__
+    <<" "<< (LLVM_ENABLED()?"LlvmEnabled":"")
+    <<" "<< (IN_LLVM()?"LlvmCode":"")
+    <<" "<< (IN_QUICK()?"QUICKcode":"")
+    <<" "<< (IN_LLVM_DIRECTLY()?"llvmDIRECT":"")
+    <<" "<< (LLVM_CALLED_QUICK()?"llvmCalledQuick":"");
+  if(LLVM_ENABLED()) DLOG(INFO) << __func__ << ": LlvmEnabled";
+#endif
+
   bool was_default_allocator = allocator == GetCurrentAllocator();
   // Make sure there is no pending exception since we may need to throw an OOME.
   self->AssertNoPendingException();
@@ -3554,6 +3567,9 @@ collector::GcType Heap::WaitForGcToCompleteLocked(GcCause cause, Thread* self) {
       // considered as a blocking GC.
       running_collection_is_blocking_ = true;
       VLOG(gc) << "Waiting for a blocking GC " << cause;
+#ifdef ART_MCR_TARGET
+      LOGLLVM(WARNING) << "Waiting for a blocking GC " << cause;
+#endif
     }
     SCOPED_TRACE << "GC: Wait For Completion " << cause;
     // We must wait, change thread state then sleep on gc_complete_cond_;

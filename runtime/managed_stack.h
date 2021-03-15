@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +27,10 @@
 #include "base/locks.h"
 #include "base/macros.h"
 #include "base/bit_utils.h"
+
+#if defined(ART_MCR_TARGET) && defined(CRDEBUG4)
+#include "mcr_rt/mcr_dbg.h"
+#endif
 
 namespace art {
 
@@ -84,6 +89,9 @@ class PACKED(4) ManagedStack {
   }
 
   void SetTopQuickFrame(ArtMethod** top) {
+#if defined(ART_MCR_TARGET) && defined(CRDEBUG4)
+    if(__IsInLiveLLVM()) LOG(ERROR) << __func__ << ": " << std::hex << top;
+#endif
     DCHECK(top_shadow_frame_ == nullptr);
     DCHECK_ALIGNED(top, 4u);
     tagged_top_quick_frame_ = TaggedTopQuickFrame::CreateNotTagged(top);
@@ -111,6 +119,9 @@ class PACKED(4) ManagedStack {
   }
 
   void SetTopShadowFrame(ShadowFrame* top) {
+#if defined(ART_MCR_TARGET) && defined(CRDEBUG4)
+    if(__IsInLiveLLVM()) LOG(ERROR) << __func__ << ": " << std::hex << top;
+#endif
     DCHECK_EQ(tagged_top_quick_frame_.GetTaggedSp(), 0u);
     top_shadow_frame_ = top;
   }

@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,6 +29,8 @@
 #include "base/utils.h"
 #include "compiler_filter.h"
 #include "optimizing/register_allocator.h"
+
+#include "dex/method_reference.h"
 
 namespace art {
 
@@ -70,6 +73,13 @@ class CompilerOptions final {
   static const bool kDefaultGenerateMiniDebugInfo = false;
   static const size_t kDefaultInlineMaxCodeUnits = 32;
   static constexpr size_t kUnsetInlineMaxCodeUnits = -1;
+
+  // Operators are processed by scripts (for pretty printing)
+  enum CompilationType {
+    kLlvmBitcode,  // IR-to-IR translation (HGraph -> LLVM bitcode)
+    kLlvmBaseline, // Optimize and assembly LLVM bitcode to hf.so (shared obj file)
+    kNone,
+  };
 
   enum class ImageType : uint8_t {
     kNone,                // JIT or AOT app compilation producing only an oat file but no image.
@@ -368,6 +378,50 @@ class CompilerOptions final {
   // image used for ART testing only)?
   static bool IsCoreImageFilename(const std::string& boot_image_filename);
 
+#ifdef ART_MCR
+  bool IsLlvmEntrypoint(const MethodReference& method_ref) const;
+  bool IsLlvmMethodToCompile(const MethodReference& method_ref) const;
+  static CompilationType GetCompilationType(std::string comp_type);
+  void SetMcrCompilationType(CompilationType);
+  void SetMcrAppPackage(std::string);
+  void SetGenerateOatAux(bool val);
+  void SetSkipOat(bool val);
+  void SetGenerateLLVM_IR(bool);
+  void SetAppDexFiles(const std::vector<const DexFile*>* dex_files);
+  std::string GetMcrAppPackage() const;
+  std::string GetMcrGetExtraFlags() const;
+
+  bool IsCompilingForLlvm() const;
+  bool IsGeneratingLlvmBitcode() const;
+  bool IsCompilingLlvmBaseline() const;
+
+  const std::vector<const DexFile*>* GetAppDexFiles() const {
+    return app_dex_files_;
+  }
+
+  bool GenerateOatAux() const {
+    return gen_oat_aux_;
+  }
+
+  bool SkipOat() const {
+    return skip_oat_;
+  }
+
+  void SetExtraFlags(std::string f);
+
+  bool GenerateLLVM_IR() const {
+    return optimizing_to_llvm_;
+  }
+
+  static bool IsLlvmBasedCompiler(CompilationType type) {
+    switch(type) {
+      case CompilationType::kLlvmBaseline: 
+        return true;
+      default: return false;
+    }
+  } 
+#endif
+
  private:
   bool ParseDumpInitFailures(const std::string& option, std::string* error_msg);
   bool ParseRegisterAllocationStrategy(const std::string& option, std::string* error_msg);
@@ -409,6 +463,15 @@ class CompilerOptions final {
   bool implicit_so_checks_;
   bool implicit_suspend_checks_;
   bool compile_pic_;
+#ifdef ART_MCR
+  const std::vector<const DexFile*>* app_dex_files_ = nullptr;
+  CompilationType mcr_compilation_type_;
+  std::string mcr_compiling_package_;
+  std::string mcr_extra_flags_;
+  bool optimizing_to_llvm_;
+  bool gen_oat_aux_;
+  bool skip_oat_;
+#endif
   bool dump_timings_;
   bool dump_pass_timings_;
   bool dump_stats_;
@@ -479,6 +542,11 @@ class CompilerOptions final {
 
   DISALLOW_COPY_AND_ASSIGN(CompilerOptions);
 };
+
+#ifdef ART_MCR
+std::ostream& operator<<(std::ostream& os, const CompilerOptions::CompilationType& rhs);
+std::ostream& operator<<(std::ostream& os, const InvokeType& rhs);
+#endif
 
 }  // namespace art
 

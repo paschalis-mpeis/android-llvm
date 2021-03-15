@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1537,8 +1538,209 @@ ENTRY \name
 END \name
 .endm
 
+
+/*
+ * Passes no registers, just thread, and returns void
+ */
+.macro VOID_NOARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME \runtime_method_offset       // save everything for stack crawl
+    mov   x0, xSELF                   // pass Thread::Current
+    bl    \entrypoint                 // (int32_t index, Thread* self)
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME     // don't keep X0
+    REFRESH_MARKING_REGISTER
+    ret                        // return
+    .cfi_restore_state
+    .cfi_def_cfa_offset FRAME_SIZE_SAVE_EVERYTHING  // workaround for clang bug: 31975598
+END \name
+.endm
+
+
+/*
+ * Passes 2 registers, and returns void.
+ */
+.macro VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME \runtime_method_offset       // save everything for stack crawl
+    mov   x1, xSELF                   // pass Thread::Current
+    bl    \entrypoint                 // (int32_t index, Thread* self)
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME     // don't keep X0
+    REFRESH_MARKING_REGISTER
+    ret                        // return
+    .cfi_restore_state
+    .cfi_def_cfa_offset FRAME_SIZE_SAVE_EVERYTHING  // workaround for clang bug: 31975598
+END \name
+.endm
+
+/*
+ * Passes 2 registers, and returns one.
+ * 
+ * for ResolveType: we also pass the Artmethod* caller
+ * as due to having ShadowFrame and not QuickFrame some info
+ * are not available like outer method
+ * Which is different if:
+ *  - it was inlined
+ *  - it was special (dex pc = -1)
+ *  - or the linker resolves to a different one (inheritance maybe)
+ */
+.macro TWO_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME \runtime_method_offset       // save everything for stack crawl
+    mov   x2, xSELF                   // pass Thread::Current
+    bl    \entrypoint                 // (int32_t index, Thread* self)
+    cbz   w0, 1f                      // If result is null, deliver the OOME.
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME_KEEP_X0
+    REFRESH_MARKING_REGISTER
+    ret                        // return
+    .cfi_restore_state
+    .cfi_def_cfa_offset FRAME_SIZE_SAVE_EVERYTHING  // workaround for clang bug: 31975598
+1:
+    DELIVER_PENDING_EXCEPTION_FRAME_READY
+END \name
+.endm
+
+/*
+ * Passes 2 registers, and returns void
+ * 
+ */
+.macro VOID_TWO_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME \runtime_method_offset       // save everything for stack crawl
+    mov   x2, xSELF                   // pass Thread::Current
+    bl    \entrypoint                 // (int32_t index, Thread* self)
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME    // don't keep x0
+    REFRESH_MARKING_REGISTER
+    ret                        // return
+    .cfi_restore_state
+    .cfi_def_cfa_offset FRAME_SIZE_SAVE_EVERYTHING  // workaround for clang bug: 31975598
+END \name
+.endm
+
+/*
+ * Passes 3 registers, and returns one.
+ * 
+ * Used by: ResolveInternalMethod
+ */
+.macro THREE_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME \runtime_method_offset       // save everything for stack crawl
+    mov   x3, xSELF                   // pass Thread::Current
+    bl    \entrypoint                 // (arg1, arg2, arg3, Thread* self)
+    cbz   w0, 1f                      // If result is null, deliver the OOME.
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME_KEEP_X0
+    REFRESH_MARKING_REGISTER
+    ret                        // return
+    .cfi_restore_state
+    .cfi_def_cfa_offset FRAME_SIZE_SAVE_EVERYTHING  // workaround for clang bug: 31975598
+1:
+    DELIVER_PENDING_EXCEPTION_FRAME_READY
+END \name
+.endm
+
+/*
+ * Passes 4 registers.
+ * 
+ */
+.macro FOUR_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME \runtime_method_offset       // save everything for stack crawl
+    mov   x4, xSELF                   // pass Thread::Current
+    bl    \entrypoint                 //
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME_KEEP_X0
+    REFRESH_MARKING_REGISTER
+    ret                        // return
+    .cfi_restore_state
+    .cfi_def_cfa_offset FRAME_SIZE_SAVE_EVERYTHING  // workaround for clang bug: 31975598
+END \name
+.endm
+
+
+/*
+ * Passes 5 registers, and returns one.
+ * 
+ * Used by: ResolveExternalMethod
+ */
+.macro FIVE_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME \runtime_method_offset       // save everything for stack crawl
+    mov   x5, xSELF                   // pass Thread::Current
+    bl    \entrypoint                 // (arg1, arg2, arg3, Thread* self)
+    cbz   w0, 1f                      // If result is null, deliver the OOME.
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME_KEEP_X0
+    REFRESH_MARKING_REGISTER
+    ret                        // return
+    .cfi_restore_state
+    .cfi_def_cfa_offset FRAME_SIZE_SAVE_EVERYTHING  // workaround for clang bug: 31975598
+1:
+    DELIVER_PENDING_EXCEPTION_FRAME_READY
+END \name
+.endm
+
+/**
+ * Passes avr registers, and returns one.
+ * Since no TR is set on a reg, and everything is saved/restored,
+ * it's like a var arg
+ *
+ * TODO use/save/restore only needed regs (x1,2,3)
+ */
+.macro VARARG_NOTR_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME \runtime_method_offset       // save everything for stack crawl
+    bl    \entrypoint
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME_KEEP_X0
+    // REFRESH_MARKING_REGISTER
+    ret                        // return
+    .cfi_restore_state
+END \name
+.endm
+
+/*
+ * Passes 5 registers, and returns one.
+ * 
+ * Used by: 
+ *  - art_quick_invoke_stub
+ *  - art_quick_invoke_static_stub
+ */
+.macro VOID_VARARG_NOTR_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME \runtime_method_offset       // save everything for stack crawl
+    bl    \entrypoint                 // 
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME
+    //REFRESH_MARKING_REGISTER
+    ret                        // return
+    .cfi_restore_state
+    .cfi_def_cfa_offset FRAME_SIZE_SAVE_EVERYTHING  // workaround for clang bug: 31975598
+END \name
+.endm
+
 .macro ONE_ARG_SAVE_EVERYTHING_DOWNCALL_FOR_CLINIT name, entrypoint
     ONE_ARG_SAVE_EVERYTHING_DOWNCALL \name, \entrypoint, RUNTIME_SAVE_EVERYTHING_FOR_CLINIT_METHOD_OFFSET
+.endm
+
+.macro TWO_ARG_SAVE_EVERYTHING_DOWNCALL_FOR_CLINIT name, entrypoint
+    TWO_ARG_SAVE_EVERYTHING_DOWNCALL \name, \entrypoint, RUNTIME_SAVE_EVERYTHING_FOR_CLINIT_METHOD_OFFSET
+.endm
+
+.macro THREE_ARG_SAVE_EVERYTHING_DOWNCALL_FOR_CLINIT name, entrypoint
+    THREE_ARG_SAVE_EVERYTHING_DOWNCALL \name, \entrypoint, RUNTIME_SAVE_EVERYTHING_FOR_CLINIT_METHOD_OFFSET
 .endm
 
 .macro RETURN_IF_RESULT_IS_NON_ZERO_OR_DELIVER
@@ -1565,6 +1767,48 @@ ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_quick_resolve_type_and_verify_access, artRe
 ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_quick_resolve_method_handle, artResolveMethodHandleFromCode
 ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_quick_resolve_method_type, artResolveMethodTypeFromCode
 ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_quick_resolve_string, artResolveStringFromCode
+
+// LLVM entrypoints
+VARARG_NOTR_SAVE_EVERYTHING_DOWNCALL art_llvm_read_barrier_slow, artLLVMReadBarrierSlow
+
+THREE_ARG_SAVE_EVERYTHING_DOWNCALL_FOR_CLINIT art_llvm_resolve_type, artResolveTypeFromLLVM
+THREE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_type_and_verify_access, artResolveTypeAndVerifyAccessFromLLVM
+THREE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_type_internal, artResolveTypeInternalLLVM
+
+// method resolution
+THREE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_internal_method, artResolveInternalMethodFromLLVM
+FIVE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_external_method, artResolveExternalMethodFromLLVM
+TWO_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_virtual_method, artResolveVirtualMethodFromLLVM
+TWO_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_interface_method, artResolveInterfaceMethodFromLLVM
+
+// string resolution
+THREE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_string, artResolveStringFromLLVM
+
+// llvm TestSuspend
+VOID_NOARG_SAVE_EVERYTHING_DOWNCALL art_llvm_test_suspend, artTestSuspendFromCode
+
+// JValue->SetL(obj)
+VOID_TWO_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_jvalue_setl, artJValueSetLFromLLVM
+
+// GetObject
+TWO_ARG_REF_DOWNCALL art_llvm_get_obj_static, artGetObjStaticFromCode, RETURN_OR_DELIVER_PENDING_EXCEPTION_X1
+THREE_ARG_REF_DOWNCALL art_llvm_get_obj_instance, artGetObjInstanceFromCode, RETURN_OR_DELIVER_PENDING_EXCEPTION_X1
+
+// LLVM invokes Quick (indirect, so we can store all regs)
+// LLVM had some issues in some nested invokes..
+VOID_VARARG_NOTR_SAVE_EVERYTHING_DOWNCALL art_llvm_invoke_quick, art_quick_invoke_stub
+VOID_VARARG_NOTR_SAVE_EVERYTHING_DOWNCALL art_llvm_invoke_quick_static, art_quick_invoke_static_stub
+
+// Managed stack entrypoints
+VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_push_quick_frame, llvmPushQuickFrame
+VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_pop_quick_frame, llvmPopQuickFrame
+VOID_NOARG_SAVE_EVERYTHING_DOWNCALL art_llvm_clear_top_of_stack, llvmClearTopOfStack
+
+// debug entrypoints
+VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_verify_art_method, artVerifyArtMethodFromLLVM
+VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_verify_art_class, artVerifyArtClassFromLLVM
+VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_verify_art_object, artVerifyArtObjectFromLLVM
+VOID_NOARG_SAVE_EVERYTHING_DOWNCALL llvm_verify_stack_frame_current, VerifyCurrentStackFrame
 
 // Note: Functions `art{Get,Set}<Kind>{Static,Instance}FromCompiledCode` are
 // defined with a macro in runtime/entrypoints/quick/quick_field_entrypoints.cc.
@@ -2259,6 +2503,31 @@ ENTRY art_quick_to_interpreter_bridge
 
     RETURN_OR_DELIVER_PENDING_EXCEPTION
 END art_quick_to_interpreter_bridge
+
+/*
+ * Called to bridge from the quick to LLVM ABI. On entry the arguments match those
+ * of a quick call:
+ * x0 = method being called/to bridge to.
+ * x1..x7, d0..d7 = arguments to that method.
+ */
+ENTRY art_quick_to_llvm_bridge
+    SETUP_SAVE_REFS_AND_ARGS_FRAME         // Set up frame and save arguments.
+
+    //  x0 will contain mirror::ArtMethod* method.
+    mov x1, xSELF                          // How to get Thread::Current() ???
+    mov x2, sp
+
+    // uint64_t artQuickToLlvmBridge(mirror::ArtMethod* method, Thread* self,
+    //                                      mirror::ArtMethod** sp)
+    bl   artQuickToLlvmBridge
+
+    RESTORE_SAVE_REFS_AND_ARGS_FRAME       // TODO: no need to restore arguments in this case.
+    REFRESH_MARKING_REGISTER
+
+    fmov d0, x0
+
+    RETURN_OR_DELIVER_PENDING_EXCEPTION
+END art_quick_to_llvm_bridge
 
 /*
  * Called to attempt to execute an obsolete method.

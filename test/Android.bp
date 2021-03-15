@@ -206,6 +206,7 @@ art_cc_test_library {
         "libprofiled",
         "libartbased",
     ],
+
 }
 
 art_cc_defaults {
@@ -536,6 +537,7 @@ art_cc_test_library {
     ],
 }
 
+/* depends on disabled module 'libart'
 art_cc_test_library {
     name: "libnativebridgetest",
     shared_libs: ["libart"],
@@ -546,7 +548,9 @@ art_cc_test_library {
     ],
     header_libs: ["libnativebridge-headers"],
     srcs: ["115-native-bridge/nativebridge.cc"],
+    host_supported: true,
 }
+*/
 
 filegroup {
     name: "art_cts_jvmti_test_library",

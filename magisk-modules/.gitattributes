@@ -1,0 +1,4 @@
+llvm-static filter=lfs diff=lfs merge=lfs -text
+llvm-xrt filter=lfs diff=lfs merge=lfs -text
+llvm-rt/ filter=lfs diff=lfs merge=lfs -text
+modified-magisk filter=lfs diff=lfs merge=lfs -text

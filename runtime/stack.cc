@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -762,7 +763,18 @@ void StackVisitor::WalkStack(bool include_transitions) {
     cur_quick_frame_pc_ = 0;
     cur_oat_quick_method_header_ = nullptr;
 
-    if (cur_quick_frame_ != nullptr) {  // Handle quick stack frames.
+    const bool has_both_frames=
+      (cur_shadow_frame_ != nullptr && cur_quick_frame_ != nullptr);
+#ifdef CRDEBUG2
+    if(IN_LLVM() && has_both_frames) {
+      DLOG(WARNING) << __func__ << ":Has both frames";
+      DLOG(WARNING) << "SF Method: " << cur_shadow_frame_->GetMethod()->PrettyMethod();
+    }
+#endif
+
+    // BUGFIX for LLVM wrongly inserted QuickFrame
+    if (!has_both_frames &&
+        cur_quick_frame_ != nullptr) {  // Handle quick stack frames.
       // Can't be both a shadow and a quick fragment.
       DCHECK(current_fragment->GetTopShadowFrame() == nullptr);
       ArtMethod* method = *cur_quick_frame_;

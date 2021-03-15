@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +16,9 @@
  */
 #include "nodes.h"
 
+#include "mcr_rt/mcr_rt.h"
+#include "mcr_rt/macros.h"
+
 #include <cfloat>
 
 #include "art_method-inl.h"
@@ -30,6 +34,11 @@
 #include "mirror/class-inl.h"
 #include "scoped_thread_state_change-inl.h"
 #include "ssa_builder.h"
+
+#ifdef ART_MCR
+#include "mcr_cc/match.h"
+#include "mcr_cc/llvm/llvm_utils.h"
+#endif
 
 namespace art {
 
@@ -3255,5 +3264,89 @@ void HInvoke::SetResolvedMethod(ArtMethod* method) {
   }
   resolved_method_ = method;
 }
+
+#ifdef ART_MCR
+bool HInvoke::IsSharpened() const {
+  if (!IsInvokeStaticOrDirect()) return false;
+  if(GetResolvedMethod() == nullptr) return false;
+
+  bool is_sharpened = (GetResolvedMethod()->GetInvokeType() !=
+      AsInvokeStaticOrDirect()->GetInvokeTypeDefault());
+
+  D3LOG(INFO) << "IsSharpened: " << is_sharpened
+    << "\nresolvedMethod:type: " << GetResolvedMethod()->GetInvokeType()
+    << "\nGetInvokeType:" << AsInvokeStaticOrDirect()->GetInvokeTypeDefault();
+
+  return is_sharpened;
+}
+
+inline std::string GetPrettyCallerMethod(const HInvoke *h) {
+  std::string pretty_method = "<null>";
+  if(h->GetBlock() == nullptr) return pretty_method;
+  HGraph *graph = h->GetBlock()->GetGraph();
+  return graph->PrettyMethod(true);
+}
+
+inline std::string GetPrettyMethod(const HInvoke *h) {
+  Thread *self = Thread::Current();
+  ArtMethod* m = h->GetResolvedMethod();
+  std::string pretty_method = "<null>";
+  if(m != nullptr) {
+    Locks::mutator_lock_->SharedLock(self);
+    pretty_method = m->PrettyMethod();
+    Locks::mutator_lock_->SharedUnlock(self);
+    return pretty_method;
+  }
+
+  // failed to find. return caller
+  pretty_method = "caller:" + GetPrettyCallerMethod(h);
+  return pretty_method;
+}
+
+InvokeType HInvoke::GetInvokeType(bool desharpened_type) const {
+  Thread *self = Thread::Current();
+  std::string pretty_method=GetPrettyMethod(this);
+
+  if (HasSpeculation()) {
+    D4LOG(INFO) << "Has speculation: " << pretty_method;
+    InvokeType specInvTy = GetSpecInvokeType();
+    Locks::mutator_lock_->SharedLock(self);
+
+    InvokeType defaultType = GetInvokeTypeDefault();
+
+    if(defaultType != specInvTy) {
+      DLOG(WARNING) << __func__ <<": speculation: " << specInvTy
+        << "/old:" << defaultType << ": for: " << pretty_method;
+    }
+
+    Locks::mutator_lock_->SharedUnlock(self);
+    return specInvTy;
+  }
+
+  // no histogram
+  return GetInvokeTypeInternal(desharpened_type);
+}
+
+InvokeType HInvoke::GetInvokeTypeInternal(
+    bool desharpened_type) const {
+  if(!desharpened_type || IsInvokeStaticOrDirect()) {
+    return GetInvokeTypeDefault();
+  }
+
+  Thread* self = Thread::Current();
+
+  if(GetResolvedMethod() != nullptr) {
+    Locks::mutator_lock_->SharedLock(self);
+    InvokeType orig_invtype = GetResolvedMethod()->GetInvokeType();
+    Locks::mutator_lock_->SharedUnlock(self);
+
+    return orig_invtype;
+  } else {
+    DLOG(ERROR) << __func__ << ": ResolvedMethod: Null. "
+      "Returning: " << GetInvokeTypeDefault();
+    return GetInvokeTypeDefault();
+  }
+}
+#endif
 
 }  // namespace art

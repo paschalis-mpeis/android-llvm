@@ -110,6 +110,11 @@ class ThreadList {
   size_t RunCheckpoint(Closure* checkpoint_function, Closure* callback = nullptr)
       REQUIRES(!Locks::thread_list_lock_, !Locks::thread_suspend_count_lock_);
 
+#ifdef ART_MCR
+size_t RunCheckpointOnRunnableThreads(Closure* checkpoint_function)
+      REQUIRES(!Locks::thread_list_lock_, !Locks::thread_suspend_count_lock_);
+#endif
+
   // Run an empty checkpoint on threads. Wait until threads pass the next suspend point or are
   // suspended. This is used to ensure that the threads finish or aren't in the middle of an
   // in-flight mutator heap access (eg. a read barrier.) Runnable threads will respond by

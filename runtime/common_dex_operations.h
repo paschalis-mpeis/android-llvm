@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2016 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +39,8 @@
 #include "runtime.h"
 #include "stack.h"
 #include "thread.h"
+
+#include "mcr_rt/mcr_rt.h"
 
 namespace art {
 

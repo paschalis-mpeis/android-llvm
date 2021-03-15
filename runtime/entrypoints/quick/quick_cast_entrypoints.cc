@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +15,8 @@
  * limitations under the License.
  */
 
+#include "mcr_rt/mcr_rt.h"
+
 #include "mirror/class-inl.h"
 #include "mirror/object-inl.h"
 
@@ -22,6 +25,7 @@ namespace art {
 // Assignable test for code, won't throw.  Null and equality tests already performed
 extern "C" size_t artIsAssignableFromCode(mirror::Class* klass, mirror::Class* ref_class)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(Thread::Current());
   DCHECK(klass != nullptr);
   DCHECK(ref_class != nullptr);
   return klass->IsAssignableFrom(ref_class) ? 1 : 0;
@@ -30,8 +34,10 @@ extern "C" size_t artIsAssignableFromCode(mirror::Class* klass, mirror::Class* r
 // Is assignable test for code, won't throw.  Null and equality test already performed.
 extern "C" size_t artInstanceOfFromCode(mirror::Object* obj, mirror::Class* ref_class)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(Thread::Current());
   DCHECK(obj != nullptr);
   DCHECK(ref_class != nullptr);
+  LOGLLVM3(ERROR) << __func__ << ": VERIFY_LLVM";
   return obj->InstanceOf(ref_class) ? 1 : 0;
 }
 

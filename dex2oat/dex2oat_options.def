@@ -92,4 +92,17 @@ DEX2OAT_OPTIONS_KEY (std::string,                    DirtyImageObjects)
 DEX2OAT_OPTIONS_KEY (std::vector<std::string>,       RuntimeOptions)
 DEX2OAT_OPTIONS_KEY (std::string,                    CompilationReason)
 
+#ifdef ART_MCR
+DEX2OAT_OPTIONS_KEY (Unit,                           mcrPrintMethods)
+DEX2OAT_OPTIONS_KEY (Unit,                           mcrEmitLLVM)
+DEX2OAT_OPTIONS_KEY (Unit,                           mcrEmitASM)
+DEX2OAT_OPTIONS_KEY (Unit,                           mcrSkipOat)
+DEX2OAT_OPTIONS_KEY (Unit,                           mcrLLVMInvokeHistogram)
+DEX2OAT_OPTIONS_KEY (std::string,                    llvmCompilationType)
+DEX2OAT_OPTIONS_KEY (std::string,                    llvmCompilerBaseline)
+DEX2OAT_OPTIONS_KEY (std::string,                    mcrAppPackage)
+DEX2OAT_OPTIONS_KEY (std::string,                    mcrExtraFlags)
+DEX2OAT_OPTIONS_KEY (std::string,                    mcrUserId)
+#endif
+
 #undef DEX2OAT_OPTIONS_KEY

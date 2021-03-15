@@ -23,6 +23,58 @@ JIT_DEBUG_REGISTER_CODE_LDFLAGS = [
     "-Wl,--keep-unique,__dex_debug_register_code"
 ]
 
+// We need to export dynamic symbols because we will be dynamically linking
+// hot functions (hf.so) that might be using RT's stuff
+// (modifying Java heap/objects)
+MCR_RUNTIME_TARGET_LINKER_FLAGS = [
+    // "-ldl -Wl,--export-dynamic"
+]
+
+libart_cc_defaults {
+    name: "mcrrt_defaults",
+    defaults: ["mcr_defaults"],
+    target: {
+        android: {
+            srcs: [
+                "mcr_rt/utils.cc", // was generic (out of target:android)
+                "mcr_rt/art_impl.cc",
+                "mcr_rt/mcr_dbg.cc",
+                "mcr_rt/filereader.cc",
+                "mcr_rt/mcr_log.cc",
+                "mcr_rt/mcr_rt.cc",
+                "mcr_rt/invoke.cc",
+                "mcr_rt/invoke_info.cc",
+                "mcr_rt/oat_aux.cc",
+                "mcr_rt/opt_interface.cc",
+
+                // Entrypoints specific to LLVM
+                "entrypoints/llvm/entrypoints.cc",
+                "entrypoints/llvm/debug_entrypoints.cc",
+            ],
+            cflags: [
+                "-g", // gdb enabled in runtime
+		        "-ferror-limit=0",
+                "-DART_MCR_TARGET_RT",
+        	    "-DART_MCR_RT", // logging tag
+                // android10 does not AOT compile everything
+                // so we might need this
+                "-DART_MCR_INTERPRETER_TO_QUICK_BRIDGE",
+                // RT Debug flags:
+                // "-DART_MCR_DBG_INVOCATION",
+                // CRDEBUG: Declare additional levels, i.e.,
+                "-DCRDEBUG",
+                "-DCRDEBUG1",
+                "-DCRDEBUG2",
+                // "-DCRDEBUG3",
+                // "-DCRDEBUG4",
+            ],
+        },
+    },
+    strip: {
+        keep_symbols: true,
+    },
+}
+
 libart_cc_defaults {
     name: "libart_defaults",
     defaults: ["art_defaults"],
@@ -274,6 +326,9 @@ libart_cc_defaults {
                 "monitor_pool.cc",
                 "arch/arm64/fault_handler_arm64.cc",
             ],
+            strip: {
+                keep_symbols: true,
+            },
         },
         x86: {
             srcs: [
@@ -495,6 +550,8 @@ gensrcs {
         "ti/agent.h",
         "trace.h",
         "verifier/verifier_enums.h",
+        // mcr_rt operators
+        "mcr_rt/filereader.h",
     ],
     output_extension: "operator_out.cc",
 }
@@ -504,7 +561,7 @@ gensrcs {
 
 art_cc_library {
     name: "libart",
-    defaults: ["libart_defaults"],
+    defaults: ["libart_defaults",  "mcrrt_defaults" ],
     // Leave the symbols in the shared library so that stack unwinders can
     // produce meaningful name resolution.
     strip: {

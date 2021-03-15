@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2016 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -736,11 +737,18 @@ void HInstructionBuilder::BuildSwitch(const Instruction& instruction, uint32_t d
   HInstruction* value = LoadLocal(instruction.VRegA(), DataType::Type::kInt32);
   DexSwitchTable table(instruction, dex_pc);
 
+#ifdef ART_MCR
+#define CompilingLlvm() (graph_->IsCompiledLLVMAny())
+#define CompilingLlvmOK() (graph_->IsCompiledLLVMok())
+#else
+#define CompilingLlvm() ((false))
+#define CompilingLlvmOK() ((false))
+#endif
   if (table.GetNumEntries() == 0) {
     // Empty Switch. Code falls through to the next block.
     DCHECK(IsFallthroughInstruction(instruction, dex_pc, current_block_));
     AppendInstruction(new (allocator_) HGoto(dex_pc));
-  } else if (table.ShouldBuildDecisionTree()) {
+  } else if (table.ShouldBuildDecisionTree() && !CompilingLlvmOK()) {
     for (DexSwitchTableIterator it(table); !it.Done(); it.Advance()) {
       HInstruction* case_value = graph_->GetIntConstant(it.CurrentKey(), dex_pc);
       HEqual* comparison = new (allocator_) HEqual(value, case_value, dex_pc);
@@ -752,9 +760,13 @@ void HInstructionBuilder::BuildSwitch(const Instruction& instruction, uint32_t d
       }
     }
   } else {
+    if(!table.ShouldBuildDecisionTree() && CompilingLlvmOK()){ 
+      DLOG(WARNING) << "LLVM: forced HPackedSwitch creation";
+    }
     AppendInstruction(
         new (allocator_) HPackedSwitch(table.GetEntryAt(0), table.GetNumEntries(), value, dex_pc));
   }
+#undef CompilingLlvm
 
   current_block_ = nullptr;
 }

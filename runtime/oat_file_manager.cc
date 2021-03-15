@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2015 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -506,9 +507,9 @@ std::vector<std::unique_ptr<const DexFile>> OatFileManager::OpenDexFilesFromOat(
         } else {
           // We have to fallback and found original dex files - extract them from an APK.
           // Also warn about this operation because it's potentially wasteful.
-          LOG(WARNING) << "Found duplicate classes, falling back to extracting from APK : "
+          LOGVV(WARNING) << "Found duplicate classes, falling back to extracting from APK : "
                        << dex_location;
-          LOG(WARNING) << "NOTE: This wastes RAM and hurts startup performance.";
+          LOGVV(WARNING) << "NOTE: This wastes RAM and hurts startup performance.";
         }
       } else {
         // TODO: We should remove this. The fact that we're here implies -Xno-dex-file-fallback
@@ -586,7 +587,7 @@ std::vector<std::unique_ptr<const DexFile>> OatFileManager::OpenDexFilesFromOat(
               dex::tracking::RegisterDexFile(dex_file.get());
             }
           } else {
-            LOG(INFO) << "Failed to add image file " << temp_error_msg;
+            LOGVV(INFO) << "Failed to add image file " << temp_error_msg;
             dex_files.clear();
             {
               ScopedThreadSuspension sts(self, kSuspended);
@@ -633,7 +634,7 @@ std::vector<std::unique_ptr<const DexFile>> OatFileManager::OpenDexFilesFromOat(
                                   kVerifyChecksum,
                                   /*out*/ &error_msg,
                                   &dex_files)) {
-          LOG(WARNING) << error_msg;
+          LOGVV(WARNING) << error_msg;
           error_msgs->push_back("Failed to open dex files from " + std::string(dex_location)
                                 + " because: " + error_msg);
         }
@@ -737,9 +738,9 @@ std::vector<std::unique_ptr<const DexFile>> OatFileManager::OpenDexFilesFromOat_
                                /* unquicken= */ false,
                                &error_msg);
     if (vdex_file == nullptr) {
-      LOG(WARNING) << "Failed to open vdex " << vdex_path << ": " << error_msg;
+      LOGVV(WARNING) << "Failed to open vdex " << vdex_path << ": " << error_msg;
     } else if (!vdex_file->MatchesDexFileChecksums(dex_headers)) {
-      LOG(WARNING) << "Failed to open vdex " << vdex_path << ": dex file checksum mismatch";
+      LOGVV(WARNING) << "Failed to open vdex " << vdex_path << ": dex file checksum mismatch";
       vdex_file.reset(nullptr);
     }
   }

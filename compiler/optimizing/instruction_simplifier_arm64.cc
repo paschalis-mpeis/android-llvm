@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2015 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +21,8 @@
 #include "instruction_simplifier_shared.h"
 #include "mirror/array-inl.h"
 #include "mirror/string.h"
+
+#include "mcr_cc/llvm/llvm_compiler.h"
 
 namespace art {
 
@@ -88,6 +91,8 @@ class InstructionSimplifierArm64Visitor : public HGraphVisitor {
 bool InstructionSimplifierArm64Visitor::TryMergeIntoShifterOperand(HInstruction* use,
                                                                    HInstruction* bitfield_op,
                                                                    bool do_merge) {
+  DISABLE_PASS_ON_LLVM(GetGraph());
+
   DCHECK(HasShifterOperand(use, InstructionSet::kArm64));
   DCHECK(use->IsBinaryOperation() || use->IsNeg());
   DCHECK(CanFitInShifterOperand(bitfield_op));

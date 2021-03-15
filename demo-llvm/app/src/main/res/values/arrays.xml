@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Copyright 2021 Paschalis Mpeis
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~     http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+
+<resources>
+  <string-array name="unit_test_labels">
+      <item>@string/DEMO</item>
+      <item>@string/DIVISOR_LINE</item>
+    <item>@string/TEST_ALL</item>
+    <item>@string/DIVISOR_LINE</item>
+    <item>@string/debugging</item>
+    <item>@string/capture_replay</item>
+    <item>@string/os_methods</item>
+    <item>@string/DIVISOR_LINE</item>
+    <item>@string/test_args_return</item>
+    <item>@string/test_basic1</item>
+    <item>@string/test_basic2</item>
+    <item>@string/DIVISOR_LINE</item>
+    <item>@string/test_getset</item>
+    <item>@string/test_intrinsics</item>
+    <item>@string/test_invoke_quick_basic</item>
+    <item>@string/test_invoke_quick_nested</item>
+    <item>@string/test_invoke_quick_basic_static</item>
+    <item>@string/test_invoke_quick_nested_static</item>
+    <item>@string/test_string</item>
+    <item>@string/test_newinstance</item>
+    <item>@string/test_arrays</item>
+    <item>@string/test_vectors</item>
+    <item>@string/DIVISOR_LINE</item>
+    <item>@string/test_exceptions</item>
+    <item>@string/test_trycatch</item>
+    <item>@string/test_check_div_zero</item>
+    <item>@string/test_check_div_zero_t0</item>
+    <item>@string/test_check_div_zero_t3</item>
+    <item>@string/test_check_div_zero_t4</item>
+    <item>@string/test_check_div_zero_t6</item>
+    <item>@string/test_check_null</item>
+    <item>@string/test_check_outofbounds</item>
+    <item>@string/test_check_outofbounds_t0</item>
+    <item>@string/test_check_outofbounds_t1</item>
+    <item>@string/test_check_outofbounds_t5</item>
+    <item>@string/test_check_outofbounds_t6</item>
+    <item>@string/test_check_instanceof</item>
+  </string-array>
+    <string name="DEMO">DEMO</string>
+  <string name="TEST_ALL">RUN ALL TESTS</string>
+  <string name="debugging">Debugging</string>
+  <string name="capture_replay">Capture/Replay</string>
+  <string name="os_methods">OS Methods</string>
+  <string name="test_args_return"><![CDATA[Arguments & Return]]></string>
+  <string name="test_basic1">Basic1</string>
+  <string name="test_basic2">Basic2</string>
+  <string name="test_getset">Getters/Setters</string>
+  <string name="test_string">Strings</string>
+  <string name="test_intrinsics">Intrinsics</string>
+  <string name="test_exceptions">Exceptions</string>
+  <string name="test_trycatch">Try/Catch</string>
+  <string name="test_newinstance">New Instance</string>
+  <string name="test_check_div_zero">Check DivZero</string>
+  <string name="test_check_div_zero_t0">Check DivZero T0 [dies]</string>
+  <string name="test_check_div_zero_t3">Check DivZero T3 [dies]</string>
+  <string name="test_check_div_zero_t4">Check DivZero T4 [dies]</string>
+  <string name="test_check_div_zero_t6">Check DivZero T6 [dies]</string>
+  <string name="test_check_null">Check Null [dies]</string>
+  <string name="test_check_outofbounds">Check OutOfBounds</string>
+  <string name="test_check_outofbounds_t0">Check OutOfBounds T0 [dies]</string>
+  <string name="test_check_outofbounds_t1">Check OutOfBounds T1 [dies]</string>
+  <string name="test_check_outofbounds_t5">Check OutOfBounds T5 [dies]</string>
+  <string name="test_check_outofbounds_t6">Check OutOfBounds T6 [dies]</string>
+  <string name="test_check_instanceof">Check InstanceOf</string>
+  <string name="DIVISOR_LINE">-----------</string>
+  <string name="test_invoke_quick_basic">Invoke:Quick Basic</string>
+  <string name="test_invoke_quick_nested">Invoke:Quick Nested</string>
+  <string name="test_invoke_quick_basic_static">Invoke:Quick Basic [static]</string>
+  <string name="test_invoke_quick_nested_static">Invoke:Quick Nested [static]</string>
+  <string name="test_arrays">Arrays</string>
+  <string name="test_vectors">Vectors</string>
+</resources>

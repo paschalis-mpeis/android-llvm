@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1038,8 +1039,183 @@ ENTRY \name
 END \name
 .endm
 
+
+/*
+ *   Macro used by LLVM
+ */
+.macro VOID_NOARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME r1, \runtime_method_offset    @ save everything in case of GC
+    mov    r0, rSELF                  @ pass Thread::Current
+    bl     \entrypoint                @ (uint32_t index, Thread*)
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME     @ don't keep r0
+    REFRESH_MARKING_REGISTER
+    bx     lr
+    .cfi_restore_state
+END \name
+.endm
+
+/*
+ *   Macro used by LLVM
+ */
+.macro VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME r1, \runtime_method_offset    @ save everything in case of GC
+    mov    r1, rSELF                  @ pass Thread::Current
+    bl     \entrypoint                @ (uint32_t index, Thread*)
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME     @ don't keep r0
+    REFRESH_MARKING_REGISTER
+    bx     lr
+    .cfi_restore_state
+END \name
+.endm
+
+/*
+ * Macro for LLVM. more info on aarch .S version
+ */
+.macro TWO_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME r1, \runtime_method_offset    @ save everything in case of GC
+    mov    r2, rSELF                  @ pass Thread::Current
+    bl     \entrypoint                @ (ArtMethod*, uint32_t index, Thread*)
+    cbz    r0, 1f                     @ If result is null, deliver the OOME.
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME_KEEP_R0
+    REFRESH_MARKING_REGISTER
+    bx     lr
+    .cfi_restore_state
+1:
+    DELIVER_PENDING_EXCEPTION_FRAME_READY
+END \name
+.endm
+
+/*
+ * Macro for LLVM: 3 parameters in, one out
+ */
+.macro THREE_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME r1, \runtime_method_offset    @ save everything in case of GC
+    mov    r3, rSELF                  @ pass Thread::Current
+    bl     \entrypoint                @ (ArtMethod*, uint32_t, uint32_t, Thread*)
+    cbz    r0, 1f                     @ If result is null, deliver the OOME.
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME_KEEP_R0
+    REFRESH_MARKING_REGISTER
+    bx     lr
+    .cfi_restore_state
+1:
+    DELIVER_PENDING_EXCEPTION_FRAME_READY
+END \name
+.endm
+
+/**
+ * Passes avr registers, and returns one.
+ * Since no TR is set on a reg, and everything is saved/restored,
+ * it's like a var arg
+ *
+ * TODO use/save/restore only needed regs (x1,2,3)
+ */
+.macro VARARG_NOTR_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME r1, \runtime_method_offset    @ save everything in case of GC
+    bl     \entrypoint                @ (...)
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME_KEEP_R0
+    REFRESH_MARKING_REGISTER
+    bx     lr
+    .cfi_restore_state
+END \name
+.endm
+
+/*
+ * Macro for LLVM: 4 parameters in
+ */
+.macro FOUR_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME r1, \runtime_method_offset    @ save everything in case of GC
+    mov    r4, rSELF                  @ pass Thread::Current
+    bl     \entrypoint                @
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME_KEEP_R0
+    REFRESH_MARKING_REGISTER
+    bx     lr
+    .cfi_restore_state
+END \name
+.endm
+
+/*
+ * Macro for LLVM: 5 parameters in, one out
+ */
+.macro FIVE_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME r1, \runtime_method_offset    @ save everything in case of GC
+    mov    r5, rSELF                  @ pass Thread::Current
+    bl     \entrypoint                @
+    cbz    r0, 1f                     @ If result is null, deliver the OOME.
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME_KEEP_R0
+    REFRESH_MARKING_REGISTER
+    bx     lr
+    .cfi_restore_state
+1:
+    DELIVER_PENDING_EXCEPTION_FRAME_READY
+END \name
+.endm
+
+/*
+ * Passes 5 registers, and returns one.
+ * 
+ * Used by: 
+ *  - art_quick_invoke_stub
+ *  - art_quick_invoke_static_stub
+ */
+.macro VOID_VARARG_NOTR_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME r1, \runtime_method_offset    @ save everything in case of GC
+    bl     \entrypoint                @
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME
+    REFRESH_MARKING_REGISTER
+    bx     lr
+    .cfi_restore_state
+END \name
+.endm
+
+.macro VOID_TWO_ARG_SAVE_EVERYTHING_DOWNCALL name, entrypoint, runtime_method_offset = RUNTIME_SAVE_EVERYTHING_METHOD_OFFSET
+    .extern \entrypoint
+ENTRY \name
+    SETUP_SAVE_EVERYTHING_FRAME r1, \runtime_method_offset    @ save everything in case of GC
+    mov    r2, rSELF                  @ pass Thread::Current
+    bl     \entrypoint                @ (ArtMethod*, uint32_t index, Thread*)
+    .cfi_remember_state
+    RESTORE_SAVE_EVERYTHING_FRAME     @ don't keep r0 
+    REFRESH_MARKING_REGISTER
+    bx     lr
+    .cfi_restore_state
+END \name
+.endm
+
+
 .macro ONE_ARG_SAVE_EVERYTHING_DOWNCALL_FOR_CLINIT name, entrypoint
     ONE_ARG_SAVE_EVERYTHING_DOWNCALL \name, \entrypoint, RUNTIME_SAVE_EVERYTHING_FOR_CLINIT_METHOD_OFFSET
+.endm
+
+.macro TWO_ARG_SAVE_EVERYTHING_DOWNCALL_FOR_CLINIT name, entrypoint
+    TWO_ARG_SAVE_EVERYTHING_DOWNCALL \name, \entrypoint, RUNTIME_SAVE_EVERYTHING_FOR_CLINIT_METHOD_OFFSET
+.endm
+
+.macro THREE_ARG_SAVE_EVERYTHING_DOWNCALL_FOR_CLINIT name, entrypoint
+    THREE_ARG_SAVE_EVERYTHING_DOWNCALL \name, \entrypoint, RUNTIME_SAVE_EVERYTHING_FOR_CLINIT_METHOD_OFFSET
 .endm
 
 ONE_ARG_SAVE_EVERYTHING_DOWNCALL_FOR_CLINIT art_quick_initialize_static_storage, artInitializeStaticStorageFromCode
@@ -1048,6 +1224,48 @@ ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_quick_resolve_type_and_verify_access, artRe
 ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_quick_resolve_method_handle, artResolveMethodHandleFromCode
 ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_quick_resolve_method_type, artResolveMethodTypeFromCode
 ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_quick_resolve_string, artResolveStringFromCode
+
+// LLVM entrypoints
+VARARG_NOTR_SAVE_EVERYTHING_DOWNCALL art_llvm_read_barrier_slow, artLLVMReadBarrierSlow
+
+THREE_ARG_SAVE_EVERYTHING_DOWNCALL_FOR_CLINIT art_llvm_resolve_type, artResolveTypeFromLLVM
+THREE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_type_and_verify_access, artResolveTypeAndVerifyAccessFromLLVM
+THREE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_type_internal, artResolveTypeInternalLLVM
+
+// method resolution
+THREE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_internal_method, artResolveInternalMethodFromLLVM
+FIVE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_external_method, artResolveExternalMethodFromLLVM
+TWO_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_virtual_method, artResolveVirtualMethodFromLLVM
+TWO_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_interface_method, artResolveInterfaceMethodFromLLVM
+
+// string resolution
+THREE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_resolve_string, artResolveStringFromLLVM
+
+// llvm TestSuspend
+VOID_NOARG_SAVE_EVERYTHING_DOWNCALL art_llvm_test_suspend, artTestSuspendFromCode
+
+// JValue->SetL(obj)
+VOID_TWO_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_jvalue_setl, artJValueSetLFromLLVM
+
+// GetObject
+TWO_ARG_REF_DOWNCALL art_llvm_get_obj_static, artGetObjStaticFromCode, RETURN_OR_DELIVER_PENDING_EXCEPTION_R1
+THREE_ARG_REF_DOWNCALL art_llvm_get_obj_instance, artGetObjInstanceFromCode, RETURN_OR_DELIVER_PENDING_EXCEPTION_R1
+
+// LLVM invokes Quick (indirect, so we can store all regs)
+// LLVM had some issues in some nested invokes..
+VOID_VARARG_NOTR_SAVE_EVERYTHING_DOWNCALL art_llvm_invoke_quick, art_quick_invoke_stub
+VOID_VARARG_NOTR_SAVE_EVERYTHING_DOWNCALL art_llvm_invoke_quick_static, art_quick_invoke_static_stub
+
+// Managed stack entrypoints
+VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_push_quick_frame, llvmPushQuickFrame
+VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_pop_quick_frame, llvmPopQuickFrame
+VOID_NOARG_SAVE_EVERYTHING_DOWNCALL art_llvm_clear_top_of_stack, llvmClearTopOfStack
+
+// debug entrypoints
+VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_verify_art_method, artVerifyArtMethodFromLLVM
+VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_verify_art_class, artVerifyArtClassFromLLVM
+VOID_ONE_ARG_SAVE_EVERYTHING_DOWNCALL art_llvm_verify_art_object, artVerifyArtObjectFromLLVM
+VOID_NOARG_SAVE_EVERYTHING_DOWNCALL llvm_verify_stack_frame_current, VerifyCurrentStackFrame
 
 // Note: Functions `art{Get,Set}<Kind>{Static,Instance}FromCompiledCode` are
 // defined with a macro in runtime/entrypoints/quick/quick_field_entrypoints.cc.
@@ -1834,6 +2052,25 @@ ENTRY art_quick_to_interpreter_bridge
 1:
     DELIVER_PENDING_EXCEPTION
 END art_quick_to_interpreter_bridge
+
+    .extern artQuickToLlvmBridge
+ENTRY art_quick_to_llvm_bridge
+    SETUP_SAVE_REFS_AND_ARGS_FRAME r1
+    mov     r1, rSELF              @ pass Thread::Current
+    mov     r2, sp                 @ pass SP
+    blx     artQuickToLlvmBridge   @ (Method* method, Thread*, SP)
+    ldr     r2, [rSELF, #THREAD_EXCEPTION_OFFSET]  @ load Thread::Current()->exception_
+    // Tear down the callee-save frame. Skip arg registers.
+    add     sp, #(FRAME_SIZE_SAVE_REFS_AND_ARGS - FRAME_SIZE_SAVE_REFS_ONLY)
+    .cfi_adjust_cfa_offset -(FRAME_SIZE_SAVE_REFS_AND_ARGS - FRAME_SIZE_SAVE_REFS_ONLY)
+    RESTORE_SAVE_REFS_ONLY_FRAME
+    REFRESH_MARKING_REGISTER
+    cbnz    r2, 1f                 @ success if no exception is pending
+    vmov    d0, r0, r1             @ store into fpr, for when it's a fpr return...
+    bx      lr                     @ return on success
+1:
+    DELIVER_PENDING_EXCEPTION
+END art_quick_to_llvm_bridge
 
 /*
  * Called to attempt to execute an obsolete method.

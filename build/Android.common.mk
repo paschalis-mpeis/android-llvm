@@ -29,6 +29,9 @@ else
   ART_HOST_SUPPORTED_ARCH := x86
 endif
 
+ # disabling host on linux (does not work)
+ART_TARGET_SUPPORTED_ARCH := arm arm64
+
 ART_COVERAGE := false
 
 ifeq ($(ART_COVERAGE),true)

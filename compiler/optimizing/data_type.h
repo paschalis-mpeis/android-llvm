@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2017 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -103,6 +104,12 @@ class DataType {
   static bool IsFloatingPointType(Type type) {
     return type == Type::kFloat32 || type == Type::kFloat64;
   }
+
+#if ART_MCR
+  static bool IsInt32Any(Type type) {
+    return type == Type::kInt32 || type == Type::kUint32;
+  }
+#endif
 
   static bool IsIntegralType(Type type) {
     // The Java language does not allow treating boolean as an integral type but

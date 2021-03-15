@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "mcr_rt/mcr_rt.h"
+#include "mcr_rt/art_impl.h"
 
 #include "entrypoints/quick/quick_alloc_entrypoints.h"
 
@@ -38,6 +41,8 @@ template <bool kInitialized,
 static ALWAYS_INLINE inline mirror::Object* artAllocObjectFromCode(
     mirror::Class* klass,
     Thread* self) REQUIRES_SHARED(Locks::mutator_lock_) {
+  LOGLLVM4(INFO) << __func__ << ": from llvm";
+  LLVM_FRAME_FIXUP(self);
   ScopedQuickEntrypointChecks sqec(self);
   DCHECK(klass != nullptr);
   if (kUseTlabFastPath && !kInstrumented && allocator_type == gc::kAllocatorTypeTLAB) {
@@ -59,34 +64,55 @@ static ALWAYS_INLINE inline mirror::Object* artAllocObjectFromCode(
       }
     }
   }
+#ifdef CRDEBUG2
+  std::string msg = ": " + LLVM::PrettyClass(klass);
   if (kInitialized) {
+    mirror::Object* obj =  AllocObjectFromCodeInitialized<kInstrumented>(klass, self, allocator_type).Ptr();
+    LOGLLVM(INFO) << __func__ << ":kInit: " << std::hex << obj << msg;
+    return obj;
+  } else if (!kFinalize) {
+    mirror::Object* obj =  AllocObjectFromCodeResolved<kInstrumented>(klass, self, allocator_type).Ptr();
+    LOGLLVM(INFO) << __func__ << ":!kFinalize: " << std::hex << obj << msg;
+    return obj;
+  } else {
+    mirror::Object* obj =  AllocObjectFromCode<kInstrumented>(klass, self, allocator_type).Ptr();
+    LOGLLVM(INFO) << __func__ << ":kelse: " << std::hex << obj << msg;
+    return obj;
+  }
+#else
+if (kInitialized) {
     return AllocObjectFromCodeInitialized<kInstrumented>(klass, self, allocator_type).Ptr();
   } else if (!kFinalize) {
     return AllocObjectFromCodeResolved<kInstrumented>(klass, self, allocator_type).Ptr();
   } else {
     return AllocObjectFromCode<kInstrumented>(klass, self, allocator_type).Ptr();
   }
+#endif
 }
 
 #define GENERATE_ENTRYPOINTS_FOR_ALLOCATOR_INST(suffix, suffix2, instrumented_bool, allocator_type) \
 extern "C" mirror::Object* artAllocObjectFromCodeWithChecks##suffix##suffix2( \
     mirror::Class* klass, Thread* self) \
     REQUIRES_SHARED(Locks::mutator_lock_) { \
+  LLVM_FRAME_FIXUP(self); \
   return artAllocObjectFromCode<false, true, instrumented_bool, allocator_type>(klass, self); \
 } \
 extern "C" mirror::Object* artAllocObjectFromCodeResolved##suffix##suffix2( \
     mirror::Class* klass, Thread* self) \
     REQUIRES_SHARED(Locks::mutator_lock_) { \
+  LLVM_FRAME_FIXUP(self); \
   return artAllocObjectFromCode<false, false, instrumented_bool, allocator_type>(klass, self); \
 } \
 extern "C" mirror::Object* artAllocObjectFromCodeInitialized##suffix##suffix2( \
     mirror::Class* klass, Thread* self) \
     REQUIRES_SHARED(Locks::mutator_lock_) { \
+  LLVM_FRAME_FIXUP(self); \
   return artAllocObjectFromCode<true, false, instrumented_bool, allocator_type>(klass, self); \
 } \
 extern "C" mirror::String* artAllocStringObject##suffix##suffix2( \
     mirror::Class* klass, Thread* self) \
     REQUIRES_SHARED(Locks::mutator_lock_) { \
+  LLVM_FRAME_FIXUP(self); \
   /* The klass arg is so it matches the ABI of the other object alloc callbacks. */ \
   DCHECK(klass->IsStringClass()) << klass->PrettyClass(); \
   return mirror::String::AllocEmptyString<instrumented_bool>(self, allocator_type).Ptr(); \
@@ -94,6 +120,7 @@ extern "C" mirror::String* artAllocStringObject##suffix##suffix2( \
 extern "C" mirror::Array* artAllocArrayFromCodeResolved##suffix##suffix2( \
     mirror::Class* klass, int32_t component_count, Thread* self) \
     REQUIRES_SHARED(Locks::mutator_lock_) { \
+  LLVM_FRAME_FIXUP(self); \
   ScopedQuickEntrypointChecks sqec(self); \
   return AllocArrayFromCodeResolved<instrumented_bool>( \
       klass, component_count, self, allocator_type).Ptr(); \
@@ -102,6 +129,7 @@ extern "C" mirror::String* artAllocStringFromBytesFromCode##suffix##suffix2( \
     mirror::ByteArray* byte_array, int32_t high, int32_t offset, int32_t byte_count, \
     Thread* self) \
     REQUIRES_SHARED(Locks::mutator_lock_) { \
+  LLVM_FRAME_FIXUP(self); \
   ScopedQuickEntrypointChecks sqec(self); \
   StackHandleScope<1> hs(self); \
   Handle<mirror::ByteArray> handle_array(hs.NewHandle(byte_array)); \
@@ -111,6 +139,7 @@ extern "C" mirror::String* artAllocStringFromBytesFromCode##suffix##suffix2( \
 extern "C" mirror::String* artAllocStringFromCharsFromCode##suffix##suffix2( \
     int32_t offset, int32_t char_count, mirror::CharArray* char_array, Thread* self) \
     REQUIRES_SHARED(Locks::mutator_lock_) { \
+  LLVM_FRAME_FIXUP(self); \
   StackHandleScope<1> hs(self); \
   Handle<mirror::CharArray> handle_array(hs.NewHandle(char_array)); \
   return mirror::String::AllocFromCharArray<instrumented_bool>( \
@@ -119,6 +148,7 @@ extern "C" mirror::String* artAllocStringFromCharsFromCode##suffix##suffix2( \
 extern "C" mirror::String* artAllocStringFromStringFromCode##suffix##suffix2( /* NOLINT */ \
     mirror::String* string, Thread* self) \
     REQUIRES_SHARED(Locks::mutator_lock_) { \
+  LLVM_FRAME_FIXUP(self); \
   StackHandleScope<1> hs(self); \
   Handle<mirror::String> handle_string(hs.NewHandle(string)); \
   return mirror::String::AllocFromString<instrumented_bool>( \

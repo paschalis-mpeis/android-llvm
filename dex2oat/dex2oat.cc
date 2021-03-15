@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,6 +98,22 @@
 #include "vdex_file.h"
 #include "verifier/verifier_deps.h"
 #include "well_known_classes.h"
+
+#ifdef ART_MCR_TARGET
+#include "mcr_cc/clang_interface.h"
+#include "mcr_cc/invoke_histogram.h"
+#include "mcr_cc/llc_interface.h"
+#ifdef ART_MCR_COMPILE_OS_METHODS
+#include "mcr_cc/os_comp.h"
+#endif
+#include "mcr_cc/llvm/debug.h"
+#include "mcr_cc/analyser.h"
+#include "mcr_cc/llvm/llvm_compiler.h"
+#include "mcr_cc/pass_manager.h"
+#include "mcr_rt/invoke_info.h"
+#endif
+#include "mcr_cc/mcr_cc.h"
+#include "mcr_rt/mcr_rt.h"
 
 namespace art {
 
@@ -496,7 +513,9 @@ NO_RETURN static void Usage(const char* fmt, ...) {
   UsageError("");
   UsageError("  --max-image-block-size=<size>: Maximum solid block size for compressed images.");
   UsageError("");
-  std::cerr << "See log for usage error information\n";
+#if defined(ART_MCR)
+  printf("dex2oat crashed. See log for usage error information\n");
+#endif
   exit(EXIT_FAILURE);
 }
 
@@ -564,10 +583,16 @@ class WatchDog {
   // desktop. Debug builds are slower so they have larger timeouts.
   static constexpr int64_t kWatchdogSlowdownFactor = kIsDebugBuild ? 5U : 1U;
 
+#if defined(ART_MCR)
+  // in case some static analysis is slower
+  static constexpr int64_t kWatchDogTimeoutSeconds = kWatchdogSlowdownFactor * (30 * 60 + 30);
+#else
   // 9.5 minutes scaled by kSlowdownFactor. This is slightly smaller than the Package Manager
   // watchdog (PackageManagerService.WATCHDOG_TIMEOUT, 10 minutes), so that dex2oat will abort
   // itself before that watchdog would take down the system server.
   static constexpr int64_t kWatchDogTimeoutSeconds = kWatchdogSlowdownFactor * (9 * 60 + 30);
+#endif
+
 
   static constexpr int64_t kDefaultWatchdogTimeoutInMS =
       kWatchdogVerifyMultiplier * kWatchDogTimeoutSeconds * 1000;
@@ -651,6 +676,9 @@ Runtime* WatchDog::runtime_ = nullptr;
 
 class Dex2Oat final {
  public:
+#ifdef ART_MCR_TARGET
+  void McrInitialization();
+#endif
   explicit Dex2Oat(TimingLogger* timings) :
       compiler_kind_(Compiler::kOptimizing),
       // Take the default set of instruction features from the build.
@@ -1155,14 +1183,77 @@ class Dex2Oat final {
     AssignIfExists(args, M::ImageFormat, &image_storage_mode_);
     AssignIfExists(args, M::CompilationReason, &compilation_reason_);
 
+#ifdef ART_MCR_TARGET
+    AssignTrueIfExists(args, M::mcrPrintMethods, &print_methods_);
+    AssignTrueIfExists(args, M::mcrEmitLLVM, &emit_llvm_);
+    AssignTrueIfExists(args, M::mcrEmitASM, &emit_asm_);
+    AssignTrueIfExists(args, M::mcrSkipOat, &skip_oat_);
+    AssignTrueIfExists(args, M::mcrLLVMInvokeHistogram,
+        &gen_invoke_histogram_);
+#ifdef MCR_LLVM_GEN_INVOKE_HIST_ON_CACHE_MISS
+     if(gen_invoke_histogram_) {
+       LLVM::LlvmCompiler::SetGenerateInvokeHistogram();
+     }
+#endif
+    std::string comp_type_str;
+    AssignIfExists(args, M::llvmCompilationType, &comp_type_str);
+    if(!comp_type_str.empty()) {
+      compilation_type_ =
+        CompilerOptions::GetCompilationType(comp_type_str);
+      LOG(INFO) << "CompilationType: " << compilation_type_;
+    }
+
+    std::string comp_baseline;
+    AssignIfExists(args, M::llvmCompilerBaseline, &comp_baseline);
+    mcr::PassManager::SetBaseline(comp_baseline);
+
+    AssignIfExists(args, M::mcrExtraFlags, &extra_flags_);
+    AssignIfExists(args, M::mcrAppPackage, &mcr_pkg_);
+    AssignIfExists(args, M::mcrUserId, &mcr_user_id_);
+#endif
+
     AssignIfExists(args, M::Backend, &compiler_kind_);
     parser_options->requested_specific_compiler = args.Exists(M::Backend);
 
     AssignIfExists(args, M::TargetInstructionSet, &compiler_options_->instruction_set_);
+
+    DLOG(ERROR) << "ISA: " << &compiler_options_->instruction_set_;
     // arm actually means thumb2.
     if (compiler_options_->instruction_set_ == InstructionSet::kArm) {
       compiler_options_->instruction_set_ = InstructionSet::kThumb2;
     }
+
+#ifdef ART_MCR
+    const bool gen_bitcode =
+      (compilation_type_ == CompilerOptions::CompilationType::kLlvmBitcode);
+    const bool assemble_llvm =
+      (compilation_type_ == CompilerOptions::CompilationType::kLlvmBaseline);
+    gen_oat_aux_ = optimizing_to_llvm_ = gen_bitcode;
+
+    if (gen_bitcode && (mcr_pkg_.size() == 0 || mcr_user_id_.size() == 0)) {
+      const char *msg="--pkg and --userid needed for generating LLVM bitcode.";
+      printf("%s\n", msg);
+      Usage(msg);
+    }
+
+    if (assemble_llvm &&
+        (mcr_pkg_.size() == 0 || mcr_user_id_.size() == 0 || comp_baseline.size() == 0)) {
+      const char *msg="--pkg, --userid, and --comp-baseline needed for assembling the LLVM bitcode.";
+      printf("%s\n", msg);
+      Usage(msg);
+    }
+
+    if (gen_invoke_histogram_ && !optimizing_to_llvm_) {
+      const char *msg="Generating InvokeHistogram is applicaple only when doing IR-to-IR translation (--gen-bitcode)";
+      printf("%s\n", msg);
+      Usage(msg);
+    }
+
+    if ((emit_llvm_ || emit_asm_) &&
+        !(CompilerOptions::IsLlvmBasedCompiler(compilation_type_))) {
+      Usage("Emitting LLVM bitcode works only with LLVM-based compilations.");
+    }
+#endif
 
     AssignTrueIfExists(args, M::Host, &is_host_);
     AssignTrueIfExists(args, M::AvoidStoringInvocation, &avoid_storing_invocation_);
@@ -1246,6 +1337,9 @@ class Dex2Oat final {
   // Check whether the oat output files are writable, and open them for later. Also open a swap
   // file, if a name is given.
   bool OpenFile() {
+#if defined(ART_MCR_TARGET) && defined(ART_MCR_ANDROID_6)
+    if (SkipOat()) { return true; }
+#endif
     // Prune non-existent dex files now so that we don't create empty oat files for multi-image.
     PruneNonExistentDexFiles();
 
@@ -1283,6 +1377,14 @@ class Dex2Oat final {
         std::string vdex_filename = output_vdex_.empty()
             ? ReplaceFileExtension(oat_filename, "vdex")
             : output_vdex_;
+#ifdef ART_MCR_TARGET
+        if (SkipOat()) {
+          // @Android10 the oat files need to be generated,
+          // even if we eventually do an IR-to-IR translation (HGraph to LLVM)
+          // Those won't be needed, so we store them here so we can delete them afterwards
+          vdex_filenames_str_.insert(vdex_filename);
+        }
+#endif
         if (vdex_filename == input_vdex_ && output_vdex_.empty()) {
           update_input_vdex_ = true;
           std::unique_ptr<File> vdex_file(OS::OpenFileReadWrite(vdex_filename.c_str()));
@@ -1434,6 +1536,23 @@ class Dex2Oat final {
 
     return true;
   }
+
+#if defined(ART_MCR_ANDROID_10)
+  void deleteFile(std::string filename) {
+    if (OS::FileExists(filename.c_str())) {
+      unlink(filename.c_str());
+      D3LOG(INFO) << "Deleted: " << filename;
+    }
+  }
+
+  void EraseTmpFilesForSkipOat() {
+    if(SkipOat()) {
+      deleteFile(app_image_file_name_);
+      for (const std::string& of: oat_filenames_) deleteFile(of);
+      for (std::string vf: vdex_filenames_str_) deleteFile(vf);
+    }
+  }
+#endif
 
   void EraseOutputFiles() {
     for (auto& files : { &vdex_files_, &oat_files_ }) {
@@ -1737,6 +1856,13 @@ class Dex2Oat final {
 
   // Set up and create the compiler driver and then invoke it to compile all the dex files.
   jobject Compile() {
+#ifdef ART_MCR
+    if (IsCompilingForLlvm()) {
+      McrDebug::ReadOptions();
+      McrDebug::ClearRecompilation();
+    }
+#endif
+
     ClassLinker* const class_linker = Runtime::Current()->GetClassLinker();
 
     TimingLogger::ScopedTiming t("dex2oat Compile", timings_);
@@ -1794,6 +1920,12 @@ class Dex2Oat final {
     }
     compiler_options_->profile_compilation_info_ = profile_compilation_info_.get();
 
+#if defined(ART_MCR) && defined(CRDEBUG3)
+    if(IsCompilingForLlvm()) {
+      // this is way slower, but it can be helpful in some debugging scenarions
+      thread_count_ = 1;
+    }
+#endif
     driver_.reset(new CompilerDriver(compiler_options_.get(),
                                      compiler_kind_,
                                      thread_count_,
@@ -1868,6 +2000,60 @@ class Dex2Oat final {
       }
     }
     driver_->InitializeThreadPools();
+
+#ifdef ART_MCR
+    compiler_options_->SetAppDexFiles(&dex_files);
+    if (print_methods_) {
+      DLOG(WARNING) << "|---------------------------------"
+        << "|- Print methods:";
+      for (const DexFile* dex_file : dex_files) {
+        DLOG(INFO) << "| dex_file: " << dex_file->GetLocation();
+      }
+
+      mcr::Analyser::PrintAppMethods(class_loader, dex_files);
+      DLOG(INFO) << "|---------------------------------";
+      exit(EXIT_SUCCESS);
+    }
+#ifdef ART_MCR_COMPILE_OS_METHODS
+    else if (IsCompilingForLlvm()) {
+      OsCompilation::ReadOsMethodsBlocklist();
+      InvokeHistogram* histogram = new InvokeHistogram();
+      D1LOG(WARNING) << "+-- Histogram entries: " << histogram->GetSize();
+      D1LOG(WARNING) << "| " << mcr::McrCC::PrettyHistogramHeader();
+      if (histogram->HasSpeculation()) {
+        int cnt = 1;
+        bool done_printing=false;
+        for (auto it(histogram->hist_begin());
+            it != histogram->hist_end(); it++, cnt++) {
+          mcr::InvokeInfo ii = *it;
+
+          if (ii.IsInternalMethod()) {
+            const DexFile* dex_file =
+              OsCompilation::AddDexFile(ii.GetDexFilename(),
+                  ii.GetDexLocation());
+            OsCompilation::AddMethod(dex_file, ii.GetSpecClassIdx(),
+                ii.GetSpecMethodIdx(), ii.GetSpecInvokeType());
+          }
+
+          if(cnt>=20) done_printing=true;
+          if(!done_printing) {
+            std::stringstream ss;
+            ss << "| "<< mcr::McrCC::PrettyHistogramLine(ii, cnt);
+            D2LOG(INFO) << ss.str();
+          }
+        }
+        OsCompilation::PrintReport();
+      }
+
+      // Extra pass to compile OS Methods
+      driver_->PreCompileOsMethods(class_loader,
+          timings_, &compiler_options_->image_classes_,
+          verification_results_.get());
+      driver_->CompileOsMethods(class_loader, timings_);
+    }
+#endif  // os-comp
+#endif
+
     driver_->PreCompile(class_loader,
                         dex_files,
                         timings_,
@@ -1946,6 +2132,9 @@ class Dex2Oat final {
   // Note: Flushing (and closing) the file is the caller's responsibility, except for the failure
   //       case (when the file will be explicitly erased).
   bool WriteOutputFiles(jobject class_loader) {
+#if defined(ART_MCR_TARGET) && defined(CRDEBUG3)
+    if (IsCompilingForLlvm()) DLOG(INFO) << "dex2oat: CreateOatFile()";
+#endif
     TimingLogger::ScopedTiming t("dex2oat Oat", timings_);
 
     // Sync the data to the file, in case we did dex2dex transformations.
@@ -2299,6 +2488,16 @@ class Dex2Oat final {
 
     return true;
   }
+
+#ifdef ART_MCR_TARGET
+  bool IsCompilingForLlvm() {
+    return compiler_options_->IsCompilingForLlvm();
+  }
+
+  bool SkipOat() const {
+    return skip_oat_;
+  }
+#endif
 
  private:
   bool UseSwap(bool is_image, const std::vector<const DexFile*>& dex_files) {
@@ -2700,6 +2899,28 @@ class Dex2Oat final {
               << ((Runtime::Current() != nullptr && driver_ != nullptr) ?
                   driver_->GetMemoryUsageString(kIsDebugBuild || VLOG_IS_ON(compiler)) :
                   "");
+
+#ifdef ART_MCR
+    if (IsCompilingForLlvm()) {
+      if(thread_count_ == 1) {
+        DLOG(WARNING) << "WARNING: dex2oat uses single thread!";
+      }
+
+      bool run_optimizations = !driver_->GetCompilerOptions().IsBaseline();
+      if(!run_optimizations) {
+        DLOG(WARNING) << "HGraph optimizations did NOT run. "
+          << "Backend: " << compiler_kind_ <<
+          "(baseline:" << driver_->GetCompilerOptions().IsBaseline()
+          << " debuggable:" << driver_->GetCompilerOptions().GetDebuggable()
+          << ")";
+      }
+
+      DLOG(INFO) << "Methods compiled with the optimizing backend: " 
+        << mcr::McrCC::compiled_optimizing_;
+
+      McrDebug::PrintOptions();
+    }
+#endif
   }
 
   std::string StripIsaFrom(const char* image_filename, InstructionSet isa) {
@@ -2799,6 +3020,9 @@ class Dex2Oat final {
   size_t min_dex_file_cumulative_size_for_swap_ = kDefaultMinDexFileCumulativeSizeForSwap;
   size_t very_large_threshold_ = std::numeric_limits<size_t>::max();
   std::string app_image_file_name_;
+#ifdef ART_MCR_TARGET
+  std::set<std::string> vdex_filenames_str_;
+#endif
   int app_image_fd_;
   std::string profile_file_;
   int profile_file_fd_;
@@ -2825,6 +3049,20 @@ class Dex2Oat final {
 
   // The reason for invoking the compiler.
   std::string compilation_reason_;
+
+#ifdef ART_MCR
+  CompilerOptions::CompilationType compilation_type_ = CompilerOptions::CompilationType::kNone;
+  bool optimizing_to_llvm_ = false;
+  bool gen_invoke_histogram_ = false;
+  bool print_methods_ = false;
+  bool emit_llvm_ = false;
+  bool emit_asm_ = false;
+  bool gen_oat_aux_ = false;
+  bool skip_oat_ = false;
+  std::string mcr_user_id_;
+  std::string mcr_pkg_;
+  std::string extra_flags_;
+#endif
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(Dex2Oat);
 };
@@ -2948,6 +3186,31 @@ static dex2oat::ReturnCode CompileApp(Dex2Oat& dex2oat) {
   return dex2oat::ReturnCode::kNoFailure;
 }
 
+#ifdef ART_MCR_TARGET
+static void McrPostCompilation(Dex2Oat& dex2oat) {
+  if (dex2oat.SkipOat()) {
+    dex2oat.EraseTmpFilesForSkipOat();
+  }
+
+  // When the histogram is updated a recompilation flag is set
+  // This can be handled (i.e., by a script or an app) to trigger
+  // a recompilation of the sources.
+  // This happens when importing framework methods into LLVM,
+  // and it might cause several cascarding recompilations.
+  // This approach is quite slow. It should be implemented differently.
+  if (dex2oat.IsCompilingForLlvm()) {
+    if (mcr::InvokeInfo::ShouldUpdateHistogram()) {
+      mcr::InvokeInfo::UpdateHistogram();
+      mcr::McrCC::AddRecompilationReason("Updated Histogram.");
+    }
+
+    if(mcr::McrCC::MustRecompile()) {
+      mcr::McrCC::DieWithRecompilationReport();
+    }
+  }
+}
+#endif
+
 static dex2oat::ReturnCode Dex2oat(int argc, char** argv) {
   b13564922();
 
@@ -2961,6 +3224,10 @@ static dex2oat::ReturnCode Dex2oat(int argc, char** argv) {
 
   // Parse arguments. Argument mistakes will lead to exit(EXIT_FAILURE) in UsageError.
   dex2oat->ParseArgs(argc, argv);
+
+#ifdef ART_MCR_TARGET
+  dex2oat->McrInitialization();
+#endif
 
   // If needed, process profile information for profile guided compilation.
   // This operation involves I/O.
@@ -3020,6 +3287,9 @@ static dex2oat::ReturnCode Dex2oat(int argc, char** argv) {
     result = CompileApp(*dex2oat);
   }
 
+#ifdef ART_MCR_TARGET
+  McrPostCompilation(*dex2oat);
+#endif
   return result;
 }
 }  // namespace art
@@ -3034,3 +3304,50 @@ int main(int argc, char** argv) {
   }
   return result;
 }
+
+#ifdef ART_MCR_TARGET
+/**
+ * @brief Reads configuration files to initialize settings for mcr compilations.
+ */
+void art::Dex2Oat::McrInitialization() {
+  compiler_options_->SetMcrCompilationType(compilation_type_);
+
+  if (compiler_options_->IsCompilingForLlvm()) {
+    LOG(INFO) << "dex2oat: starting LLVM compilation: " << compilation_type_;
+
+    compiler_options_->SetSkipOat(skip_oat_);
+    compiler_options_->SetGenerateOatAux(gen_oat_aux_);
+    compiler_options_->SetGenerateLLVM_IR(optimizing_to_llvm_);
+
+    // Most of the code is set to be compiled.
+    // Later on, and if ART_MCR_INTERPRET_NON_HOT_CODE is enabled,
+    // compilation will be restricted only to hot methods
+    compiler_options_->SetCompilerFilter(CompilerFilter::kEverything);
+    compiler_options_->SetExtraFlags(extra_flags_);
+    compiler_options_->SetMcrAppPackage(mcr_pkg_);
+    mcr::McrRT::InitApp(mcr_user_id_, mcr_pkg_);
+
+    mcr::McrCC::ReadLlvmProfile();
+
+    if (compiler_options_->IsGeneratingLlvmBitcode()) {
+      DLOG(INFO) << "Generating LLVM bitcode";
+    } else if (compiler_options_->IsCompilingLlvmBaseline()) {
+
+      DLOG(INFO) << "Assembling LLVM bitcode";
+      mcr::PassManager::LoadLlvmCompilationFlags();
+
+      // generate shared object file (hf.so) from the bitcode
+      if (!mcr::LlcInterface::Compile(emit_llvm_, emit_asm_,
+            compiler_options_->GetMcrGetExtraFlags())) {
+        DLOG(FATAL) << "dex2oat: LLVM compilation: FAILED!";
+        exit(EXIT_FAILURE);
+      } else {
+        D2LOG(DEBUG) << "dex2oat: LLVM compilation: success";
+      }
+      exit(EXIT_SUCCESS);
+    } 
+  } else {
+    D3LOG(INFO) << "dex2oat: started NON-MCR compilation";
+  }
+}
+#endif

@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +16,8 @@
  */
 
 #include <android-base/logging.h>
+
+#include "mcr_rt/mcr_rt.h"
 
 #include "art_method-inl.h"
 #include "entrypoints/entrypoint_utils.h"
@@ -37,6 +40,18 @@ extern "C" const void* artFindNativeMethod(Thread* self) {
   ScopedObjectAccess soa(self);
 
   ArtMethod* method = self->GetCurrentMethod(nullptr);
+#if defined(ART_MCR_TARGET) && defined(CRDEBUG2)
+  bool dbgl=false;
+  if(mcr::McrRT::IsLlvmTestMethod(method)) {
+    dbgl=true;
+  }
+  std::string pretty_method = "<null>";
+  if(method!=nullptr) {
+    pretty_method = method->PrettyMethod();
+  }
+  LOGLLVM2(INFO) << __func__ << ": method: " << pretty_method;
+#endif
+
   DCHECK(method != nullptr);
 
   // Lookup symbol address for method, on failure we'll return null with an exception set,

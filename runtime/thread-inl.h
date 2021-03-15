@@ -30,6 +30,8 @@
 #include "thread-current-inl.h"
 #include "thread_pool.h"
 
+#include "mcr_rt/mcr_dbg.h"
+
 namespace art {
 
 // Quickly access the current thread from a JNIEnv.

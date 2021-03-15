@@ -66,6 +66,19 @@
 #include "utils/assembler.h"
 #include "verifier/verifier_compiler_binding.h"
 
+#include "mcr_rt/mcr_rt.h"
+#ifdef ART_MCR
+#ifdef ART_MCR_COMPILE_OS_METHODS
+#include "mcr_cc/os_comp.h"
+#endif
+#include "mcr_cc/llvm/hgraph_to_llvm-inl.h"
+#include "mcr_cc/llvm/hgraph_to_llvm.h"
+#include "mcr_cc/llvm/llvm_compilation_unit.h"
+#include "mcr_cc/llvm/llvm_compiler.h"
+#include "mcr_cc/match.h"
+#include "mcr_rt/oat_aux.h"
+#endif
+
 namespace art {
 
 static constexpr size_t kArenaAllocatorMemoryReportThreshold = 8 * MB;
@@ -282,6 +295,18 @@ class OptimizingCompiler final : public Compiler {
                           const DexFile& dex_file,
                           Handle<mirror::DexCache> dex_cache) const override;
 
+#ifdef ART_MCR
+  bool CompileToLLVM(
+      ArenaAllocator* allocator,
+      ArenaStack* arena_stack,
+      CodeVectorAllocator* code_allocator,
+      const DexCompilationUnit& dex_compilation_unit,
+      ArtMethod* method,
+      bool baseline,
+      bool osr,
+      VariableSizedHandleScope* handles) const;
+#endif
+
   CompiledMethod* JniCompile(uint32_t access_flags,
                              uint32_t method_idx,
                              const DexFile& dex_file,
@@ -383,7 +408,12 @@ class OptimizingCompiler final : public Compiler {
                             ArtMethod* method,
                             bool baseline,
                             bool osr,
-                            VariableSizedHandleScope* handles) const;
+                            VariableSizedHandleScope* handles
+#ifdef ART_MCR
+                            , bool generatedLLVM = false
+#endif
+
+                            ) const;
 
   CodeGenerator* TryCompileIntrinsic(ArenaAllocator* allocator,
                                      ArenaStack* arena_stack,
@@ -782,7 +812,13 @@ CodeGenerator* OptimizingCompiler::TryCompile(ArenaAllocator* allocator,
                                               ArtMethod* method,
                                               bool baseline,
                                               bool osr,
-                                              VariableSizedHandleScope* handles) const {
+                                              VariableSizedHandleScope* handles
+#ifdef ART_MCR
+                                              , bool generatedLLVM
+#endif
+
+                                              ) const {
+
   MaybeRecordStat(compilation_stats_.get(), MethodCompilationStat::kAttemptBytecodeCompilation);
   const CompilerOptions& compiler_options = GetCompilerOptions();
   InstructionSet instruction_set = compiler_options.GetInstructionSet();
@@ -850,6 +886,12 @@ CodeGenerator* OptimizingCompiler::TryCompile(ArenaAllocator* allocator,
       dead_reference_safe,
       compiler_options.GetDebuggable(),
       /* osr= */ osr);
+
+#ifdef ART_MCR
+  if(generatedLLVM) {
+    graph->SetMcrCompilation(McrCompilation::TrueOptimizing);
+  }
+#endif
 
   if (method != nullptr) {
     graph->SetArtMethod(method);
@@ -1039,6 +1081,221 @@ CodeGenerator* OptimizingCompiler::TryCompileIntrinsic(
   return codegen.release();
 }
 
+#ifdef ART_MCR
+/**
+ *
+ * @brief Generates LLVM IR from Optimized HGraph.
+ * 
+ * Optimizations passes can run later on w/ llc_interface
+ *
+ * (based on TryCompile)
+ *
+ */
+bool OptimizingCompiler::CompileToLLVM(
+    ArenaAllocator* allocator,
+    ArenaStack* arena_stack,
+    CodeVectorAllocator* code_allocator,
+    const DexCompilationUnit& dex_compilation_unit,
+    ArtMethod* method,
+    bool baseline,
+    bool osr,
+    VariableSizedHandleScope* handles) const { 
+  MaybeRecordStat(compilation_stats_.get(), MethodCompilationStat::kAttemptBytecodeCompilation);
+  const CompilerOptions& compiler_options = GetCompilerOptions();
+  InstructionSet instruction_set = compiler_options.GetInstructionSet();
+  const DexFile& dex_file = *dex_compilation_unit.GetDexFile();
+  uint32_t method_idx = dex_compilation_unit.GetDexMethodIndex();
+  const dex::CodeItem* code_item = dex_compilation_unit.GetCodeItem();
+
+  std::string pretty_method = dex_file.PrettyMethod(method_idx);
+  Locks::mutator_lock_->SharedLock(Thread::Current());
+  InvokeType invType = method->GetInvokeType();
+  Locks::mutator_lock_->SharedUnlock(Thread::Current());
+  DLOG(WARNING)
+    << "|\n"
+    << "+===============================================================\n"
+    << "| CompileToLLVM: " << method_idx <<":"
+    << invType << ":" << pretty_method << "\n"
+    << "+===============================================================\n"
+    << "|";
+
+  // Always use the Thumb-2 assembler: some runtime functionality
+  // (like implicit stack overflow checks) assume Thumb-2.
+  DCHECK_NE(instruction_set, InstructionSet::kArm);
+
+  // Do not attempt to compile on architectures we do not support.
+  if (!IsInstructionSetSupported(instruction_set)) {
+    MaybeRecordStat(compilation_stats_.get(),
+                    MethodCompilationStat::kNotCompiledUnsupportedIsa);
+    return false;
+  }
+
+  if (Compiler::IsPathologicalCase(*code_item, method_idx, dex_file)) {
+    MaybeRecordStat(compilation_stats_.get(), MethodCompilationStat::kNotCompiledPathological);
+    return false;
+  }
+
+  CodeItemDebugInfoAccessor code_item_accessor(dex_file, code_item, method_idx);
+
+  bool dead_reference_safe;
+  ArrayRef<const uint8_t> interpreter_metadata;
+  // For AOT compilation, we may not get a method, for example if its class is erroneous,
+  // possibly due to an unavailable superclass.  JIT should always have a method.
+  DCHECK(Runtime::Current()->IsAotCompiler() || method != nullptr);
+  if (method != nullptr) {
+    const dex::ClassDef* containing_class;
+    {
+      ScopedObjectAccess soa(Thread::Current());
+      containing_class = &method->GetClassDef();
+      interpreter_metadata = method->GetQuickenedInfo();
+    }
+    // MethodContainsRSensitiveAccess is currently slow, but HasDeadReferenceSafeAnnotation()
+    // is currently rarely true.
+    dead_reference_safe =
+        annotations::HasDeadReferenceSafeAnnotation(dex_file, *containing_class)
+        && !annotations::MethodContainsRSensitiveAccess(dex_file, *containing_class, method_idx);
+  } else {
+    // If we could not resolve the class, conservatively assume it's dead-reference unsafe.
+    dead_reference_safe = false;
+  }
+
+  HGraph* graph = new (allocator) HGraph(
+      allocator,
+      arena_stack,
+      dex_file,
+      method_idx,
+      compiler_options.GetInstructionSet(),
+      kInvalidInvokeType,
+      dead_reference_safe,
+      compiler_options.GetDebuggable(),
+      /* osr= */ osr);
+
+  // void eu.veldsoft.colors.overflow.Board.refill(int, int)
+  graph->SetMcrCompilation(McrCompilation::TrueLLVM);
+  
+  if (method != nullptr) {
+    graph->SetArtMethod(method);
+  }
+
+  std::unique_ptr<CodeGenerator> codegen(
+      CodeGenerator::Create(graph,
+                            compiler_options,
+                            compilation_stats_.get()));
+
+  if (codegen.get() == nullptr) {
+    MaybeRecordStat(compilation_stats_.get(), MethodCompilationStat::kNotCompiledNoCodegen);
+    return false;
+  }
+  codegen->GetAssembler()->cfi().SetEnabled(compiler_options.GenerateAnyDebugInfo());
+
+  PassObserver pass_observer(graph,
+                             codegen.get(),
+                             visualizer_output_.get(),
+                             compiler_options,
+                             dump_mutex_);
+
+  {
+    VLOG(compiler) << "Building " << pass_observer.GetMethodName();
+    PassScope scope(HGraphBuilder::kBuilderPassName, &pass_observer);
+    HGraphBuilder builder(graph,
+                          code_item_accessor,
+                          &dex_compilation_unit,
+                          &dex_compilation_unit,
+                          codegen.get(),
+                          compilation_stats_.get(),
+                          interpreter_metadata,
+                          handles);
+
+    GraphAnalysisResult result = builder.BuildGraph();
+    if (result != kAnalysisSuccess) {
+      switch (result) {
+        case kAnalysisSkipped: {
+          MaybeRecordStat(compilation_stats_.get(),
+                          MethodCompilationStat::kNotCompiledSkipped);
+          break;
+        }
+        case kAnalysisInvalidBytecode: {
+          MaybeRecordStat(compilation_stats_.get(),
+                          MethodCompilationStat::kNotCompiledInvalidBytecode);
+          break;
+        }
+        case kAnalysisFailThrowCatchLoop: {
+          MaybeRecordStat(compilation_stats_.get(),
+                          MethodCompilationStat::kNotCompiledThrowCatchLoop);
+          break;
+        }
+        case kAnalysisFailAmbiguousArrayOp: {
+          MaybeRecordStat(compilation_stats_.get(),
+                          MethodCompilationStat::kNotCompiledAmbiguousArrayOp);
+          break;
+        }
+        case kAnalysisFailIrreducibleLoopAndStringInit: {
+          MaybeRecordStat(compilation_stats_.get(),
+                          MethodCompilationStat::kNotCompiledIrreducibleLoopAndStringInit);
+          break;
+        }
+        case kAnalysisSuccess:
+          UNREACHABLE();
+      }
+
+      pass_observer.SetGraphInBadState();
+      return false;
+    }
+  }
+
+
+  if (baseline) {
+    RunBaselineOptimizations(graph, codegen.get(), dex_compilation_unit, &pass_observer, handles);
+  } else {
+    RunOptimizations(graph, codegen.get(), dex_compilation_unit, &pass_observer, handles);
+  }
+
+  HGraphFilePrettyPrinter hgraph_printer(graph);
+  hgraph_printer.Write("ssa");
+
+  // Running the whole register allocation (to do extra optimizations on the HGraph)
+  RegisterAllocator::Strategy regalloc_strategy =
+    compiler_options.GetRegisterAllocationStrategy();
+  AllocateRegisters(graph,
+                    codegen.get(),
+                    &pass_observer,
+                    regalloc_strategy,
+                    compilation_stats_.get());
+
+  DLOG(INFO) << "Creating innerCU: "
+    << invType << ":" << pretty_method;
+  LLVM::LLVMCompilationUnit innerCU =
+    LLVM::LLVMCompilationUnit(
+        codegen.get(), &hgraph_printer,
+        compiler_options.GetAppDexFiles(),
+        pretty_method, false);
+  LLVM::HGraphToLLVM gen_inner(
+      graph, dex_compilation_unit, &innerCU);
+  gen_inner.ExpandIR();
+
+  DLOG(INFO) << "Creating outerCU: "
+    << invType << ":" << pretty_method;
+  LLVM::LLVMCompilationUnit outerCU =
+    LLVM::LLVMCompilationUnit(
+        codegen.get(), &hgraph_printer,
+        compiler_options.GetAppDexFiles(),
+        pretty_method, true);
+  LLVM::HGraphToLLVM gen_outer(
+      graph, dex_compilation_unit, &outerCU, &innerCU);
+  gen_outer.ExpandIR();
+
+  bool OK=innerCU.VerifyModule();
+  if(OK) {
+    innerCU.StoreBitcode();
+    OK=outerCU.VerifyModule();
+    if(OK) {
+      outerCU.StoreBitcode();
+    }
+  }
+  return OK;
+}
+#endif
+
 CompiledMethod* OptimizingCompiler::Compile(const dex::CodeItem* code_item,
                                             uint32_t access_flags,
                                             InvokeType invoke_type,
@@ -1049,13 +1306,49 @@ CompiledMethod* OptimizingCompiler::Compile(const dex::CodeItem* code_item,
                                             Handle<mirror::DexCache> dex_cache) const {
   const CompilerOptions& compiler_options = GetCompilerOptions();
   CompiledMethod* compiled_method = nullptr;
+#ifdef ART_MCR
+  MethodReference method_ref(&dex_file, method_idx);
+  std::string pretty_method = method_ref.PrettyMethod();
+  bool mcr_compile = compiler_options.IsLlvmMethodToCompile(method_ref);
+  bool showLog = McrDebug::InterpretNonhot();  
+
+  LOGDBG(INFO) << __func__ << ": " << pretty_method << ": comp: " << mcr_compile;
+#ifdef ART_MCR_COMPILE_OS_METHODS
+  const bool mcr_os_comp = OsCompilation::IsCompileMethod(method_ref);
+  mcr_compile |= mcr_os_comp;
+#endif
+  if(mcr_compile) {
+    D2LOG(INFO) << "artcc::Compile:BOTH: " << pretty_method 
+      << ":(llvm:" << mcr_compile << ")";
+  } else {
+    if(compiler_options.IsCompilingForLlvm()) {
+      mcr::McrCC::compiled_optimizing_++;
+    }
+  }
+#endif
+
   Runtime* runtime = Runtime::Current();
   DCHECK(runtime->IsAotCompiler());
-  const VerifiedMethod* verified_method = compiler_options.GetVerifiedMethod(&dex_file, method_idx);
+  const VerifiedMethod* verified_method = 
+#ifdef ART_MCR
+    mcr_os_comp? nullptr:
+#endif
+    compiler_options.GetVerifiedMethod(&dex_file, method_idx);
   DCHECK(!verified_method->HasRuntimeThrow());
-  if (compiler_options.IsMethodVerifiedWithoutFailures(method_idx, class_def_idx, dex_file) ||
+
+  if (
+#ifdef ART_MCR_COMPILE_OS_METHODS
+      // these verifications fail when we try to
+      // selectively compile some OS methods
+      mcr_os_comp || (
+#endif
+  (compiler_options.IsMethodVerifiedWithoutFailures(method_idx, class_def_idx, dex_file) ||
       verifier::CanCompilerHandleVerificationFailure(
-          verified_method->GetEncounteredVerificationFailures())) {
+          verified_method->GetEncounteredVerificationFailures()))
+#ifdef ART_MCR_COMPILE_OS_METHODS
+      )
+#endif
+      ) {
     ArenaAllocator allocator(runtime->GetArenaPool());
     ArenaStack arena_stack(runtime->GetArenaPool());
     CodeVectorAllocator code_allocator(&allocator);
@@ -1098,6 +1391,34 @@ CompiledMethod* OptimizingCompiler::Compile(const dex::CodeItem* code_item,
         }
       }
       if (codegen == nullptr) {
+#ifdef ART_MCR
+        bool generated_code_llvm = false;
+        if (mcr_compile) {
+          if(GetCompilerOptions().GenerateLLVM_IR()) {
+            generated_code_llvm = CompileToLLVM(
+                &allocator,
+                &arena_stack,
+                &code_allocator,
+                dex_compilation_unit,
+                method,
+                compiler_options.IsBaseline(),
+                /* osr= */ false,
+                &handles);
+            if(generated_code_llvm) {
+              mcr::Analyser::AddToLlvmCompiled(method_ref.PrettyMethod());
+            }
+          }
+          if(mcr::Match::IsInDemoApp(pretty_method)) {
+#ifdef CRDEBUG2
+            if(showLog) {
+              DLOG(WARNING) << "Optimizing::Compile: " << pretty_method
+                << ":(llvm:" << mcr_compile << ")";
+            }
+#endif
+          }
+        }
+
+#endif
         codegen.reset(
             TryCompile(&allocator,
                        &arena_stack,
@@ -1106,7 +1427,19 @@ CompiledMethod* OptimizingCompiler::Compile(const dex::CodeItem* code_item,
                        method,
                        compiler_options.IsBaseline(),
                        /* osr= */ false,
-                       &handles));
+                       &handles
+#ifdef ART_MCR
+                      , generated_code_llvm
+#endif
+                       ));
+#ifdef ART_MCR
+        if (mcr_compile && codegen.get() != nullptr) {
+          if(GetCompilerOptions().GenerateOatAux()) {
+            // Generate oat aux w/o having compiled to C or LLVM
+            mcr::OatAux::AddCompiledMethod(method_ref);
+          }
+        }
+#endif
       }
     }
     if (codegen.get() != nullptr) {
@@ -1124,7 +1457,7 @@ CompiledMethod* OptimizingCompiler::Compile(const dex::CodeItem* code_item,
         if (total_allocated > kArenaAllocatorMemoryReportThreshold) {
           MemStats mem_stats(allocator.GetMemStats());
           MemStats peak_stats(arena_stack.GetPeakStats());
-          LOG(INFO) << "Used " << total_allocated << " bytes of arena memory for compiling "
+          DLOG(INFO) << "Used " << total_allocated << " bytes of arena memory for compiling "
                     << dex_file.PrettyMethod(method_idx)
                     << "\n" << Dumpable<MemStats>(mem_stats)
                     << "\n" << Dumpable<MemStats>(peak_stats);
@@ -1153,6 +1486,16 @@ CompiledMethod* OptimizingCompiler::Compile(const dex::CodeItem* code_item,
     DCHECK((compiled_method != nullptr) || !shouldCompile) << "Didn't compile " << method_name;
   }
 
+#ifdef ART_MCR_COMPILE_OS_METHODS
+      if(mcr_os_comp && compiled_method == nullptr) {
+        std::stringstream ss;
+        ss << "FAILED: OS Compilation: "
+          << dex_file.PrettyMethod(method_idx);
+        DLOG(ERROR) << ss.str();
+        LLVM::LlvmCompiler::LogError(ss.str());
+        return nullptr;
+      }
+#endif
   return compiled_method;
 }
 

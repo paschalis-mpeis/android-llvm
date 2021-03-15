@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,7 +46,59 @@
 #include "runtime-inl.h"
 #include "thread-current-inl.h"
 
+#include "mcr_rt/mcr_rt.h"
+#ifdef ART_MCR_TARGET_RT
+#include "entrypoints/runtime_asm_entrypoints.h"
+#include "mcr_rt/oat_aux.h"
+#include "mcr_rt/opt_interface.h"
+#endif
+
 namespace art {
+
+#ifdef ART_MCR_TARGET_RT
+inline bool ArtMethod::HasOverridenQuickEntrypoint() {
+  return !this->IsNative() && GetEntryPointFromJni() != nullptr
+      && GetEntryPointFromQuickCompiledCode() != nullptr;
+}
+
+inline bool ArtMethod::IsIchfFAST() {
+  return HasOverridenQuickEntrypoint();
+}
+
+inline void ArtMethod::SetQuickToLlvm(
+    const void* quick_code, const void* llvm_code) {
+  if(quick_code == nullptr) {
+    quick_code = GetEntryPointFromQuickCompiledCode();
+  }
+
+  SetEntryPointFromJni(quick_code);
+  SetEntryPointFromQuickCompiledCode(llvm_code);
+}
+
+/**
+ * @brief Stores the quick entrypoint to the jni code (as a hack),
+ * and sets the quick entrypoint to the interpreter!
+ *
+ * @param quick_code
+ */
+inline void ArtMethod::SetQuickToInterpreter(const void* quick_code) {
+  if(quick_code == nullptr) {
+    quick_code = GetEntryPointFromQuickCompiledCode();
+  }
+
+  SetEntryPointFromJni(quick_code);
+  SetEntryPointFromQuickCompiledCode(GetQuickToInterpreterBridge());
+}
+
+/**
+ * @brief Gets the quick entrypoint from JNI, and sets it to quick.
+ *        Then resets jni entrypoint to null.
+ */
+inline void ArtMethod::ResetQuickEntrypoint() {
+  SetEntryPointFromQuickCompiledCode(GetEntryPointFromJni());
+  SetEntryPointFromJni(nullptr);
+}
+#endif
 
 template <ReadBarrierOption kReadBarrierOption>
 inline ObjPtr<mirror::Class> ArtMethod::GetDeclaringClassUnchecked() {

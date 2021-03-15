@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +15,8 @@
  * limitations under the License.
  */
 
+#include "mcr_rt/mcr_rt.h"
+
 #include "callee_save_frame.h"
 #include "common_throws.h"
 #include "mirror/object-inl.h"
@@ -24,6 +27,7 @@ extern "C" int artLockObjectFromCode(mirror::Object* obj, Thread* self)
     NO_THREAD_SAFETY_ANALYSIS
     REQUIRES(!Roles::uninterruptible_)
     REQUIRES_SHARED(Locks::mutator_lock_) /* EXCLUSIVE_LOCK_FUNCTION(Monitor::monitor_lock_) */ {
+  LLVM_FRAME_FIXUP(self);
   ScopedQuickEntrypointChecks sqec(self);
   if (UNLIKELY(obj == nullptr)) {
     ThrowNullPointerException("Null reference used for synchronization (monitor-enter)");

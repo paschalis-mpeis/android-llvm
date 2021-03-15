@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +16,8 @@
  */
 
 #include "thread.h"
+
+#include "mcr_rt/mcr_rt.h"
 
 #include <limits.h>  // for INT_MAX
 #include <pthread.h>
@@ -116,6 +119,9 @@
 #define SYS_futex __NR_futex
 #endif
 #endif  // ART_USE_FUTEXES
+
+#include "mcr_rt/art_impl.h"
+#include "mcr_rt/macros.h"
 
 namespace art {
 
@@ -973,7 +979,7 @@ Thread* Thread::Attach(const char* thread_name, bool as_daemon, PeerAction peer_
     ScopedTrace trace2("Thread birth");
     MutexLock mu(nullptr, *Locks::runtime_shutdown_lock_);
     if (runtime->IsShuttingDownLocked()) {
-      LOG(WARNING) << "Thread attaching while runtime is shutting down: " <<
+      LOGVV(WARNING) << "Thread attaching while runtime is shutting down: " <<
           ((thread_name != nullptr) ? thread_name : "(Unnamed)");
       return nullptr;
     } else {
@@ -1533,12 +1539,41 @@ void Thread::ClearSuspendBarrier(AtomicInteger* target) {
 }
 
 void Thread::RunCheckpointFunction() {
+  LOGICHF2(ERROR) << __func__;
+
+#if defined(ART_MCR_TARGET_RT) && defined(CRDEBUG2)
+  if(_IN_ICHF()) {
+
+    Locks::mutator_lock_->SharedLock(this);
+    D2LOG(ERROR) << __func__
+      <<" "<< (LLVM_ENABLED()?"LlvmEnabled":"")
+      <<" "<< (IN_LLVM()?"inLLVM":"")
+      <<" "<< (IN_QUICK()?"inQUICK":"")
+      <<" "<< (IN_LLVM_DIRECTLY()?"llvmDIRECT":"")
+      <<" "<< (LLVM_CALLED_QUICK()?"llvmCalledQuick":"")
+      <<" "<< (HasManagedStack()?" ManagedStack":"")
+      <<" "<< 
+      (tlsPtr_.managed_stack.HasTopQuickFrame()?"topQuick":"")
+      <<" "<< 
+      (tlsPtr_.managed_stack.HasTopShadowFrame()?"topShadow":"")
+      <<" method: "<< 
+      (tlsPtr_.managed_stack.HasTopShadowFrame()?
+       tlsPtr_.managed_stack.GetTopShadowFrame()->GetMethod()
+       ->PrettyMethod()
+       :"");
+    Locks::mutator_lock_->SharedUnlock(this);
+
+    LLVM_FRAME_FIXUP(this);
+  }
+#endif
+
   // Grab the suspend_count lock, get the next checkpoint and update all the checkpoint fields. If
   // there are no more checkpoints we will also clear the kCheckpointRequest flag.
   Closure* checkpoint;
   {
     MutexLock mu(this, *Locks::thread_suspend_count_lock_);
     checkpoint = tlsPtr_.checkpoint_function;
+
     if (!checkpoint_overflow_.empty()) {
       // Overflow list not empty, copy the first one out and continue.
       tlsPtr_.checkpoint_function = checkpoint_overflow_.front();
@@ -1549,6 +1584,23 @@ void Thread::RunCheckpointFunction() {
       AtomicClearFlag(kCheckpointRequest);
     }
   }
+
+#ifdef ART_MCR_TARGET_RT
+      if(mcr::McrRT::IsLlvmEnabled()) {
+        // There was a version we had issues with that (maybe in some capture/replay cases)
+        // This should be OK now as we populate ShadowFrames.
+        //
+        // We don't fully populated the appropriate stack frames, which might cause issues.
+        // We won't be testing cases where suspend checks are involved because they incur slowdowns
+        // and skew any measurements anyway.
+        DLOG(WARNING) << "Checkpoint SuspendCheck for LLVM execution";
+        // return; // used to simply return
+        if(checkpoint == nullptr) {
+          DLOG(ERROR) << "Will die: checkpoint flag set without pending checkpoint";
+        }
+      }
+#endif
+
   // Outside the lock, run the checkpoint function.
   ScopedTrace trace("Run checkpoint function");
   CHECK(checkpoint != nullptr) << "Checkpoint flag set without pending checkpoint";
@@ -2204,6 +2256,10 @@ void Thread::ThreadExitCallback(void* arg) {
   } else {
     LOG(FATAL) << "Native thread exited without calling DetachCurrentThread: " << *self;
   }
+}
+
+void* Thread::GetRosAllocRun(size_t index) const {
+  return tlsPtr_.rosalloc_runs[index];
 }
 
 void Thread::Startup() {
@@ -3521,12 +3577,49 @@ void Thread::DumpThreadOffset(std::ostream& os, uint32_t offset) {
 
   QUICK_ENTRY_POINT_INFO(pJniMethodFastStart)
   QUICK_ENTRY_POINT_INFO(pJniMethodFastEnd)
+
+  // LLVM entrypoints
+  QUICK_ENTRY_POINT_INFO(pLLVMReadBarrierSlow);
+  // type(class) resolution
+  QUICK_ENTRY_POINT_INFO(pLLVMResolveType)
+  QUICK_ENTRY_POINT_INFO(pLLVMResolveTypeAndVerifyAccess)
+  QUICK_ENTRY_POINT_INFO(pLLVMResolveTypeInternal)
+
+  // method resolution
+  QUICK_ENTRY_POINT_INFO(pLLVMResolveInternalMethod)
+  QUICK_ENTRY_POINT_INFO(pLLVMResolveExternalMethod)
+  QUICK_ENTRY_POINT_INFO(pLLVMResolveVirtualMethod)
+  QUICK_ENTRY_POINT_INFO(pLLVMResolveInterfaceMethod)
+
+  QUICK_ENTRY_POINT_INFO(pLLVMResolveString)
+
+  QUICK_ENTRY_POINT_INFO(pLLVMTestSuspend)
+
+  QUICK_ENTRY_POINT_INFO(pLLVMJValueSetL)
+  QUICK_ENTRY_POINT_INFO(pLLVMGetObjStatic)
+  QUICK_ENTRY_POINT_INFO(pLLVMGetObjInstance)
+
+  QUICK_ENTRY_POINT_INFO(pLLVMInvokeQuickWrapper)
+  QUICK_ENTRY_POINT_INFO(pLLVMInvokeQuickStaticWrapper)
+
+  QUICK_ENTRY_POINT_INFO(pLLVMInvokeQuickDirect)
+  QUICK_ENTRY_POINT_INFO(pLLVMInvokeQuickStaticDirect)
+
+  QUICK_ENTRY_POINT_INFO(pLLVMPushQuickFrame)
+  QUICK_ENTRY_POINT_INFO(pLLVMPopQuickFrame)
+  QUICK_ENTRY_POINT_INFO(pLLVMClearTopOfStack)
+
+  QUICK_ENTRY_POINT_INFO(pLLVMVerifyArtMethod)
+  QUICK_ENTRY_POINT_INFO(pLLVMVerifyArtClass)
+  QUICK_ENTRY_POINT_INFO(pLLVMVerifyArtObject)
+  QUICK_ENTRY_POINT_INFO(pLLVMVerifyStackFrameCurrent)
 #undef QUICK_ENTRY_POINT_INFO
 
   os << offset;
 }
 
 void Thread::QuickDeliverException() {
+  LOGLLVM(ERROR) << __func__;
   // Get exception from thread.
   ObjPtr<mirror::Throwable> exception = GetException();
   CHECK(exception != nullptr);
@@ -3580,6 +3673,7 @@ void Thread::QuickDeliverException() {
     }
     force_deopt = force_frame_pop || force_retry_instr;
   }
+
   if (Dbg::IsForcedInterpreterNeededForException(this) || force_deopt || IsForceInterpreter()) {
     NthCallerVisitor visitor(this, 0, false);
     visitor.WalkStack();
@@ -3624,6 +3718,7 @@ void Thread::QuickDeliverException() {
     // Check the to-space invariant on the re-installed exception (if applicable).
     ReadBarrier::MaybeAssertToSpaceInvariant(GetException());
   }
+
   exception_handler.DoLongJump();
 }
 
@@ -3645,6 +3740,26 @@ ArtMethod* Thread::GetCurrentMethod(uint32_t* dex_pc_out,
   //       so we don't abort in a special situation (thinlocked monitor) when dumping the Java
   //       stack.
   ArtMethod* method = nullptr;
+
+#ifdef ART_MCR_TARGET
+  // INFO LLVM has setup a quick frame, that will be eventually
+  // populated/aligned with the native stack, and is gonna be a tagged one
+  // for JNI. However, until we reach the LLVM code that frame is invalid,
+  // so we use a workaround to pass the JNI Method name.
+  // (There shouldn't be any problems as LLVm calls directly JNI.
+  // If JNI resolves a class method and calls quick code we might also
+  // don't have any issues thas this will be done from the JNI environment
+  // where the stackframe will be valid).
+  if(IN_LLVM()) {
+    art::dbg_log_=true;
+    if(LLVM::jni_method_ != nullptr) {
+      DLOG(ERROR) << __func__ << ": jni method: "
+        << LLVM::jni_method_->PrettyMethod();
+      return LLVM::jni_method_;
+    }
+  }
+#endif
+
   uint32_t dex_pc = dex::kDexNoIndex;
   StackVisitor::WalkStack(
       [&](const StackVisitor* visitor) REQUIRES_SHARED(Locks::mutator_lock_) {

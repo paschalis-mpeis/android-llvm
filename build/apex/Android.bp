@@ -7,7 +7,6 @@ art_runtime_base_binaries_both = [
 ]
 // - Base requirements (binaries for which a 32-bit version is preferred).
 art_runtime_base_binaries_prefer32 = [
-    "dex2oat",
     "dexoptanalyzer",
     "profman",
 ]
@@ -65,6 +64,7 @@ art_runtime_debug_binaries_prefer32 = [
     "profmand",
 ]
 art_runtime_debug_binaries_prefer32_device = [
+    "dex2oat",
     "dex2oatd",
 ]
 art_runtime_debug_binaries_both_host = [

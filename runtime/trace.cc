@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +50,10 @@
 #include "stack.h"
 #include "thread.h"
 #include "thread_list.h"
+
+#ifdef ART_MCR_CUSTOM_DMTRACETOOL
+#include "mcr_rt/mcr_rt.h"
+#endif
 
 namespace art {
 
@@ -648,6 +653,9 @@ void Trace::FinishTracing() {
   os << StringPrintf("clock-call-overhead-nsec=%d\n", clock_overhead_ns_);
   os << StringPrintf("vm=art\n");
   os << StringPrintf("pid=%d\n", getpid());
+#ifdef ART_MCR_CUSTOM_DMTRACETOOL
+  os << StringPrintf("pkg=%s\n", mcr::McrRT::GetPackage());
+#endif
   if ((flags_ & kTraceCountAllocs) != 0) {
     os << StringPrintf("alloc-count=%d\n", Runtime::Current()->GetStat(KIND_ALLOCATED_OBJECTS));
     os << StringPrintf("alloc-size=%d\n", Runtime::Current()->GetStat(KIND_ALLOCATED_BYTES));
@@ -831,9 +839,53 @@ bool Trace::RegisterThread(Thread* thread) {
 
 std::string Trace::GetMethodLine(ArtMethod* method) {
   method = method->GetInterfaceMethodIfProxy(kRuntimePointerSize);
+#ifdef ART_MCR_CUSTOM_DMTRACETOOL
+  std::string code_type;
+  std::string method_name = method->PrettyMethod();
+  std::string signature = "("; // INFO so parsing of original dmtracetool works
+  signature+=(method->IsRuntimeMethod()?"RT:":"");
+
+  if(method->IsNative()) {
+    if(method->IsFastNative()) {
+      signature+=(method->IsFastNative()?"FASTJNI:":"");
+    } else {
+      signature+=(method->IsNative()?"JNI:":"");
+    }
+    code_type = "JNI ";
+  } else {
+    code_type = "Optimizing ";
+  }
+
+  if(method->GetCodeItem() != nullptr) {
+  CodeItemDataAccessor accessor(method->DexInstructionData());
+    if (accessor.TriesSize() > 0) {
+      signature+="TRYCATCH:";
+      code_type = "Quick ";
+    }
+    if(method->IsAbstract()) {
+      signature+="ABSTRACT:";
+    }
+    if(!method->IsDirect()) {
+      signature+="NOT_DIRECT:";
+    }
+    signature+="CODEBYTES" + std::to_string(
+        accessor.InsnsSizeInCodeUnits()*2);
+  } else {
+    signature+="CODEBYTESnull";
+  }
+
+  std::string result = 
+    StringPrintf("%p\t%s\t%s\t%s\t%s\n",
+        reinterpret_cast<void*>((EncodeTraceMethod(method) << TraceActionBits)),
+        code_type.c_str(), method_name.c_str(), signature.c_str(),
+
+        method->GetDeclaringClassSourceFile());
+  return result;
+#else
   return StringPrintf("%#x\t%s\t%s\t%s\t%s\n", (EncodeTraceMethod(method) << TraceActionBits),
       PrettyDescriptor(method->GetDeclaringClassDescriptor()).c_str(), method->GetName(),
       method->GetSignature().ToString().c_str(), method->GetDeclaringClassSourceFile());
+#endif
 }
 
 void Trace::WriteToBuf(const uint8_t* src, size_t src_size) {

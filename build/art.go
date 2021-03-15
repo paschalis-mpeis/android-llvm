@@ -1,3 +1,4 @@
+// Copyright (C) 2021 Paschalis Mpeis
 // Copyright (C) 2016 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +24,10 @@ import (
 	"sync"
 
 	"github.com/google/blueprint/proptools"
+
+    // mcr dependencies
+    "os"
+    "strings"
 )
 
 var supportedArches = []string{"arm", "arm64", "mips", "mips64", "x86", "x86_64"}
@@ -293,6 +298,7 @@ func init() {
 	android.RegisterModuleType("libart_static_cc_defaults", libartStaticDefaultsFactory)
 	android.RegisterModuleType("art_global_defaults", artGlobalDefaultsFactory)
 	android.RegisterModuleType("art_debug_defaults", artDebugDefaultsFactory)
+	android.RegisterModuleType("mcr_global_defaults", mcrGlobalDefaultsFactory)
 
 	// TODO: This makes the module disable itself for host if HOST_PREFER_32_BIT is
 	// set. We need this because the multilib types of binaries listed in the apex
@@ -412,6 +418,81 @@ func artTestLibrary() android.Module {
 	android.AddLoadHook(module, prefer32Bit)
 	android.AddInstallHook(module, testInstall)
 	return module
+}
+
+func mcrGlobalDefaultsFactory() android.Module {
+	module := artDefaultsFactory()
+	android.AddLoadHook(module, mcrDefaults)
+
+	return module
+}
+
+func mcrDefaults(ctx android.LoadHookContext) {
+    
+	type props struct {
+		Target struct {
+			Android struct {
+				Cflags []string
+			}
+		}
+		Cflags   []string
+	}
+
+	p := &props{}
+	p.Target.Android.Cflags = mcrFlags(ctx)
+
+	ctx.AppendProperties(p)
+}
+
+func mcrFlags(ctx android.BaseContext) []string {
+	var cflags []string
+
+    // Get the target device
+    var targetDevice=envDefault(ctx, "TARGET_PRODUCT", "")
+    var targetCpu=envDefault(ctx, "TARGET_CPU_VARIANT", "")
+    log.Print("TARGET CPU: '" +targetCpu+ "'") 
+    t:= strings.Split(targetDevice, "_")
+    if  (len(t) == 2) {
+        targetDevice=t[1]
+    } else {
+        log.Print("Unknown device: " +targetDevice + " Is TARGET_PRODUCT env set?") 
+        os.Exit(1)
+    }
+
+    log.Print("DEVICE: '" +targetDevice + "'") 
+    cflags=append(cflags, "-DTARGET_DEVICE=" + targetDevice);
+    cflags=append(cflags, "-DTARGET_CPU_VARIANT=\"" + targetCpu + "\"");
+
+    log.Print("MCR FLAGS: ", cflags)
+
+	return cflags
+}
+
+func appendCrDebugLevels(lvl int) []string {
+    var flags []string;
+    switch (lvl) {
+    case 5:
+        flags= append(flags, "-DCRDEBUG5")
+        fallthrough
+    case 4:
+        flags= append(flags, "-DCRDEBUG4")
+        fallthrough
+    case 3:
+        flags= append(flags, "-DCRDEBUG3")
+        fallthrough
+    case 2:
+        flags= append(flags, "-DCRDEBUG2")
+        flags= append(flags, "-g")
+        flags= append(flags, "-ggdb3")
+        fallthrough
+    case 1:
+        flags= append(flags, "-DCRDEBUG1")
+        fallthrough
+    case 0:
+        flags= append(flags, "-DCRDEBUG")
+    }
+
+    return flags
 }
 
 func envDefault(ctx android.BaseContext, key string, defaultValue string) string {

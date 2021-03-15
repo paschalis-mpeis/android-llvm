@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,12 +20,21 @@
 
 #include "managed_stack.h"
 
+#if defined(ART_MCR_TARGET) && defined(CRDEBUG4)
+#include "mcr_rt/mcr_dbg.h"
+#endif
+
 #include "interpreter/shadow_frame.h"
 
 namespace art {
 
 inline ShadowFrame* ManagedStack::PushShadowFrame(ShadowFrame* new_top_frame) {
   DCHECK(!HasTopQuickFrame());
+#if defined(ART_MCR_TARGET) && defined(CRDEBUG4)
+  if(HasTopQuickFrame()) {
+    if(__IsInLiveLLVM()) LOG(ERROR) << __func__ << ": Had quick frame ERROR";
+  }
+#endif
   ShadowFrame* old_frame = top_shadow_frame_;
   top_shadow_frame_ = new_top_frame;
   new_top_frame->SetLink(old_frame);
@@ -33,6 +43,11 @@ inline ShadowFrame* ManagedStack::PushShadowFrame(ShadowFrame* new_top_frame) {
 
 inline ShadowFrame* ManagedStack::PopShadowFrame() {
   DCHECK(!HasTopQuickFrame());
+#if defined(ART_MCR_TARGET) && defined(CRDEBUG4)
+  if(HasTopQuickFrame()) {
+    if(__IsInLiveLLVM()) LOG(ERROR) << __func__ << ": Had quick frame ERROR";
+  }
+#endif
   CHECK(top_shadow_frame_ != nullptr);
   ShadowFrame* frame = top_shadow_frame_;
   top_shadow_frame_ = frame->GetLink();

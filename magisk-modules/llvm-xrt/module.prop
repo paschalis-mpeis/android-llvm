@@ -1,0 +1,6 @@
+id=llvm-rt-xtr
+name=LLVM-RT-XTR
+version=0.1
+versionCode=1
+author=Paschalis Mpeis
+description=LLVM Runtime modifications (frequent updates).

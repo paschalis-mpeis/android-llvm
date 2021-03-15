@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -402,6 +403,37 @@ size_t ThreadList::RunCheckpoint(Closure* checkpoint_function, Closure* callback
 
   return count;
 }
+
+
+#ifdef ART_MCR
+// Request that a checkpoint function be run on all active (non-suspended)
+// threads.  Returns the number of successful requests.
+size_t ThreadList::RunCheckpointOnRunnableThreads(Closure* checkpoint_function) {
+  Thread* self = Thread::Current();
+  Locks::mutator_lock_->AssertNotExclusiveHeld(self);
+  Locks::thread_list_lock_->AssertNotHeld(self);
+  Locks::thread_suspend_count_lock_->AssertNotHeld(self);
+  CHECK_NE(self->GetState(), kRunnable);
+
+  size_t count = 0;
+  {
+    // Call a checkpoint function for each non-suspended thread.
+    MutexLock mu(self, *Locks::thread_list_lock_);
+    MutexLock mu2(self, *Locks::thread_suspend_count_lock_);
+    for (const auto& thread : list_) {
+      if (thread != self) {
+        if (thread->RequestCheckpoint(checkpoint_function)) {
+          // This thread will run its checkpoint some time in the near future.
+          count++;
+        }
+      }
+    }
+  }
+
+  // Return the number of threads that will run the checkpoint function.
+  return count;
+}
+#endif
 
 void ThreadList::RunEmptyCheckpoint() {
   Thread* self = Thread::Current();

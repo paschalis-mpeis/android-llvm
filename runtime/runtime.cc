@@ -2340,7 +2340,16 @@ void Runtime::RegisterAppInfo(const std::vector<std::string>& code_paths,
     return;
   }
 
+#ifdef ART_MCR_TARGET
+  if (mcr::McrRT::IsLlvmEnabled()) {
+    jit_options_->SetUseJitCompilation(false);
+  } else {
+#endif
   jit_->StartProfileSaver(profile_output_filename, code_paths);
+#ifdef ART_MCR_TARGET
+  }
+#endif
+
 }
 
 // Transaction support.

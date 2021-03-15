@@ -1,0 +1,8 @@
+# Adjust lmkd (lowmemorykiller)
+ro.lmk.use_minfree_levels=false
+
+# disable killing at all levels
+ro.lmk.low=1001
+ro.lmk.medium=1001
+ro.lmk.critical=1001
+ro.lmk.kill_heaviest_task=false

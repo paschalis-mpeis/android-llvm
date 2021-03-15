@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -778,6 +779,21 @@ inline INT_TYPE art_float_to_integral(FLOAT_TYPE f) {
     return (f != f) ? 0 : kMinInt;  // f != f implies NaN
   }
 }
+
+#ifdef ART_MCR
+inline ObjPtr<mirror::String> ResolveStringFromCode(
+    ArtMethod* referrer, dex::StringIndex string_idx) {
+  Thread::PoisonObjectPointersIfDebug();
+  ObjPtr<mirror::String> string = referrer->GetDexCache()->GetResolvedString(string_idx);
+  if (UNLIKELY(string == nullptr)) {
+    StackHandleScope<1> hs(Thread::Current());
+    Handle<mirror::DexCache> dex_cache(hs.NewHandle(referrer->GetDexCache()));
+    ClassLinker* class_linker = Runtime::Current()->GetClassLinker();
+    string = class_linker->ResolveString(string_idx, dex_cache);
+  }
+  return string;
+}
+#endif
 
 }  // namespace art
 

@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2017 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,6 +41,8 @@
 #include "scoped_thread_state_change-inl.h"
 #include "thread.h"
 #include "well_known_classes.h"
+
+#include "mcr_rt/mcr_rt.h"
 
 namespace art {
 
@@ -317,7 +320,7 @@ bool ClassLoaderContext::Parse(const std::string& spec, bool parse_checksums) {
   // Stop early if we detect the special shared library, which may be passed as the classpath
   // for dex2oat when we want to skip the shared libraries check.
   if (spec == OatFile::kSpecialSharedLibrary) {
-    LOG(INFO) << "The ClassLoaderContext is a special shared library.";
+    LOGVV(INFO) << "The ClassLoaderContext is a special shared library.";
     special_shared_library_ = true;
     return true;
   }
@@ -476,7 +479,7 @@ bool ClassLoaderContext::OpenDexFiles(InstructionSet isa,
                                           std::make_move_iterator(oat_dex_files.begin()),
                                           std::make_move_iterator(oat_dex_files.end()));
           } else {
-            LOG(WARNING) << "Could not open dex files from location: " << location;
+            LOGVV(WARNING) << "Could not open dex files from location: " << location;
             dex_files_open_result_ = false;
           }
         }
@@ -1170,14 +1173,14 @@ bool ClassLoaderContext::ClassLoaderInfoMatch(
     bool verify_names,
     bool verify_checksums) const {
   if (info.type != expected_info.type) {
-    LOG(WARNING) << "ClassLoaderContext type mismatch"
+    LOGVV(WARNING) << "ClassLoaderContext type mismatch"
         << ". expected=" << GetClassLoaderTypeName(expected_info.type)
         << ", found=" << GetClassLoaderTypeName(info.type)
         << " (" << context_spec << " | " << EncodeContextForOatFile("") << ")";
     return false;
   }
   if (info.classpath.size() != expected_info.classpath.size()) {
-    LOG(WARNING) << "ClassLoaderContext classpath size mismatch"
+    LOGVV(WARNING) << "ClassLoaderContext classpath size mismatch"
           << ". expected=" << expected_info.classpath.size()
           << ", found=" << info.classpath.size()
           << " (" << context_spec << " | " << EncodeContextForOatFile("") << ")";
@@ -1250,7 +1253,7 @@ bool ClassLoaderContext::ClassLoaderInfoMatch(
   }
 
   if (info.shared_libraries.size() != expected_info.shared_libraries.size()) {
-    LOG(WARNING) << "ClassLoaderContext shared library size mismatch. "
+    LOGVV(WARNING) << "ClassLoaderContext shared library size mismatch. "
           << "Expected=" << expected_info.shared_libraries.size()
           << ", found=" << info.shared_libraries.size()
           << " (" << context_spec << " | " << EncodeContextForOatFile("") << ")";

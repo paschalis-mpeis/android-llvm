@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2017 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,6 +53,39 @@ struct CmdlineType<InstructionSet> : CmdlineTypeParser<InstructionSet> {
 using M = Dex2oatArgumentMap;
 using Parser = CmdlineParser<Dex2oatArgumentMap, Dex2oatArgumentMap::Key>;
 using Builder = Parser::Builder;
+
+#ifdef ART_MCR_TARGET
+static void AddMcrMappins(Builder& builder) {
+  builder
+    // booleans
+    .Define("--print-methods")
+    .IntoKey(M::mcrPrintMethods)
+    .Define("--emit-llvm")
+    .IntoKey(M::mcrEmitLLVM)
+    .Define("--emit-asm")
+    .IntoKey(M::mcrEmitASM)
+    .Define("--skip-oat")
+    .IntoKey(M::mcrSkipOat)
+    .Define("--llvm-gen-invoke-histogram")
+    .IntoKey(M::mcrLLVMInvokeHistogram)   
+    // strings
+    .Define("--comp-type=_")
+    .WithType<std::string>()
+    .IntoKey(M::llvmCompilationType)
+    .Define("--comp-baseline=_")
+    .WithType<std::string>()
+    .IntoKey(M::llvmCompilerBaseline)
+    .Define("--pkg=_")
+    .WithType<std::string>()
+    .IntoKey(M::mcrAppPackage)
+    .Define("--extra-flags=_")
+    .WithType<std::string>()
+    .IntoKey(M::mcrExtraFlags)
+    .Define("--userid=_")
+    .WithType<std::string>()
+    .IntoKey(M::mcrUserId);
+}
+#endif
 
 static void AddInputMappings(Builder& builder) {
   builder.
@@ -195,6 +229,9 @@ static Parser CreateArgumentParser() {
   AddSwapMappings(*parser_builder);
   AddCompilerMappings(*parser_builder);
   AddTargetMappings(*parser_builder);
+#ifdef ART_MCR_TARGET
+  AddMcrMappins(*parser_builder);
+#endif
 
   parser_builder->
       Define({"--watch-dog", "--no-watch-dog"})

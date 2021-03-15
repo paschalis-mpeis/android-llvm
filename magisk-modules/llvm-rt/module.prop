@@ -1,0 +1,6 @@
+id=llvm-rt
+name=LLVM-RT
+version=0.1
+versionCode=1
+author=Paschalis Mpeis
+description=LLVM Runtime modifications (frequent updates).

@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +30,8 @@
 
 namespace art {
 
+union JValue;
+
 namespace mirror {
 class Array;
 class Class;
@@ -37,6 +40,8 @@ class Object;
 }  // namespace mirror
 
 class ArtMethod;
+class ManagedStack;
+class ShadowFrame;
 template<class MirrorType> class GcRoot;
 template<class MirrorType> class StackReference;
 class Thread;
@@ -99,6 +104,11 @@ extern "C" mirror::Object* artReadBarrierMark(mirror::Object* obj)
 // This is the read barrier slow path for instance and static fields
 // and reference type arrays.
 extern "C" mirror::Object* artReadBarrierSlow(mirror::Object* ref,
+                                              mirror::Object* obj,
+                                              uint32_t offset)
+    REQUIRES_SHARED(Locks::mutator_lock_) HOT_ATTR;
+
+extern "C" mirror::Object* artLLVMReadBarrierSlow(mirror::Object* ref,
                                               mirror::Object* obj,
                                               uint32_t offset)
     REQUIRES_SHARED(Locks::mutator_lock_) HOT_ATTR;

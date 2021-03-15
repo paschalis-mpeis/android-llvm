@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +47,11 @@
 #include "mirror/method_type.h"
 #include "offsets.h"
 #include "utils/intrusive_forward_list.h"
+
+#ifdef ART_MCR
+#include "mcr_rt/mcr_rt.h"
+#include "mcr_rt/invoke_info.h"
+#endif
 
 namespace art {
 
@@ -307,6 +313,13 @@ class ReferenceTypeInfo : ValueObject {
 };
 
 std::ostream& operator<<(std::ostream& os, const ReferenceTypeInfo& rhs);
+
+enum McrCompilation {
+  TrueLLVM,        // mcr created hgraph to use for llvm
+  TrueLLVMbug,     // same as above, but has bugs in some stuff..
+  TrueOptimizing,  // mcrcreated hgraph to use for quick (default behaviour)
+  NONE
+};
 
 // Control-flow graph of a method. Contains a list of basic blocks.
 class HGraph : public ArenaObject<kArenaAllocGraph> {
@@ -623,6 +636,29 @@ class HGraph : public ArenaObject<kArenaAllocGraph> {
   void SetNumberOfCHAGuards(uint32_t num) { number_of_cha_guards_ = num; }
   void IncrementNumberOfCHAGuards() { number_of_cha_guards_++; }
 
+#ifdef ART_MCR
+  void SetMcrCompilation(McrCompilation c) {
+    mcr_compilation_ = c;
+  }
+  McrCompilation GetMcrCompilation() const {  return mcr_compilation_; }
+
+  bool IsCompiledLLVMAny() const { 
+    return IsCompiledLLVMok() || IsCompiledLLVMbug();
+  }
+
+  bool IsCompiledLLVMok() const { 
+    return (mcr_compilation_ == McrCompilation::TrueLLVM);
+  }
+
+  bool IsCompiledLLVMbug() const { 
+    return (mcr_compilation_ == McrCompilation::TrueLLVMbug);
+  }
+
+  bool IsCompiledOptimizing() const { 
+    return (mcr_compilation_ == McrCompilation::TrueOptimizing);
+  }
+#endif
+
  private:
   void RemoveInstructionsAsUsersFromDeadBlocks(const ArenaBitVector& visited) const;
   void RemoveDeadBlocks(const ArenaBitVector& visited);
@@ -777,6 +813,9 @@ class HGraph : public ArenaObject<kArenaAllocGraph> {
   friend class SsaBuilder;           // For caching constants.
   friend class SsaLivenessAnalysis;  // For the linear order.
   friend class HInliner;             // For the reverse post order.
+#ifdef ART_MCR
+  McrCompilation mcr_compilation_ = McrCompilation::NONE;
+#endif
   ART_FRIEND_TEST(GraphTest, IfSuccessorSimpleJoinBlock1);
   DISALLOW_COPY_AND_ASSIGN(HGraph);
 };
@@ -4307,11 +4346,65 @@ class HInvoke : public HVariableInputSizeInstruction {
   // inputs at the end of their list of inputs.
   uint32_t GetNumberOfArguments() const { return number_of_arguments_; }
 
+#ifdef ART_MCR
+  // set for each speculation in a loop in llvm/function_helper.cc
+  void SetSpeculation(mcr::InvokeInfo* spec_invoke_info) {
+    spec_invoke_info_ = spec_invoke_info;
+  }
+
+  void UnsetSpeculation() {
+    spec_invoke_info_ = nullptr;
+  }
+
+  bool HasSpeculation() const {
+    return spec_invoke_info_ != nullptr;
+  }
+
+  mcr::InvokeInfo* GetSpeculation() const {
+    return spec_invoke_info_;
+  }
+
+  uint32_t GetSpecDexMethodIndex() const { 
+    CHECK(HasSpeculation());
+    return spec_invoke_info_->GetSpecMethodIdx();
+  }
+
+  uint32_t GetDexMethodIndex() const { 
+    if(HasSpeculation()) {
+      uint32_t idx = GetSpecDexMethodIndex();
+      D3LOG(INFO) << __func__ << " Speculation: " << idx;
+      return idx;
+    }
+    return dex_method_index_; 
+  }
+
+  // the non speculative index provided by the optimizing backend
+  uint32_t GetOptimizingDexMethodIndex() const {
+    return dex_method_index_; 
+  }
+
+  bool IsSharpened() const REQUIRES_SHARED(Locks::mutator_lock_);
+
+  InvokeType GetSpecInvokeType() const {
+    return spec_invoke_info_->GetSpecInvokeType();
+  }
+
+  InvokeType GetInvokeType(bool desharpened_type=false) const;
+
+  InvokeType GetInvokeTypeInternal(bool desharpened_type=false) const;
+
+  // upstream method
+  InvokeType GetInvokeTypeDefault() const {
+    return GetPackedField<InvokeTypeField>();
+  }
+  
+#else
   uint32_t GetDexMethodIndex() const { return dex_method_index_; }
 
   InvokeType GetInvokeType() const {
     return GetPackedField<InvokeTypeField>();
   }
+#endif
 
   Intrinsics GetIntrinsic() const {
     return intrinsic_;
@@ -4402,6 +4495,11 @@ class HInvoke : public HVariableInputSizeInstruction {
 
   // A magic word holding optimizations for intrinsics. See intrinsics.h.
   uint32_t intrinsic_optimizations_;
+
+#ifdef ART_MCR
+  // these are used only by InvokeVirtual and InvokeInterface
+  mcr::InvokeInfo* spec_invoke_info_ = nullptr;
+#endif
 };
 
 class HInvokeUnresolved final : public HInvoke {
@@ -4684,7 +4782,11 @@ class HInvokeStaticOrDirect final : public HInvoke {
 
   // Is this instruction a call to a static method?
   bool IsStatic() const {
+#ifdef ART_MCR
+    return GetInvokeTypeDefault() == kStatic;
+#else
     return GetInvokeType() == kStatic;
+#endif
   }
 
   MethodReference GetTargetMethod() const {

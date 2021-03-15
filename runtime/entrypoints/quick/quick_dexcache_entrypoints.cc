@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#include "mcr_rt/mcr_rt.h"
 
 #include "art_method-inl.h"
 #include "base/callee_save_type.h"
@@ -30,12 +33,18 @@
 #include "oat_file.h"
 #include "runtime.h"
 
+#ifdef ART_MCR
+#include "jvalue-inl.h"
+#include "mcr_rt/art_impl-inl.h"
+#endif
+
 namespace art {
 
 static void StoreObjectInBss(ArtMethod* outer_method,
                              const OatFile* oat_file,
                              size_t bss_offset,
-                             ObjPtr<mirror::Object> object) REQUIRES_SHARED(Locks::mutator_lock_) {
+                             ObjPtr<mirror::Object> object,
+                             void** llvm_bss_slot = nullptr) REQUIRES_SHARED(Locks::mutator_lock_) {
   // Used for storing Class or String in .bss GC roots.
   static_assert(sizeof(GcRoot<mirror::Class>) == sizeof(GcRoot<mirror::Object>), "Size check.");
   static_assert(sizeof(GcRoot<mirror::String>) == sizeof(GcRoot<mirror::Object>), "Size check.");
@@ -47,6 +56,8 @@ static void StoreObjectInBss(ArtMethod* outer_method,
     // can JIT that bytecode and get here without the .bss being mmapped.
     return;
   }
+
+  LOGLLVM4(ERROR) << __func__ << ": from: " << outer_method->PrettyMethod();
   GcRoot<mirror::Object>* slot = reinterpret_cast<GcRoot<mirror::Object>*>(
       const_cast<uint8_t*>(oat_file->BssBegin() + bss_offset));
   DCHECK_GE(slot, oat_file->GetBssGcRoots().data());
@@ -72,11 +83,19 @@ static void StoreObjectInBss(ArtMethod* outer_method,
     // Each slot serves to store exactly one Class or String.
     DCHECK_EQ(object, slot->Read());
   }
+
+  if(llvm_bss_slot != nullptr) {
+    *llvm_bss_slot = reinterpret_cast<void*>(slot);
+    LOGLLVM3(WARNING) << __func__ << ": BSS: slot Obj: "
+      << std::hex << (void*)(*(void**)(*llvm_bss_slot))
+      << " (slot: " << *llvm_bss_slot << ")";
+  }
 }
 
 static inline void StoreTypeInBss(ArtMethod* outer_method,
                                   dex::TypeIndex type_idx,
-                                  ObjPtr<mirror::Class> resolved_type)
+                                  ObjPtr<mirror::Class> resolved_type,
+                                  void** llvm_bss_slot = nullptr)
     REQUIRES_SHARED(Locks::mutator_lock_) {
   const DexFile* dex_file = outer_method->GetDexFile();
   DCHECK(dex_file != nullptr);
@@ -87,14 +106,15 @@ static inline void StoreTypeInBss(ArtMethod* outer_method,
                                                             dex_file->NumTypeIds(),
                                                             sizeof(GcRoot<mirror::Class>));
     if (bss_offset != IndexBssMappingLookup::npos) {
-      StoreObjectInBss(outer_method, oat_dex_file->GetOatFile(), bss_offset, resolved_type);
+      StoreObjectInBss(outer_method, oat_dex_file->GetOatFile(), bss_offset, resolved_type, llvm_bss_slot);
     }
   }
 }
 
 static inline void StoreStringInBss(ArtMethod* outer_method,
                                     dex::StringIndex string_idx,
-                                    ObjPtr<mirror::String> resolved_string)
+                                    ObjPtr<mirror::String> resolved_string,
+                                    void** llvm_bss_slot = nullptr)
     REQUIRES_SHARED(Locks::mutator_lock_) {
   const DexFile* dex_file = outer_method->GetDexFile();
   DCHECK(dex_file != nullptr);
@@ -105,7 +125,7 @@ static inline void StoreStringInBss(ArtMethod* outer_method,
                                                             dex_file->NumStringIds(),
                                                             sizeof(GcRoot<mirror::Class>));
     if (bss_offset != IndexBssMappingLookup::npos) {
-      StoreObjectInBss(outer_method, oat_dex_file->GetOatFile(), bss_offset, resolved_string);
+      StoreObjectInBss(outer_method, oat_dex_file->GetOatFile(), bss_offset, resolved_string, llvm_bss_slot);
     }
   }
 }
@@ -131,6 +151,7 @@ static ALWAYS_INLINE bool CanReferenceBss(ArtMethod* outer_method, ArtMethod* ca
 
 extern "C" mirror::Class* artInitializeStaticStorageFromCode(mirror::Class* klass, Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LOGLLVM3(INFO) << __func__;
   // Called to ensure static storage base is initialized for direct static field reads and writes.
   // A class may be accessing another class' fields when it doesn't have access, as access has been
   // given by inheritance.
@@ -215,5 +236,129 @@ extern "C" mirror::String* artResolveStringFromCode(int32_t string_idx, Thread* 
   }
   return result.Ptr();
 }
+
+#ifdef ART_MCR
+extern "C" mirror::Class* artResolveTypeFromLLVM(
+    ArtMethod* caller, uint32_t type_idx, void** llvm_bss_slot, Thread* self)
+REQUIRES_SHARED(Locks::mutator_lock_) {
+  LOGLLVMDRT(WARNING) << __func__ << ": " << std::to_string(type_idx);
+  LLVM_FRAME_FIXUP(self);
+
+  // on nested calls we might have issues otherwise,
+  // so use just the caller..
+  ArtMethod* outer_method = caller;
+
+  // arguments
+  D4LOG(INFO) << "caller: " << std::hex << caller;
+  D4LOG(INFO) << "caller: " << caller->PrettyMethod();
+
+  // Called when the .bss slot was empty or for main-path runtime call.
+  ScopedQuickEntrypointChecks sqec(self);
+    
+  ObjPtr<mirror::Class> result =
+    ResolveVerifyAndClinit(dex::TypeIndex(type_idx), caller, self,
+        /* can_run_clinit= */ false, /* verify_access= */ false);
+
+  if (LIKELY(result != nullptr) && CanReferenceBss(outer_method, caller)) {
+    StoreTypeInBss(outer_method, dex::TypeIndex(type_idx), result,
+        llvm_bss_slot);
+  }
+  LOGLLVMDRT(INFO) << __func__ << ": Class: " << result->PrettyClass()
+    << ": " << std::hex << result.Ptr();
+
+  return result.Ptr();
+}
+
+extern "C" mirror::Class* artResolveTypeAndVerifyAccessFromLLVM(
+    ArtMethod* caller, uint32_t type_idx, void** llvm_bss_slot, Thread* self)
+REQUIRES_SHARED(Locks::mutator_lock_) {
+  UNUSED(llvm_bss_slot);
+  LLVM_FRAME_FIXUP(self);
+  D5LOG(ERROR) <<  __func__;
+
+  // Called when caller isn't guaranteed to have access to a type.
+  ScopedQuickEntrypointChecks sqec(self);
+  ObjPtr<mirror::Class> result = ResolveVerifyAndClinit(
+      dex::TypeIndex(type_idx),
+      caller,
+      self,
+      /* can_run_clinit= */ false,
+      /* verify_access= */ true);
+
+  // Do not StoreTypeInBss(); access check entrypoint is never used together with .bss.
+  D2LOG(INFO) << __func__ << ": class: " << result->PrettyClass()
+    << ": " << std::hex << result.Ptr();
+
+  return result.Ptr();
+}
+
+extern "C" mirror::Class* artResolveTypeInternalLLVM(
+    ArtMethod* caller, uint32_t type_idx, void** llvm_bss_slot, Thread* self)
+REQUIRES_SHARED(Locks::mutator_lock_) {
+  UNUSED(llvm_bss_slot);
+  D5LOG(ERROR) << "RTIVA: " << __func__;
+  LLVM_FRAME_FIXUP(self);
+  D5LOG(WARNING) << "RTIVA: "<< __func__ << ": " << std::to_string(type_idx);
+
+  // Called when caller isn't guaranteed to have access to a type.
+  ScopedQuickEntrypointChecks sqec(self);
+  ObjPtr<mirror::Class> result = ResolveVerifyAndClinit(
+      dex::TypeIndex(type_idx),
+      caller,
+      self,
+      /* can_run_clinit= */ false,
+      /* verify_access= */ true);
+
+  D2LOG(WARNING) << __func__ << ": ResolveVerifyAndClinit returned";
+
+  // Do not StoreTypeInBss(); access check entrypoint is never used together with .bss.
+
+  D5LOG(INFO) << __func__ << ": class: " << result->PrettyClass()
+    << ": " << std::hex << result.Ptr();
+
+  return result.Ptr();
+}
+
+extern "C" mirror::String* artResolveStringFromLLVM(
+    ArtMethod* caller, int32_t string_idx, void** llvm_bss_slot, Thread* self)
+    REQUIRES_SHARED(Locks::mutator_lock_) {
+  LOGLLVM3(INFO) << __func__ << ": Caller: " << caller->PrettyMethod();
+  LOGLLVM4(INFO) << __func__ << ": String Idx: " << string_idx;
+  LLVM_FRAME_FIXUP(self);
+
+  // if we use the LLVM::ShadowFrame ArtMethod we might have
+  // issues with nested calls (it will be the wrong outer)
+  ArtMethod* outer_method = caller;
+
+  ScopedQuickEntrypointChecks sqec(self);
+  ObjPtr<mirror::String> result =
+      Runtime::Current()->GetClassLinker()->ResolveString(dex::StringIndex(string_idx), caller);
+  // No point of doing this additional check below:
+  // && CanReferenceBss(outer_method, caller)
+  // This is because we haven't setup a Quick stack frame (as we come from LLVM), so we
+  // don't have an 'outer_method'. I do believe though after some digging, that caller, outer_method
+  // have to do with inlining:
+  // e.g., A -> B -> C, and C is inlined in B:
+  // for C: caller is B, and outer_method is A
+  // for B: caller is A, and outer_method is also A
+  if (LIKELY(result != nullptr)) {
+    // INFO must NOT be stored if it's a relro
+    // (relro loads now are completely done in LLVM)
+    LOGLLVM4(WARNING) << __func__ << ": Store in BSS";
+    StoreStringInBss(outer_method, dex::StringIndex(string_idx), result, llvm_bss_slot);
+  }
+#ifdef CRDEBUG2
+  else {
+    LOGLLVM(ERROR) << __func__ << ": nullptr (caller:"
+      << caller->PrettyMethod() << ")";
+  }
+#endif
+
+  LOGLLVM4(ERROR) << __func__ << ": Resolved: '"
+    <<  result.Ptr()->ToModifiedUtf8() << "'";
+
+  return result.Ptr();
+}
+#endif
 
 }  // namespace art

@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,12 +15,15 @@
  * limitations under the License.
  */
 
+#include "mcr_rt/mcr_rt.h"
+
 #include "callee_save_frame.h"
 #include "thread-inl.h"
 
 namespace art {
 
 extern "C" void artTestSuspendFromCode(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
   // Called when suspend count check value is 0 and thread->suspend_count_ != 0
   ScopedQuickEntrypointChecks sqec(self);
   self->CheckSuspend();

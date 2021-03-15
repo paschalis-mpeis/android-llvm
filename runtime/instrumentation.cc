@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +49,11 @@
 #include "runtime-inl.h"
 #include "thread.h"
 #include "thread_list.h"
+
+#ifdef ART_MCR_TARGET
+#include "mcr_rt/mcr_rt.h"
+#include "mcr_rt/oat_aux.h"
+#endif
 
 namespace art {
 namespace instrumentation {
@@ -189,6 +195,11 @@ void Instrumentation::InstallStubsForClass(mirror::Class* klass) {
 static void UpdateEntrypoints(ArtMethod* method, const void* quick_code)
     REQUIRES_SHARED(Locks::mutator_lock_) {
   method->SetEntryPointFromQuickCompiledCode(quick_code);
+#ifdef ART_MCR_TARGET
+  if (mcr::McrRT::IsLlvmEnabled()) {
+    mcr::OatAux::SetMethodAuxData(method);
+  }
+#endif
 }
 
 bool Instrumentation::NeedDebugVersionFor(ArtMethod* method) const

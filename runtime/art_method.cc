@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +15,21 @@
  * limitations under the License.
  */
 
+#include "mcr_rt/mcr_rt.h"
+
+#ifdef ART_TARGET_ANDROID
+#include <bionic_tls.h>  // Access to our own TLS slot.
+#endif
+
 #include "art_method.h"
+
+#include "mcr_rt/art_impl.h"
+#ifdef ART_MCR_TARGET
+#include "mcr_rt/invoke_info.h"
+#include "mcr_rt/mcr_dbg.h"
+#include "mcr_rt/opt_interface.h"
+#include "mcr_rt/utils.h"
+#endif
 
 #include <cstddef>
 
@@ -63,6 +78,73 @@ extern "C" void art_quick_invoke_static_stub(ArtMethod*, uint32_t*, uint32_t, Th
 // Enforce that we he have the right index for runtime methods.
 static_assert(ArtMethod::kRuntimeMethodDexMethodIndex == dex::kDexNoIndex,
               "Wrong runtime-method dex method index");
+
+#ifdef ART_MCR_TARGET_RT
+/**
+* @brief Executed by LiveLLVM mode.
+* Any faster way? (without modifying oat headers with additional entrypoints..)
+*/
+void ArtMethod::McrInvokeLLVM(Thread* self, ShadowFrame* shadow_frame,
+    JValue* result) {
+  DLOG(ERROR) << __func__;
+
+  D4LOG(WARNING) << "mcrINV: LLVM: " << PrettyMethod(this);
+  const dex::CodeItem* code_item = this->GetCodeItem();
+  CodeItemDataAccessor accessor(this->DexInstructionData());
+  const size_t num_regs = accessor.RegistersSize();
+  const uint32_t arg_offset = (code_item == nullptr) ? 0 :
+    num_regs - accessor.InsSize();
+  const char* shorty = this->GetShorty();
+  uint32_t* args = shadow_frame->GetVRegArgs(arg_offset);
+
+#ifdef CRDEBUG1
+  const bool res =
+#endif
+    mcr::OptimizingInterface::ExecuteLLVM(self, this, args, result, shorty);
+
+#ifdef CRDEBUG2
+  D3LOG(INFO) << "ExecuteLLVM: "
+    << ": " << PrettyMethod() << " shorty: " << shorty << ": "
+    << mcr::PrettyReturn(Primitive::GetType(shorty[0]), result);
+#endif
+    
+#ifdef CRDEBUG2
+  if(!res) {
+    DLOG(FATAL) << "LiveLLVM execution FAILED: " << PrettyMethod(this);
+    UNREACHABLE();
+  }
+#endif
+  
+#ifdef CRDEBUG1
+  if(UNLIKELY(mcr::InvokeInfo::ShouldUpdateHistogram())) {
+    mcr::InvokeInfo::UpdateHistogram();
+  }
+#endif
+}
+
+/**
+ * @brief Obsolete: We do everything while staying in quick code now!
+ *        We used to have interpretation, so this was called..
+ *
+ */
+void ArtMethod::McrInvokeFromInterpreter(Thread* self, uint32_t* args, uint32_t args_size,
+    JValue* result, const char* shorty) {
+
+  const bool invoke_llvm = false;
+  if(invoke_llvm) {
+    bool OK = mcr::OptimizingInterface::ExecuteLLVM(
+        self, this, args, result, shorty);
+
+    if (UNLIKELY(!OK)) {
+      DLOG(FATAL) << "ERROR: LLVM execution: " << PrettyMethod(this);
+      UNREACHABLE();
+    }
+    return;
+  } else {
+    Invoke(self, args, args_size, result, shorty);
+  }
+}
+#endif
 
 ArtMethod* ArtMethod::GetCanonicalMethod(PointerSize pointer_size) {
   if (LIKELY(!IsDefault())) {
@@ -254,6 +336,7 @@ uint32_t ArtMethod::FindDexMethodIndexInOtherDexFile(const DexFile& other_dexfil
   return dex::kDexNoIndex;
 }
 
+// TODO_LLVM: support throwing/handling exceptions
 uint32_t ArtMethod::FindCatchBlock(Handle<mirror::Class> exception_type,
                                    uint32_t dex_pc, bool* has_no_move_exception) {
   // Set aside the exception while we resolve its type.
@@ -318,6 +401,7 @@ void ArtMethod::Invoke(Thread* self, uint32_t* args, uint32_t args_size, JValue*
   self->PushManagedStackFragment(&fragment);
 
   Runtime* runtime = Runtime::Current();
+
   // Call the invoke stub, passing everything as arguments.
   // If the runtime is not yet started or it is required by the debugger, then perform the
   // Invocation by the interpreter, explicitly forcing interpretation over JIT to prevent
@@ -571,6 +655,7 @@ uint16_t ArtMethod::GetIndexFromQuickening(uint32_t dex_pc) {
 }
 
 const OatQuickMethodHeader* ArtMethod::GetOatQuickMethodHeader(uintptr_t pc) {
+  LOGICHF3(ERROR) << __func__ << ": from ICHF";
   // Our callers should make sure they don't pass the instrumentation exit pc,
   // as this method does not look at the side instrumentation stack.
   DCHECK_NE(pc, reinterpret_cast<uintptr_t>(GetQuickInstrumentationExitPc()));

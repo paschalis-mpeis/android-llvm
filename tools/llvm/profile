@@ -1,0 +1,3 @@
+# complete list of methods to compile
+# a static analysis phase could have these methods as starting points
+void mp.paschalis.llvm.demo.TestLoops.Loop5D()

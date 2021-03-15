@@ -1,0 +1,340 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ChangeListManager">
+    <list default="true" id="9baf2011-fb0e-4163-969b-b285b883b052" name="Default Changelist" comment="">
+      <change afterPath="$PROJECT_DIR$/.idea/codeStyles/Project.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/gradle.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_animated_vector_drawable_25_2_0_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_appcompat_v7_25_2_0_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_constraint_constraint_layout_1_0_2_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_constraint_constraint_layout_solver_1_0_2_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_support_annotations_25_2_0_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_support_compat_25_2_0_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_support_core_ui_25_2_0_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_support_core_utils_25_2_0_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_support_fragment_25_2_0_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_support_media_compat_25_2_0_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_support_v4_25_2_0_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_support_vector_drawable_25_2_0_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_test_espresso_espresso_core_2_2_2_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_test_espresso_espresso_idling_resource_2_2_2_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_test_exposed_instrumentation_api_publish_0_5_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_test_rules_0_5_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_android_support_test_runner_0_5_aar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_google_code_findbugs_jsr305_2_0_1_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__com_squareup_javawriter_2_1_1_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__javax_annotation_javax_annotation_api_1_2_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__javax_inject_javax_inject_1_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__junit_junit_4_12_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__org_hamcrest_hamcrest_core_1_3_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__org_hamcrest_hamcrest_integration_1_3_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__org_hamcrest_hamcrest_library_1_3_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/libraries/Gradle__org_jetbrains_annotations_java5_15_0_jar.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/runConfigurations.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/main/java/mp/paschalis/test/hgraphtoc/TestHotRegion.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../.idea/caches/gradle_models.ser" beforeDir="false" afterPath="$PROJECT_DIR$/../.idea/caches/gradle_models.ser" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/mp/paschalis/test/hgraphtoc/Debug.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/mp/paschalis/test/hgraphtoc/Debug.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/mp/paschalis/test/hgraphtoc/MainActivity.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/mp/paschalis/test/hgraphtoc/MainActivity.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.chess/apk/base.jar" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.chess/invoke.hist" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.chess/profile" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.chess/profile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.chess/profile.classes" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.chess/profile.classes" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.chess/profile.hf" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.chess/profile.orig" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/apk/base.jar" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/edit_photo.trace" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/hf_java.lang.String#com.instagram.filterkit.c.i.b@int,#int@/src/hf.lnk.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/hf_java.lang.String#com.instagram.filterkit.c.i.b@int,#int@/src/verify.art.aft" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/hf_java.lang.String#com.instagram.filterkit.c.i.b@int,#int@/src/verify.art.bef" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/hf_java.lang.String#com.instagram.filterkit.c.i.b@int,#int@/src/verify.llvm.aft" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/hf_java.lang.String#com.instagram.filterkit.c.i.b@int,#int@/src/verify.llvm.bef" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/hf_void#com.instagram.filterkit.a.d.b@@/instrumented_callgraph.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/prof.work/profile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/prof.work/profile.capture" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/prof1/profile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/profile" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.instagram.android/profile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/profile.a.d.b" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/profile.capture" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/profile.classes" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.instagram.android/profile.classes" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/profile.info" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/profile.orig" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.instagram.android/profile.stack" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.juankysoriano.materiallife/1.trace" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.juankysoriano.materiallife/hf_void#com.juankysoriano.materiallife.world.life.GameOfLife.doStep@@/callgraph.txt" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.juankysoriano.materiallife/hf_void#com.juankysoriano.materiallife.world.life.GameOfLife.doStep@@/callgraph.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.juankysoriano.materiallife/hf_void#com.juankysoriano.materiallife.world.life.GameOfLife.doStep@@/src/hf.lnk.ll" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.juankysoriano.materiallife/hf_void#com.juankysoriano.materiallife.world.life.GameOfLife.doStep@@/src/hf.lnk.ll" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.juankysoriano.materiallife/profile" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.juankysoriano.materiallife/profile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.juankysoriano.materiallife/profile.classes" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.juankysoriano.materiallife/profile.classes" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/apk/base.apk" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/apk/base.jar" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/face_detection.trace" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hdr_scape.trace" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_boolean#amf.f@@/src/hf.inner.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_float#amf.d@@/src/hf.inner.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#android.graphics.RectF@/src/hf.inner.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#android.graphics.RectF@/src/hf.outer.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#android.graphics.RectF@/src/hgraph.ssa.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/bytecode.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/c_areas.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/c_maps.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/callgraph.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/error.capture.log" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/error.compile.log" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/full.callgraph.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/hgraph.ssa.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/info.capture.log" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/info.compile.log" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/capture/warning.compile.log" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/src/hf.lnk.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/src/verify.art.aft" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/src/verify.art.bef" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/src/verify.llvm.aft" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.a@float,#float,#float,#float,#android.graphics.RectF@/src/verify.llvm.bef" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.b@android.graphics.RectF@/capture/callgraph.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.b@android.graphics.RectF@/capture/error.compile.log" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.b@android.graphics.RectF@/capture/full.callgraph.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.b@android.graphics.RectF@/capture/hgraph.ssa.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.b@android.graphics.RectF@/capture/info.compile.log" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.b@android.graphics.RectF@/capture/warning.compile.log" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.b@android.graphics.RectF@/src/hf.inner.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.b@android.graphics.RectF@/src/hf.outer.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#amf.b@android.graphics.RectF@/src/hf.pretty.inner.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#bfp.c@boolean,#java.lang.Object@/src/hgraph.ssa.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hf_void#chf.a@int,#int,#float,#float@/instrumented_callgraph.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/hotmethods.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/instrumented_callgraph.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof.face_detection/profile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof.face_detection/profile.capture" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof.face_detection/profile.classes" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof.hdr_scape/profile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof.hdr_scape/profile.capture" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof.hdr_scape/profile.classes" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof.hdr_scape/profile.extended" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof.hdr_scape/profile.stack" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof.stack.1/profile.classes" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof.stack.1/profile.stack" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof1/profile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof1/profile.classes" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof1/profile.hf" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof1/profile.info" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof1/profile.orig" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/prof1/profile.successfully_compiled" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.capt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.capture" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.capture" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.classes" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.classes" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.dont_compile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.dont_compile_all" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.extended" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.extra_hot_methods" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.stack" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.niksoftware.snapseed/profile.try1" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.snapchat.android/apk/base.jar" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.snapchat.android/apk/base.jar" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.snapchat.android/profile" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.snapchat.android/profile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../com.snapchat.android/profile.classes" beforeDir="false" afterPath="$PROJECT_DIR$/../../com.snapchat.android/profile.classes" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../mp.paschalis.test.hgraphtoc/invoke.hist" beforeDir="false" afterPath="$PROJECT_DIR$/../../mp.paschalis.test.hgraphtoc/invoke.hist" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../mp.paschalis.test.hgraphtoc/oatdump.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../mp.paschalis.test.hgraphtoc/profile.internal_methods" beforeDir="false" afterPath="$PROJECT_DIR$/../../mp.paschalis.test.hgraphtoc/profile.internal_methods" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../mp.paschalis.test.hgraphtoc/profile.intrinsics" beforeDir="false" afterPath="$PROJECT_DIR$/../../mp.paschalis.test.hgraphtoc/profile.intrinsics" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../mp.paschalis.test.hgraphtoc/profile.string" beforeDir="false" afterPath="$PROJECT_DIR$/../../mp.paschalis.test.hgraphtoc/profile.string" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_int#jnt.scimark2.FFT.log2@int@/src/hf.pretty.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_int#jnt.scimark2.FFT.log2@int@/src/hgraph.ssa.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_void#jnt.scimark2.FFT.bitreverse@double--@/src/hf.bc" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_void#jnt.scimark2.FFT.bitreverse@double--@/src/hf.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_void#jnt.scimark2.FFT.bitreverse@double--@/src/hgraph.ssa.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_void#jnt.scimark2.FFT.inverse@double--@/instrumented_callgraph.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_void#jnt.scimark2.FFT.inverse@double--@/src/hf.lnk.ll" beforeDir="false" afterPath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_void#jnt.scimark2.FFT.inverse@double--@/src/hf.lnk.ll" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_void#jnt.scimark2.FFT.inverse@double--@/src/verify.art.aft" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_void#jnt.scimark2.FFT.inverse@double--@/src/verify.art.bef" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_void#jnt.scimark2.FFT.inverse@double--@/src/verify.llvm.aft" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/hf_void#jnt.scimark2.FFT.inverse@double--@/src/verify.llvm.bef" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/profile" beforeDir="false" afterPath="$PROJECT_DIR$/../../net.danielroggen.scimark/profile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../net.danielroggen.scimark/profile.fft" beforeDir="false" afterPath="$PROJECT_DIR$/../../net.danielroggen.scimark/profile.fft" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/ai.trace" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/apk/base.jar" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/hf_boolean#uk.co.aifactory.backgammonfree.BackgammonGridView.makeAIMove@boolean@/instrumented_callgraph.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/hf_void#uk.co.aifactory.fireballUI.GridBaseView3.animationUpdate@@/src/hf.lnk.ll" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/hf_void#uk.co.aifactory.fireballUI.GridBaseView3.animationUpdate@@/src/verify.art.aft" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/hf_void#uk.co.aifactory.fireballUI.GridBaseView3.animationUpdate@@/src/verify.art.bef" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/hf_void#uk.co.aifactory.fireballUI.GridBaseView3.animationUpdate@@/src/verify.llvm.aft" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/hf_void#uk.co.aifactory.fireballUI.GridBaseView3.animationUpdate@@/src/verify.llvm.bef" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/prof.kickstartgameui/profile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/prof.kickstartgameui/profile.capture" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/prof.kickstartgameui/profile.dont_compile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/profile" beforeDir="false" afterPath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/profile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/profile.capture" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/profile.classes" beforeDir="false" afterPath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/profile.classes" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/profile.dont_compile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.backgammonfree/profile.orig" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.sudokufree/profile" beforeDir="false" afterPath="$PROJECT_DIR$/../../uk.co.aifactory.sudokufree/profile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../../uk.co.aifactory.sudokufree/profile.classes" beforeDir="false" afterPath="$PROJECT_DIR$/../../uk.co.aifactory.sudokufree/profile.classes" afterDir="false" />
+    </list>
+    <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ExternalProjectsManager">
+    <system id="GRADLE">
+      <state>
+        <projects_view />
+      </state>
+    </system>
+  </component>
+  <component name="FUSProjectUsageTrigger">
+    <session id="-2009604346">
+      <usages-collector id="statistics.lifecycle.project">
+        <counts>
+          <entry key="project.closed" value="1" />
+          <entry key="project.open.time.0" value="1" />
+          <entry key="project.opened" value="1" />
+        </counts>
+      </usages-collector>
+    </session>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/../.." />
+  </component>
+  <component name="ProjectFrameBounds">
+    <option name="y" value="23" />
+    <option name="width" value="1920" />
+    <option name="height" value="984" />
+  </component>
+  <component name="ProjectLevelVcsManager" settingsEditedManually="true">
+    <ConfirmationsSetting value="2" id="Add" />
+  </component>
+  <component name="ProjectView">
+    <navigator proportions="" version="1">
+      <foldersAlwaysOnTop value="true" />
+    </navigator>
+    <panes>
+      <pane id="ProjectPane" />
+      <pane id="PackagesPane" />
+      <pane id="AndroidView" />
+      <pane id="Scope" />
+    </panes>
+  </component>
+  <component name="PropertiesComponent">
+    <property name="android.sdk.path" value="$USER_HOME$/android/sdk" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$" />
+    <property name="settings.editor.selected.configurable" value="android.sdk-updates" />
+  </component>
+  <component name="RunDashboard">
+    <option name="ruleStates">
+      <list>
+        <RuleState>
+          <option name="name" value="ConfigurationTypeDashboardGroupingRule" />
+        </RuleState>
+        <RuleState>
+          <option name="name" value="StatusDashboardGroupingRule" />
+        </RuleState>
+      </list>
+    </option>
+  </component>
+  <component name="RunManager">
+    <configuration default="true" type="AndroidJUnit" factoryName="Android JUnit">
+      <option name="WORKING_DIRECTORY" value="$MODULE_DIR$" />
+      <method v="2">
+        <option name="Android.Gradle.BeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="app" type="AndroidRunConfigurationType" factoryName="Android App">
+      <module name="app" />
+      <option name="DEPLOY" value="true" />
+      <option name="DEPLOY_APK_FROM_BUNDLE" value="false" />
+      <option name="DEPLOY_AS_INSTANT" value="false" />
+      <option name="ARTIFACT_NAME" value="" />
+      <option name="PM_INSTALL_OPTIONS" value="" />
+      <option name="DYNAMIC_FEATURES_DISABLED_LIST" value="" />
+      <option name="ACTIVITY_EXTRA_FLAGS" value="" />
+      <option name="MODE" value="default_activity" />
+      <option name="CLEAR_LOGCAT" value="false" />
+      <option name="SHOW_LOGCAT_AUTOMATICALLY" value="false" />
+      <option name="SKIP_NOOP_APK_INSTALLATIONS" value="true" />
+      <option name="FORCE_STOP_RUNNING_APP" value="true" />
+      <option name="TARGET_SELECTION_MODE" value="SHOW_DIALOG" />
+      <option name="USE_LAST_SELECTED_DEVICE" value="false" />
+      <option name="PREFERRED_AVD" value="" />
+      <option name="SELECTED_CLOUD_MATRIX_CONFIGURATION_ID" value="-1" />
+      <option name="SELECTED_CLOUD_MATRIX_PROJECT_ID" value="" />
+      <option name="DEBUGGER_TYPE" value="Auto" />
+      <Auto>
+        <option name="USE_JAVA_AWARE_DEBUGGER" value="false" />
+        <option name="SHOW_STATIC_VARS" value="true" />
+        <option name="WORKING_DIR" value="" />
+        <option name="TARGET_LOGGING_CHANNELS" value="lldb process:gdb-remote packets" />
+        <option name="SHOW_OPTIMIZED_WARNING" value="true" />
+      </Auto>
+      <Hybrid>
+        <option name="USE_JAVA_AWARE_DEBUGGER" value="false" />
+        <option name="SHOW_STATIC_VARS" value="true" />
+        <option name="WORKING_DIR" value="" />
+        <option name="TARGET_LOGGING_CHANNELS" value="lldb process:gdb-remote packets" />
+        <option name="SHOW_OPTIMIZED_WARNING" value="true" />
+      </Hybrid>
+      <Java />
+      <Native>
+        <option name="USE_JAVA_AWARE_DEBUGGER" value="false" />
+        <option name="SHOW_STATIC_VARS" value="true" />
+        <option name="WORKING_DIR" value="" />
+        <option name="TARGET_LOGGING_CHANNELS" value="lldb process:gdb-remote packets" />
+        <option name="SHOW_OPTIMIZED_WARNING" value="true" />
+      </Native>
+      <Profilers>
+        <option name="ADVANCED_PROFILING_ENABLED" value="false" />
+        <option name="STARTUP_CPU_PROFILING_ENABLED" value="false" />
+        <option name="STARTUP_CPU_PROFILING_CONFIGURATION_NAME" value="Sample Java Methods" />
+      </Profilers>
+      <option name="DEEP_LINK" value="" />
+      <option name="ACTIVITY_CLASS" value="" />
+      <method v="2">
+        <option name="Android.Gradle.BeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+  </component>
+  <component name="SvnConfiguration">
+    <configuration />
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="9baf2011-fb0e-4163-969b-b285b883b052" name="Default Changelist" comment="" />
+      <created>1568761148445</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1568761148445</updated>
+    </task>
+    <servers />
+  </component>
+  <component name="ToolWindowManager">
+    <frame x="0" y="23" width="1920" height="984" extended-state="0" />
+    <layout>
+      <window_info active="true" content_ui="combo" id="Project" visible="true" weight="0.32960597" />
+      <window_info id="Structure" side_tool="true" />
+      <window_info id="Build Variants" side_tool="true" />
+      <window_info id="Image Layers" />
+      <window_info id="Designer" />
+      <window_info id="Capture Tool" />
+      <window_info id="Favorites" side_tool="true" />
+      <window_info id="Captures" order="0" side_tool="true" weight="0.25" />
+      <window_info anchor="bottom" id="Logcat" />
+      <window_info anchor="bottom" id="Version Control" show_stripe_button="false" />
+      <window_info anchor="bottom" id="TODO" />
+      <window_info anchor="bottom" id="Android Profiler" show_stripe_button="false" />
+      <window_info anchor="bottom" id="Terminal" />
+      <window_info anchor="bottom" id="Event Log" side_tool="true" />
+      <window_info anchor="bottom" id="Build" visible="true" weight="0.3295964" />
+      <window_info anchor="right" id="Device File Explorer" side_tool="true" />
+      <window_info anchor="right" id="Capture Analysis" />
+      <window_info anchor="right" id="Gradle" />
+      <window_info anchor="right" id="Theme Preview" />
+      <window_info anchor="right" id="Palette&#9;" />
+    </layout>
+  </component>
+  <component name="VcsContentAnnotationSettings">
+    <option name="myLimit" value="2678400000" />
+  </component>
+</project>

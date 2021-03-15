@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -737,6 +738,21 @@ class ArtMethod final {
   GcRoot<mirror::Class>& DeclaringClassRoot() {
     return declaring_class_;
   }
+
+#ifdef ART_MCR_TARGET_RT
+  ALWAYS_INLINE bool HasOverridenQuickEntrypoint();
+  ALWAYS_INLINE bool IsIchfFAST();
+  ALWAYS_INLINE void SetQuickToLlvm(const void* quick_code,
+      const void* llvm_code);
+  ALWAYS_INLINE void SetQuickToInterpreter(const void* quick_code = nullptr);
+  ALWAYS_INLINE void ResetQuickEntrypoint();
+
+  void McrInvokeLLVM(Thread* self, ShadowFrame *shadow_frame, JValue* result)
+    SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+  void McrInvokeFromInterpreter(Thread* self, uint32_t* args,
+      uint32_t args_size, JValue* result, const char* shorty)
+    SHARED_LOCKS_REQUIRED(Locks::mutator_lock_);
+#endif
 
  protected:
   // Field order required by test "ValidateFieldOrderOfJavaCppUnionClasses".

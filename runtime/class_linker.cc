@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -137,6 +138,13 @@
 #include "utils/dex_cache_arrays_layout-inl.h"
 #include "verifier/class_verifier.h"
 #include "well_known_classes.h"
+
+#include "mcr_rt/mcr_rt.h"
+#include "mcr_rt/art_impl.h"
+#ifdef ART_MCR_TARGET_RT
+#include "mcr_rt/mcr_dbg.h"
+#include "mcr_rt/oat_aux.h"
+#endif
 
 namespace art {
 
@@ -3525,6 +3533,11 @@ static void LinkCode(ClassLinker* class_linker,
              class_linker->IsQuickResolutionStub(entry_point));
     }
   }
+#ifdef ART_MCR_TARGET_RT
+  if (mcr::McrRT::IsLlvmEnabled()) {
+    mcr::OatAux::SetMethodAuxData(method);
+  }
+#endif
 }
 
 void ClassLinker::SetupClass(const DexFile& dex_file,

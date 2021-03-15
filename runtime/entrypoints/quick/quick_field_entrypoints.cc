@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +17,8 @@
 
 #include <stdint.h>
 
+#include "mcr_rt/mcr_rt.h"
+
 #include "art_field-inl.h"
 #include "art_method-inl.h"
 #include "base/callee_save_type.h"
@@ -25,6 +28,9 @@
 #include "gc_root-inl.h"
 #include "mirror/class-inl.h"
 #include "mirror/object_reference.h"
+
+#include "mcr_rt/art_impl.h"
+#include "mcr_rt/macros.h"
 
 namespace art {
 
@@ -39,6 +45,7 @@ ALWAYS_INLINE static inline ArtField* FindInstanceField(uint32_t field_idx,
                                                         mirror::Object** obj)
     REQUIRES(!Roles::uninterruptible_)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
   StackHandleScope<1> hs(self);
   HandleWrapper<mirror::Object> h(hs.NewHandleWrapper(obj));
   ArtField* field = FindFieldFromCode<type, kAccessCheck>(field_idx, referrer, self, size);
@@ -50,6 +57,15 @@ ALWAYS_INLINE static inline ArtField* FindInstanceField(uint32_t field_idx,
 }
 
 static ArtMethod* GetReferrer(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_) {
+  // The below discussion was before properly pushing/popping ShadowFrames for the LLVM methods.
+  // INFO: we ended up here from LLVM code, so there is no Quick frame setup.
+  //       Instead there's a ShadowFrame that calls the referrer.
+  //       There's is not (most likely) outer method anyway, since the caller does not
+  //       do any inline, bcz we transition into LLVM.
+  //if(IN_LLVM()) {
+  //   return LLVM::shadow_frame_->GetMethod();
+  //}
+
   if (kIsDebugBuild) {
     // stub_test doesn't call this code with a proper frame, so get the outer, and if
     // it does not have compiled code return it.
@@ -72,6 +88,8 @@ static ArtMethod* GetReferrer(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_
                                                       ArtMethod* referrer,     \
                                                       Thread* self)            \
       REQUIRES_SHARED(Locks::mutator_lock_) {                                  \
+    LLVM_FRAME_FIXUP(self);\
+    LOGLLVM4(INFO) << __func__ << ": ref: " << referrer->PrettyMethod(); \
     ScopedQuickEntrypointChecks sqec(self);                                    \
     ArtField* field = FindFieldFast(                                           \
         field_idx, referrer, Static ## PrimitiveOrObject ## Read,              \
@@ -79,11 +97,13 @@ static ArtMethod* GetReferrer(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_
     if (LIKELY(field != nullptr)) {                                            \
       return field->Get ## Kind (field->GetDeclaringClass())Ptr;  /* NOLINT */ \
     }                                                                          \
+    LOGLLVM2(WARNING) << __func__ << ": FindFieldFast: failed. call FindFieldFromCode"; \
     field = FindFieldFromCode<Static ## PrimitiveOrObject ## Read, true>(      \
         field_idx, referrer, self, sizeof(PrimitiveType));                     \
     if (LIKELY(field != nullptr)) {                                            \
       return field->Get ## Kind (field->GetDeclaringClass())Ptr;  /* NOLINT */ \
     }                                                                          \
+    LOGLLVM(ERROR) << __func__ << ": Failed: will throw exception"; \
     /* Will throw exception by checking with Thread::Current. */               \
     return 0;                                                                  \
   }                                                                            \
@@ -93,19 +113,28 @@ static ArtMethod* GetReferrer(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_
                                                         ArtMethod* referrer,   \
                                                         Thread* self)          \
       REQUIRES_SHARED(Locks::mutator_lock_) {                                  \
+    LLVM_FRAME_FIXUP(self);\
     ScopedQuickEntrypointChecks sqec(self);                                    \
     ArtField* field = FindFieldFast(                                           \
         field_idx, referrer, Instance ## PrimitiveOrObject ## Read,            \
         sizeof(PrimitiveType));                                                \
+    LOGLLVM4(WARNING) << __func__ << ": ref: " << referrer->PrettyMethod(); \
     if (LIKELY(field != nullptr) && obj != nullptr) {                          \
+     if(field->Get ## Kind (obj)Ptr == 0) { \
+    LOGLLVM(ERROR) << __func__ << ":  null ref: " << referrer->PrettyMethod() \
+      << " val: " << std::hex << field->Get ## Kind (obj)Ptr; \
+     } \
       return field->Get ## Kind (obj)Ptr;  /* NOLINT */                        \
     }                                                                          \
+       /*TODO disable access_check on LLVM? last true value..*/ \
+    LOGLLVM2(WARNING) << __func__ << ": FindFieldFast: failed. call FindInstanceField"; \
     field = FindInstanceField<Instance ## PrimitiveOrObject ## Read, true>(    \
         field_idx, referrer, self, sizeof(PrimitiveType), &obj);               \
     if (LIKELY(field != nullptr)) {                                            \
       return field->Get ## Kind (obj)Ptr;  /* NOLINT */                        \
     }                                                                          \
     /* Will throw exception by checking with Thread::Current. */               \
+    LOGLLVM(ERROR) << __func__ << ": Failed: will throw exception"; \
     return 0;                                                                  \
   }                                                                            \
                                                                                \
@@ -114,6 +143,7 @@ static ArtMethod* GetReferrer(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_
                                                   ArtMethod* referrer,         \
                                                   Thread* self)                \
       REQUIRES_SHARED(Locks::mutator_lock_) {                                  \
+    LLVM_FRAME_FIXUP(self);\
     ScopedQuickEntrypointChecks sqec(self);                                    \
     ArtField* field = FindFieldFast(                                           \
         field_idx, referrer, Static ## PrimitiveOrObject ## Write,             \
@@ -145,6 +175,7 @@ static ArtMethod* GetReferrer(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_
                                                     ArtMethod* referrer,       \
                                                     Thread* self)              \
     REQUIRES_SHARED(Locks::mutator_lock_) {                                    \
+    LLVM_FRAME_FIXUP(self);\
     ScopedQuickEntrypointChecks sqec(self);                                    \
     ArtField* field = FindFieldFast(                                           \
         field_idx, referrer, Instance ## PrimitiveOrObject ## Write,           \
@@ -182,6 +213,8 @@ static ArtMethod* GetReferrer(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_
       uint32_t field_idx,                                                      \
       Thread* self)                                                            \
       REQUIRES_SHARED(Locks::mutator_lock_) {                                  \
+    LLVM_FRAME_FIXUP(self);\
+    LOGLLVM(ERROR) << __func__ << ": Call FromCode: ref: " << GetReferrer(self); \
     return artGet ## Kind ## StaticFromCode(                                   \
         field_idx, GetReferrer(self), self);                                   \
   }                                                                            \
@@ -191,6 +224,8 @@ static ArtMethod* GetReferrer(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_
       mirror::Object* obj,                                                     \
       Thread* self)                                                            \
       REQUIRES_SHARED(Locks::mutator_lock_) {                                  \
+    LLVM_FRAME_FIXUP(self);\
+    LOGLLVM(ERROR) << __func__ << ": Call FromCode ref: " << GetReferrer(self); \
     return artGet ## Kind ## InstanceFromCode(                                 \
         field_idx, obj, GetReferrer(self), self);                              \
   }                                                                            \
@@ -200,6 +235,7 @@ static ArtMethod* GetReferrer(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_
       SetType new_value,                                                       \
       Thread* self)                                                            \
       REQUIRES_SHARED(Locks::mutator_lock_) {                                  \
+    LLVM_FRAME_FIXUP(self);\
     return artSet ## Kind ## StaticFromCode(                                   \
         field_idx, new_value, GetReferrer(self), self);                        \
   }                                                                            \
@@ -210,6 +246,7 @@ static ArtMethod* GetReferrer(Thread* self) REQUIRES_SHARED(Locks::mutator_lock_
       SetType new_value,                                                       \
       Thread* self)                                                            \
       REQUIRES_SHARED(Locks::mutator_lock_) {                                  \
+    LLVM_FRAME_FIXUP(self);\
     return artSet ## Kind ## InstanceFromCode(                                 \
         field_idx, obj, new_value, GetReferrer(self), self);                   \
   }
@@ -384,6 +421,7 @@ extern "C" mirror::Object* artReadBarrierMark(mirror::Object* obj) {
 extern "C" mirror::Object* artReadBarrierSlow(mirror::Object* ref ATTRIBUTE_UNUSED,
                                               mirror::Object* obj,
                                               uint32_t offset) {
+  LOGLLVM4(INFO) << __func__;
   // Used only in connection with non-volatile loads.
   DCHECK(kEmitCompilerReadBarrier);
   uint8_t* raw_addr = reinterpret_cast<uint8_t*>(obj) + offset;
@@ -396,12 +434,55 @@ extern "C" mirror::Object* artReadBarrierSlow(mirror::Object* ref ATTRIBUTE_UNUS
         obj,
         MemberOffset(offset),
         ref_addr);
+
+#ifdef CRDEBUG4
+  if(result == nullptr) {
+    LOGLLVM(ERROR) << __func__ << ": returning null!";
+  }
+#endif
+  LOGLLVM4(ERROR) << __func__ << ": obj: " << std::hex << result;
+
   return result;
 }
 
 extern "C" mirror::Object* artReadBarrierForRootSlow(GcRoot<mirror::Object>* root) {
   DCHECK(kEmitCompilerReadBarrier);
   return root->Read();
+}
+
+extern "C" void artVerifyArtObjectFromLLVM(mirror::Object* obj, Thread* self);
+
+extern "C" mirror::Object* artLLVMReadBarrierSlow(
+    mirror::Object* ref, mirror::Object* obj, uint32_t offset) {
+  UNUSED(ref);
+  Thread* self = Thread::Current();
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM3(WARNING) << __func__ << ": offset: " << offset
+    << "(" << std::hex<< offset<<")";
+
+#ifdef ART_MCR_TARGET
+  // ref is null
+  LOGLLVM3(WARNING) << __func__ << ": obj: " << obj;
+#endif
+  // Used only in connection with non-volatile loads.
+  DCHECK(kEmitCompilerReadBarrier);
+  uint8_t* raw_addr = reinterpret_cast<uint8_t*>(obj) + offset;
+
+  mirror::HeapReference<mirror::Object>* ref_addr =
+    reinterpret_cast<mirror::HeapReference<mirror::Object>*>(raw_addr);
+  constexpr ReadBarrierOption kReadBarrierOption =
+    kUseReadBarrier ? kWithReadBarrier : kWithoutReadBarrier;
+
+  mirror::Object* result =
+    ReadBarrier::Barrier<mirror::Object, /* kIsVolatile= */ false, kReadBarrierOption>(
+        obj, MemberOffset(offset), ref_addr);
+
+#ifdef CRDEBUG3
+  if(result == nullptr) {
+    DLOG(WARNING) << __func__ << ": result is null. Maybe intended.";
+  }
+#endif
+  return result;
 }
 
 }  // namespace art

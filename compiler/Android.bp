@@ -18,10 +18,106 @@
 // architecture into its own category. Currently we just include all of the 32bit variant in the
 // 64bit variant. It also might be good to allow one to compile only the 64bit variant without the
 // 32bit one.
+libart_cc_defaults {
+    name: "mcrcc_defaults",
+    defaults: ["mcr_defaults"],
+    target: { 
+        android: {
+            srcs: [
+                "mcr_cc/mcr_cc.cc",
+                "mcr_cc/cc_log.cc",
+                "mcr_cc/analyser.cc",
+                "mcr_cc/compiler_interface.cc",
+                "mcr_cc/clang_interface.cc",
+                "mcr_cc/invoke_histogram.cc",
+                "mcr_cc/llc_interface.cc",
+                "mcr_cc/match.cc",
+                "mcr_cc/linker.cc",
+                "mcr_cc/linker_interface.cc",
+                "mcr_cc/os_comp.cc",
+                "mcr_cc/pass_manager.cc",
+
+                // mcr_cc/llvm backend code
+                "mcr_cc/llvm/llvm_compiler.cc",
+                "mcr_cc/llvm/llvm_info.cc",
+                "mcr_cc/llvm/asm_arm_thumb.cc",
+                "mcr_cc/llvm/asm_arm64.cc",
+                "mcr_cc/llvm/asm_arm64_base.cc",
+                "mcr_cc/llvm/asm_arm64_entrypoints.cc",
+                "mcr_cc/llvm/quick_entrypoints.cc",
+                "mcr_cc/llvm/hgraph_printers.cc",
+                "mcr_cc/llvm/hgraph_bss_cache.cc",
+                "mcr_cc/llvm/hgraph_load_ops.cc",
+                "mcr_cc/llvm/hgraph_vector.cc",
+                "mcr_cc/llvm/hgraph_to_llvm.cc",
+                "mcr_cc/llvm/hgraph_rt_offsets.cc",
+                "mcr_cc/llvm/hgraph_to_llvm_irmap.cc",
+                "mcr_cc/llvm/hgraph_converter.cc",
+                "mcr_cc/llvm/hgraph_helper.cc",
+                "mcr_cc/llvm/hgraph_passes.cc",
+                "mcr_cc/llvm/intrinsic_helper.cc",
+                "mcr_cc/llvm/instruction_simplifier.cc",
+                "mcr_cc/llvm/llvm_intrinsics.cc",
+                "mcr_cc/llvm/intrinsic_helper_c_prototypes.cc",
+                "mcr_cc/llvm/llvm_utils.cc",
+                "mcr_cc/llvm/function_helper.cc",
+                "mcr_cc/llvm/fh_asm_wrappers.cc",
+                "mcr_cc/llvm/fh_SuspendCheck.cc",
+                "mcr_cc/llvm/fh_invoke_wrapper.cc",
+                "mcr_cc/llvm/fh_plugin_calls.cc",
+                "mcr_cc/llvm/fh_instanceOf.cc",
+                "mcr_cc/llvm/fh_checkCast.cc",
+                "mcr_cc/llvm/fh_ArrayGetCharAt.cc",
+                "mcr_cc/llvm/fh_ArraySetBarrier.cc",
+                "mcr_cc/llvm/fh_BakerRead.cc",
+                "mcr_cc/llvm/llvm_to_jni.cc",
+                "mcr_cc/llvm/llvm_to_quick.cc",
+                "mcr_cc/llvm/ir_builder.cc",
+                "mcr_cc/llvm/ir_builder_types.cc",
+                "mcr_cc/llvm/llvm_compilation_unit.cc",
+                "mcr_cc/llvm/generated/art_module.cc",
+                "mcr_cc/llvm/debug.cc",
+            ],
+            cflags: [
+                "-DART_MCR_TARGET_CC",
+                "-DART_MCR_CC", // logging tag
+                "-ferror-limit=0",
+                // In early versions the code outside of the hot region
+                // was not compiled, but instead was interpreted.
+                // This forces that early option:
+                // "ART_MCR_INTERPRET_NON_HOT_CODE",
+                
+                // LLVM flags
+                "-Wno-unused-parameter",
+                "-Wno-used-but-marked-unused",
+                "-Wno-missing-noreturn",
+                "-Wno-shadow",
+                "-Wno-deprecated",
+                "-D__STDC_LIMIT_MACROS",
+                "-D__STDC_CONSTANT_MACROS",
+                // DEBUG flags
+                "-ferror-limit=0",
+                // Additional CRDEBUG log levels
+                "-DCRDEBUG",
+                "-DCRDEBUG1",
+                "-DCRDEBUG2",
+                // "-DCRDEBUG3",
+                // "-DCRDEBUG4",
+            ],
+            include_dirs: ["art/compiler/mcr_cc"],
+            shared_libs: [
+                "libLLVM",
+            ]
+        },
+    },
+}
 
 art_cc_defaults {
     name: "libart-compiler-defaults",
-    defaults: ["art_defaults"],
+    defaults: [
+        "art_defaults",
+        "mcrcc_defaults",
+    ],
     host_supported: true,
     srcs: [
         "compiled_method.cc",
@@ -204,6 +300,9 @@ gensrcs {
         "utils/arm/constants_arm.h",
         "utils/mips/assembler_mips.h",
         "utils/mips64/assembler_mips64.h",
+
+        // mcr_cc/llvm operators
+        "mcr_cc/llvm/intrinsic_helper-enum.h",
     ],
     output_extension: "operator_out.cc",
 }

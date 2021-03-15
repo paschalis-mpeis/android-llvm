@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2008 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,6 +62,13 @@ extern "C" void android_set_application_target_sdk_version(uint32_t version);
 #include "thread.h"
 #include "thread_list.h"
 #include "well_known_classes.h"
+
+#ifdef ART_MCR_TARGET 
+#include "mcr_rt/mcr_rt.h"
+
+#include "mcr_rt/oat_aux.h"
+#include "mcr_rt/opt_interface.h"
+#endif
 
 namespace art {
 
@@ -652,7 +660,21 @@ static void VMRuntime_registerAppInfo(JNIEnv* env,
   std::string profile_file_str(raw_profile_file);
   env->ReleaseStringUTFChars(profile_file, raw_profile_file);
 
+#ifdef ART_MCR_TARGET
+  mcr::McrRT::ProcessApp(profile_file_str);
+  mcr::McrRT::ReadOptions();
+#endif
+
   Runtime::Current()->RegisterAppInfo(code_paths_vec, profile_file_str);
+
+#ifdef ART_MCR_TARGET
+    // If LLVM is enabled preload all of the hot regions
+    if (mcr::McrRT::IsLlvmEnabled()) {
+      mcr::OatAux::ReadOatAux();
+      // high debug levels can cause slowdowns
+      D2LOG(WARNING) << "WARNING: DEBUG LEVEL >= 2";
+    }
+#endif
 }
 
 static jboolean VMRuntime_isBootClassPathOnDisk(JNIEnv* env, jclass, jstring java_instruction_set) {

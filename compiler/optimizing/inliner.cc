@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -502,7 +503,17 @@ bool HInliner::TryInline(HInvoke* invoke_instruction) {
       actual_method = method;
       LOG_NOTE() << "Try CHA-based inlining of " << actual_method->PrettyMethod();
     }
+  } 
+#ifdef ART_MCR
+  if (actual_method != nullptr) {
+    MethodReference callee_ref(&caller_dex_file, method_index);
+    if(codegen_->GetCompilerOptions().IsLlvmEntrypoint(callee_ref)) {
+      D4LOG(INFO) << "Disabling inlining of LLVM entrypoint:"
+        << callee_ref.PrettyMethod();
+      return false;
+    }
   }
+#endif
 
   if (actual_method != nullptr) {
     // Single target.

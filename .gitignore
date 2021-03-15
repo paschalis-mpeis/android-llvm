@@ -1,6 +1,8 @@
 JIT_ART
-**/__pycache__/**
-**/.idea
-**/*.iml
-**/*.pyc
-**/*.swn
+*.vim
+*.pyc
+.cscope.*
+.cscopedb.*
+.ctags
+.DS_Store
+compile_commands.json

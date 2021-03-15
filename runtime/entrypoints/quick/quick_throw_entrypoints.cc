@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#include "mcr_rt/mcr_rt.h"
 
 #include "art_method-inl.h"
 #include "callee_save_frame.h"
@@ -29,12 +32,16 @@ namespace art {
 // Deliver an exception that's pending on thread helping set up a callee save frame on the way.
 extern "C" NO_RETURN void artDeliverPendingExceptionFromCode(Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   ScopedQuickEntrypointChecks sqec(self);
   self->QuickDeliverException();
 }
 
 extern "C" NO_RETURN uint64_t artInvokeObsoleteMethod(ArtMethod* method, Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM2(ERROR) << __func__;
   DCHECK(method->IsObsolete());
   ScopedQuickEntrypointChecks sqec(self);
   ThrowInternalError("Attempting to invoke obsolete version of '%s'.",
@@ -45,6 +52,8 @@ extern "C" NO_RETURN uint64_t artInvokeObsoleteMethod(ArtMethod* method, Thread*
 // Called by generated code to throw an exception.
 extern "C" NO_RETURN void artDeliverExceptionFromCode(mirror::Throwable* exception, Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   /*
    * exception may be null, in which case this routine should
    * throw NPE.  NOTE: this is a convenience for generated code,
@@ -64,6 +73,8 @@ extern "C" NO_RETURN void artDeliverExceptionFromCode(mirror::Throwable* excepti
 // Called by generated code to throw a NPE exception.
 extern "C" NO_RETURN void artThrowNullPointerExceptionFromCode(Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   ScopedQuickEntrypointChecks sqec(self);
   // We come from an explicit check in the generated code. This path is triggered
   // only if the object is indeed null.
@@ -74,6 +85,8 @@ extern "C" NO_RETURN void artThrowNullPointerExceptionFromCode(Thread* self)
 // Installed by a signal handler to throw a NPE exception.
 extern "C" NO_RETURN void artThrowNullPointerExceptionFromSignal(uintptr_t addr, Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   ScopedQuickEntrypointChecks sqec(self);
   ThrowNullPointerExceptionFromDexPC(/* check_address= */ true, addr);
   self->QuickDeliverException();
@@ -82,6 +95,8 @@ extern "C" NO_RETURN void artThrowNullPointerExceptionFromSignal(uintptr_t addr,
 // Called by generated code to throw an arithmetic divide by zero exception.
 extern "C" NO_RETURN void artThrowDivZeroFromCode(Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   ScopedQuickEntrypointChecks sqec(self);
   ThrowArithmeticExceptionDivideByZero();
   self->QuickDeliverException();
@@ -90,6 +105,8 @@ extern "C" NO_RETURN void artThrowDivZeroFromCode(Thread* self)
 // Called by generated code to throw an array index out of bounds exception.
 extern "C" NO_RETURN void artThrowArrayBoundsFromCode(int index, int length, Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   ScopedQuickEntrypointChecks sqec(self);
   ThrowArrayIndexOutOfBoundsException(index, length);
   self->QuickDeliverException();
@@ -98,6 +115,8 @@ extern "C" NO_RETURN void artThrowArrayBoundsFromCode(int index, int length, Thr
 // Called by generated code to throw a string index out of bounds exception.
 extern "C" NO_RETURN void artThrowStringBoundsFromCode(int index, int length, Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   ScopedQuickEntrypointChecks sqec(self);
   ThrowStringIndexOutOfBoundsException(index, length);
   self->QuickDeliverException();
@@ -105,6 +124,8 @@ extern "C" NO_RETURN void artThrowStringBoundsFromCode(int index, int length, Th
 
 extern "C" NO_RETURN void artThrowStackOverflowFromCode(Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   ScopedQuickEntrypointChecks sqec(self);
   ThrowStackOverflowError(self);
   self->QuickDeliverException();
@@ -114,6 +135,8 @@ extern "C" NO_RETURN void artThrowClassCastException(mirror::Class* dest_type,
                                                      mirror::Class* src_type,
                                                      Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   ScopedQuickEntrypointChecks sqec(self);
   if (dest_type == nullptr) {
     // Find the target class for check cast using the bitstring check (dest_type == null).
@@ -144,6 +167,8 @@ extern "C" NO_RETURN void artThrowClassCastExceptionForObject(mirror::Object* ob
                                                               mirror::Class* dest_type,
                                                               Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   DCHECK(obj != nullptr);
   artThrowClassCastException(dest_type, obj->GetClass(), self);
 }
@@ -151,6 +176,8 @@ extern "C" NO_RETURN void artThrowClassCastExceptionForObject(mirror::Object* ob
 extern "C" NO_RETURN void artThrowArrayStoreException(mirror::Object* array, mirror::Object* value,
                                                       Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LLVM_FRAME_FIXUP(self);
+  LOGLLVM1(ERROR) << __func__;
   ScopedQuickEntrypointChecks sqec(self);
   ThrowArrayStoreException(value->GetClass(), array->GetClass());
   self->QuickDeliverException();

@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1165,9 +1166,7 @@ class Thread {
     return tlsPtr_.thread_local_objects;
   }
 
-  void* GetRosAllocRun(size_t index) const {
-    return tlsPtr_.rosalloc_runs[index];
-  }
+  void* GetRosAllocRun(size_t index) const; 
 
   void SetRosAllocRun(size_t index, void* run) {
     tlsPtr_.rosalloc_runs[index] = run;

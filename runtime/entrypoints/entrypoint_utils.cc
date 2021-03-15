@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +16,8 @@
  */
 
 #include "entrypoints/entrypoint_utils.h"
+
+#include "mcr_rt/mcr_rt.h"
 
 #include "art_field-inl.h"
 #include "art_method-inl.h"
@@ -37,6 +40,9 @@
 #include "reflection.h"
 #include "scoped_thread_state_change-inl.h"
 #include "well_known_classes.h"
+
+#include "mcr_rt/art_impl.h"
+#include "mcr_rt/macros.h"
 
 namespace art {
 
@@ -197,6 +203,7 @@ static inline ArtMethod* DoGetCalleeSaveMethodCaller(ArtMethod* outer_method,
                                                      uintptr_t caller_pc,
                                                      bool do_caller_check)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LOGICHF3(ERROR) << __func__;
   ArtMethod* caller = outer_method;
   if (LIKELY(caller_pc != reinterpret_cast<uintptr_t>(GetQuickInstrumentationExitPc()))) {
     if (outer_method != nullptr) {
@@ -231,6 +238,8 @@ static inline ArtMethod* DoGetCalleeSaveMethodCaller(ArtMethod* outer_method,
 
 ArtMethod* GetCalleeSaveMethodCaller(ArtMethod** sp, CalleeSaveType type, bool do_caller_check)
     REQUIRES_SHARED(Locks::mutator_lock_) {
+  LOGICHF3(INFO) << __func__;
+
   ScopedAssertNoThreadSuspension ants(__FUNCTION__);
   auto outer_caller_and_pc = DoGetCalleeSaveMethodOuterCallerAndPc(sp, type);
   ArtMethod* outer_method = outer_caller_and_pc.first;
@@ -242,6 +251,7 @@ ArtMethod* GetCalleeSaveMethodCaller(ArtMethod** sp, CalleeSaveType type, bool d
 CallerAndOuterMethod GetCalleeSaveMethodCallerAndOuterMethod(Thread* self, CalleeSaveType type) {
   CallerAndOuterMethod result;
   ScopedAssertNoThreadSuspension ants(__FUNCTION__);
+  // INFO this will fail on LLVM
   ArtMethod** sp = self->GetManagedStack()->GetTopQuickFrameKnownNotTagged();
   auto outer_caller_and_pc = DoGetCalleeSaveMethodOuterCallerAndPc(sp, type);
   result.outer_method = outer_caller_and_pc.first;
@@ -252,6 +262,7 @@ CallerAndOuterMethod GetCalleeSaveMethodCallerAndOuterMethod(Thread* self, Calle
 }
 
 ArtMethod* GetCalleeSaveOuterMethod(Thread* self, CalleeSaveType type) {
+  LOGICHF2(INFO) << __func__;
   ScopedAssertNoThreadSuspension ants(__FUNCTION__);
   ArtMethod** sp = self->GetManagedStack()->GetTopQuickFrameKnownNotTagged();
   return DoGetCalleeSaveMethodOuterCallerAndPc(sp, type).first;

@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2015 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +37,13 @@
 #include "scoped_thread_state_change-inl.h"
 #include "simple_compiler_options_map.h"
 
+#ifdef ART_MCR
+#include "mcr_rt/mcr_rt.h"
+
+#include "mcr_cc/analyser.h"
+#include "mcr_cc/mcr_cc.h"
+#endif
+
 namespace art {
 
 CompilerOptions::CompilerOptions()
@@ -63,6 +71,9 @@ CompilerOptions::CompilerOptions()
       implicit_so_checks_(true),
       implicit_suspend_checks_(false),
       compile_pic_(false),
+#ifdef ART_MCR
+      mcr_compilation_type_(CompilationType::kNone),
+#endif
       dump_timings_(false),
       dump_pass_timings_(false),
       dump_stats_(false),
@@ -83,6 +94,76 @@ CompilerOptions::CompilerOptions()
       register_allocation_strategy_(RegisterAllocator::kRegisterAllocatorDefault),
       passes_to_run_(nullptr) {
 }
+
+#ifdef ART_MCR
+CompilerOptions::CompilationType CompilerOptions::GetCompilationType(std::string comp_type) {
+  if (comp_type.find(COMP_TYPE_LLVM_BASELINE) != std::string::npos) {
+    return CompilationType::kLlvmBaseline;
+  } else if (comp_type.find(COMP_TYPE_GEN_LLVM_BITCODE) != std::string::npos) {
+    return CompilationType::kLlvmBitcode;
+  } else {
+    DLOG(FATAL) << "Unknown LLVM compilation type: '" << comp_type << "'";
+    return CompilationType::kNone;
+  }
+}
+
+void CompilerOptions::SetMcrCompilationType(CompilationType type) {
+  mcr_compilation_type_ = type;
+}
+
+void CompilerOptions::SetMcrAppPackage(std::string pkg) {
+  mcr_compiling_package_ = pkg;
+}
+
+void CompilerOptions::SetExtraFlags(std::string f) {
+  mcr_extra_flags_= f;
+}
+
+void CompilerOptions::SetGenerateOatAux(bool val) {
+  gen_oat_aux_ = val;
+}
+
+void CompilerOptions::SetSkipOat(bool val) {
+  skip_oat_ = val;
+}
+
+void CompilerOptions::SetGenerateLLVM_IR(bool val) {
+  optimizing_to_llvm_ = val;
+}
+
+std::string CompilerOptions::GetMcrAppPackage() const {
+  return mcr_compiling_package_;
+}
+
+std::string CompilerOptions::GetMcrGetExtraFlags() const {
+  return mcr_extra_flags_;
+}
+
+bool CompilerOptions::IsCompilingForLlvm() const {
+  return mcr_compilation_type_ != CompilationType::kNone;
+}
+
+bool CompilerOptions::IsGeneratingLlvmBitcode() const {
+  return mcr_compilation_type_ == CompilationType::kLlvmBitcode;
+}
+
+bool CompilerOptions::IsCompilingLlvmBaseline() const {
+  return mcr_compilation_type_ == CompilationType::kLlvmBaseline;
+}
+
+bool CompilerOptions::IsLlvmEntrypoint(const MethodReference& method_ref) const {
+  return mcr::McrCC::IsLlvmEntrypoint(method_ref.PrettyMethod());
+}
+
+bool CompilerOptions::IsLlvmMethodToCompile(const MethodReference& method_ref) const {
+  return mcr::Analyser::IsHotMethod(method_ref.PrettyMethod());
+}
+
+void CompilerOptions::SetAppDexFiles(
+    const std::vector<const DexFile*>* dex_files){
+  app_dex_files_=dex_files;
+}
+#endif
 
 CompilerOptions::~CompilerOptions() {
   // Everything done by member destructors.

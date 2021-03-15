@@ -1,0 +1,6 @@
+id=llvm-static
+name=LLVM-static
+version=0.1
+versionCode=1
+author=Paschalis Mpeis
+description=LLVM moduless that change infrequently 

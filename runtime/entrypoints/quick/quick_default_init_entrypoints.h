@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2016 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +25,14 @@
 #include "quick_default_externs.h"
 #include "quick_entrypoints.h"
 
+#include "mcr_rt/opt_interface.h"
+
 namespace art {
+
+extern "C" void art_quick_invoke_stub(ArtMethod*, uint32_t*, uint32_t, Thread*, JValue*,
+                                      const char*);
+extern "C" void art_quick_invoke_static_stub(ArtMethod*, uint32_t*, uint32_t, Thread*, JValue*,
+                                             const char*);
 
 static void DefaultInitEntryPoints(JniEntryPoints* jpoints, QuickEntryPoints* qpoints) {
   // JNI
@@ -118,9 +126,48 @@ static void DefaultInitEntryPoints(JniEntryPoints* jpoints, QuickEntryPoints* qp
   qpoints->pThrowNullPointer = art_quick_throw_null_pointer_exception;
   qpoints->pThrowStackOverflow = art_quick_throw_stack_overflow;
   qpoints->pThrowStringBounds = art_quick_throw_string_bounds;
-
   // Deoptimize
   qpoints->pDeoptimize = art_quick_deoptimize_from_compiled_code;
+
+#ifdef ART_MCR  // LLVM - Resolution and initialization
+  qpoints->pLLVMReadBarrierSlow = art_llvm_read_barrier_slow;
+  // class resolution
+  qpoints->pLLVMResolveType = art_llvm_resolve_type;
+  qpoints->pLLVMResolveTypeAndVerifyAccess = art_llvm_resolve_type_and_verify_access;
+  qpoints->pLLVMResolveTypeInternal= art_llvm_resolve_type_internal;
+
+  // Method resolution
+  qpoints->pLLVMResolveInternalMethod = art_llvm_resolve_internal_method;
+  qpoints->pLLVMResolveExternalMethod = art_llvm_resolve_external_method;
+  qpoints->pLLVMResolveVirtualMethod = art_llvm_resolve_virtual_method;
+  qpoints->pLLVMResolveInterfaceMethod = art_llvm_resolve_interface_method;
+  qpoints->pLLVMResolveString = art_llvm_resolve_string;
+
+  qpoints->pLLVMTestSuspend= art_llvm_test_suspend;
+
+  qpoints->pLLVMJValueSetL= art_llvm_jvalue_setl;
+  qpoints->pLLVMGetObjStatic = art_llvm_get_obj_static;
+  qpoints->pLLVMGetObjInstance = art_llvm_get_obj_instance;
+
+  // Invoke entrypoints
+  qpoints->pLLVMInvokeQuickWrapper = art_llvm_invoke_quick;
+  qpoints->pLLVMInvokeQuickStaticWrapper = art_llvm_invoke_quick_static;
+
+  qpoints->pLLVMInvokeQuickDirect = art_quick_invoke_stub;
+  qpoints->pLLVMInvokeQuickStaticDirect = art_quick_invoke_static_stub;
+
+  // Managed Stack
+  qpoints->pLLVMPushQuickFrame= art_llvm_push_quick_frame;
+  qpoints->pLLVMPopQuickFrame= art_llvm_pop_quick_frame;
+  qpoints->pLLVMClearTopOfStack= art_llvm_clear_top_of_stack;
+
+  // Debug verification
+  qpoints->pLLVMVerifyArtMethod= art_llvm_verify_art_method;
+  qpoints->pLLVMVerifyArtClass= art_llvm_verify_art_class;
+  qpoints->pLLVMVerifyArtObject= art_llvm_verify_art_object;
+  qpoints->pLLVMVerifyStackFrameCurrent= llvm_verify_stack_frame_current;
+  // mcr::OptimizingInterface::qpoints_=qpoints;
+#endif
 }
 
 }  // namespace art

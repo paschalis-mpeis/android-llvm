@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2014 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,12 +21,16 @@
 #include <cstdint>
 
 namespace art {
+class ManagedStack;
+class ShadowFrame;
 namespace mirror {
 class Array;
 class Class;
 class Object;
 }  // namespace mirror
 class ArtMethod;
+union JValue;
+class Thread;
 }  // namespace art
 
 // These are extern declarations of assembly stubs with common names.
@@ -40,6 +45,53 @@ extern "C" void* art_quick_resolve_type_and_verify_access(uint32_t);
 extern "C" void* art_quick_resolve_method_handle(uint32_t);
 extern "C" void* art_quick_resolve_method_type(uint32_t);
 extern "C" void* art_quick_resolve_string(uint32_t);
+
+// LLVM - Resolution and initialization entrypoints.
+#ifdef ART_MCR
+extern "C" art::mirror::Object* art_llvm_read_barrier_slow(
+    art::mirror::Object*, art::mirror::Object*, uint32_t);
+extern "C" void* art_llvm_resolve_type(art::ArtMethod*, uint32_t, void**);
+extern "C" void* art_llvm_resolve_type_and_verify_access(art::ArtMethod*, uint32_t, void**);
+extern "C" void* art_llvm_resolve_type_internal(art::ArtMethod*, uint32_t, void**);
+extern "C" void* art_llvm_resolve_internal_method(art::ArtMethod*, uint32_t, uint32_t);
+extern "C" void* art_llvm_resolve_external_method(art::ArtMethod* caller,
+                            const char* dex_filename, const char* dex_location,
+                            uint32_t dex_method_idx, uint32_t iinvoke_type);
+extern "C" void* art_llvm_resolve_virtual_method(
+    art::mirror::Object* receiver, art::ArtMethod* method);
+extern "C" void* art_llvm_resolve_interface_method(
+    art::mirror::Object* vreceiver, art::ArtMethod* vmethod);
+
+extern "C" void* art_llvm_resolve_string(art::ArtMethod*, uint32_t, void**);
+
+extern "C" void art_llvm_test_suspend();
+
+extern "C" void art_llvm_jvalue_setl(art::JValue* jvalue, art::mirror::Object* obj);
+
+extern "C" void* art_llvm_get_obj_static(uint32_t, art::ArtMethod*);
+extern "C" void* art_llvm_get_obj_instance(uint32_t, void*, art::ArtMethod*);
+
+// CLR invoke entrypoints are not used anymore
+// instead a direct call is done to art_quick_invoke_stub
+// Invoke quick entrypoints
+extern "C" void art_llvm_invoke_quick(
+    art::ArtMethod*, uint32_t* args, uint32_t args_sz, art::Thread*,
+    art::JValue*, const char*);
+extern "C" void art_llvm_invoke_quick_static(
+    art::ArtMethod*, uint32_t* args, uint32_t args_sz, art::Thread*,
+    art::JValue*, const char*);
+
+// Managed Stack
+extern "C" void art_llvm_push_quick_frame(art::ManagedStack*);
+extern "C" void art_llvm_pop_quick_frame(art::ManagedStack*);
+extern "C" void art_llvm_clear_top_of_stack();
+
+// debug entrypoints
+extern "C" void art_llvm_verify_art_method(art::ArtMethod*);
+extern "C" void art_llvm_verify_art_class(art::mirror::Class*);
+extern "C" void art_llvm_verify_art_object(art::mirror::Object*);
+extern "C" void llvm_verify_stack_frame_current();
+#endif
 
 // Field entrypoints.
 extern "C" int art_quick_set8_instance(uint32_t, void*, int8_t);
@@ -107,6 +159,9 @@ extern "C" void* art_quick_memcpy(void*, const void*, size_t);
 extern "C" void art_quick_imt_conflict_trampoline(art::ArtMethod*);
 extern "C" void art_quick_resolution_trampoline(art::ArtMethod*);
 extern "C" void art_quick_to_interpreter_bridge(art::ArtMethod*);
+#ifdef ART_MCR_TARGET_RT
+extern "C" void art_quick_to_llvm_bridge(art::ArtMethod*);
+#endif
 extern "C" void art_quick_invoke_direct_trampoline_with_access_check(uint32_t, void*);
 extern "C" void art_quick_invoke_interface_trampoline_with_access_check(uint32_t, void*);
 extern "C" void art_quick_invoke_static_trampoline_with_access_check(uint32_t, void*);

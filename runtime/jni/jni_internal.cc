@@ -1,4 +1,5 @@
 /*
+ * Copyright (C) 2021 Paschalis Mpeis
  * Copyright (C) 2011 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -2470,7 +2471,7 @@ class JNI {
     StackHandleScope<1> hs(soa.Self());
     Handle<mirror::Class> c = hs.NewHandle(soa.Decode<mirror::Class>(java_class));
     if (UNLIKELY(method_count == 0)) {
-      LOG(WARNING) << "JNI RegisterNativeMethods: attempt to register 0 native methods for "
+      LOGVV(WARNING) << "JNI RegisterNativeMethods: attempt to register 0 native methods for "
           << c->PrettyDescriptor();
       return JNI_OK;
     }

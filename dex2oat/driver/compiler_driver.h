@@ -93,6 +93,18 @@ class CompilerDriver {
 
   ~CompilerDriver();
 
+#ifdef ART_MCR_COMPILE_OS_METHODS
+  void PreCompileOsMethods(jobject class_loader,
+      TimingLogger* timings,
+      /*inout*/ HashSet<std::string>* image_classes,
+      /*out*/ VerificationResults* verification_results)
+      REQUIRES(!Locks::mutator_lock_);
+  void CompileOsMethods(jobject class_loader, TimingLogger* timings)
+      REQUIRES(!Locks::mutator_lock_);
+  CompiledMethod* CompileMethod(ArtMethod* method)
+      REQUIRES_SHARED(Locks::mutator_lock_);
+#endif
+
   // Set dex files classpath.
   void SetClasspathDexFiles(const std::vector<const DexFile*>& dex_files);
 
