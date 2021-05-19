@@ -64,22 +64,6 @@ static ALWAYS_INLINE inline mirror::Object* artAllocObjectFromCode(
       }
     }
   }
-#ifdef CRDEBUG2
-  std::string msg = ": " + LLVM::PrettyClass(klass);
-  if (kInitialized) {
-    mirror::Object* obj =  AllocObjectFromCodeInitialized<kInstrumented>(klass, self, allocator_type).Ptr();
-    LOGLLVM(INFO) << __func__ << ":kInit: " << std::hex << obj << msg;
-    return obj;
-  } else if (!kFinalize) {
-    mirror::Object* obj =  AllocObjectFromCodeResolved<kInstrumented>(klass, self, allocator_type).Ptr();
-    LOGLLVM(INFO) << __func__ << ":!kFinalize: " << std::hex << obj << msg;
-    return obj;
-  } else {
-    mirror::Object* obj =  AllocObjectFromCode<kInstrumented>(klass, self, allocator_type).Ptr();
-    LOGLLVM(INFO) << __func__ << ":kelse: " << std::hex << obj << msg;
-    return obj;
-  }
-#else
 if (kInitialized) {
     return AllocObjectFromCodeInitialized<kInstrumented>(klass, self, allocator_type).Ptr();
   } else if (!kFinalize) {
@@ -87,7 +71,6 @@ if (kInitialized) {
   } else {
     return AllocObjectFromCode<kInstrumented>(klass, self, allocator_type).Ptr();
   }
-#endif
 }
 
 #define GENERATE_ENTRYPOINTS_FOR_ALLOCATOR_INST(suffix, suffix2, instrumented_bool, allocator_type) \

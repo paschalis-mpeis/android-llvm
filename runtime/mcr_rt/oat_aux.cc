@@ -73,8 +73,6 @@ bool OatAux::IsIchfSLOW(ArtMethod *method) {
   bool ichf = false;
   if(method==nullptr) return false;
 
-
-
   auto it = rt_methods_.find(method);
   if (it != rt_methods_.end()) {
     ichf = it->second.IsCompiled();

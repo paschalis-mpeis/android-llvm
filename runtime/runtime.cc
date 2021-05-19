@@ -2895,4 +2895,15 @@ bool Runtime::GetStartupCompleted() const {
   return startup_completed_.load(std::memory_order_seq_cst);
 }
 
+jit::Jit* Runtime::GetJit() const {
+#ifdef ART_MCR_TARGET
+  // JIT disabled on replays or on live executions (Quick/ LLVM)
+  if(IS_REPLAY_ANY() || IS_LIVE_ANY() || IS_CAPTURE()) {
+    LOGRD5(ERROR) << __func__ << ": jit disabled";
+    return nullptr;
+  }
+#endif
+  return jit_.get();
+}
+
 }  // namespace art

@@ -462,9 +462,7 @@ class Runtime {
     kInitialize
   };
 
-  jit::Jit* GetJit() const {
-    return jit_.get();
-  }
+  jit::Jit* GetJit() const; 
 
   // Returns true if JIT compilations are enabled. GetJit() will be not null in this case.
   bool UseJitCompilation() const;

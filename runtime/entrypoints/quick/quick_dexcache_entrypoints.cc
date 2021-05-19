@@ -57,7 +57,6 @@ static void StoreObjectInBss(ArtMethod* outer_method,
     return;
   }
 
-  LOGLLVM4(ERROR) << __func__ << ": from: " << outer_method->PrettyMethod();
   GcRoot<mirror::Object>* slot = reinterpret_cast<GcRoot<mirror::Object>*>(
       const_cast<uint8_t*>(oat_file->BssBegin() + bss_offset));
   DCHECK_GE(slot, oat_file->GetBssGcRoots().data());
@@ -151,7 +150,6 @@ static ALWAYS_INLINE bool CanReferenceBss(ArtMethod* outer_method, ArtMethod* ca
 
 extern "C" mirror::Class* artInitializeStaticStorageFromCode(mirror::Class* klass, Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
-  LOGLLVM3(INFO) << __func__;
   // Called to ensure static storage base is initialized for direct static field reads and writes.
   // A class may be accessing another class' fields when it doesn't have access, as access has been
   // given by inheritance.
@@ -248,10 +246,6 @@ REQUIRES_SHARED(Locks::mutator_lock_) {
   // so use just the caller..
   ArtMethod* outer_method = caller;
 
-  // arguments
-  D4LOG(INFO) << "caller: " << std::hex << caller;
-  D4LOG(INFO) << "caller: " << caller->PrettyMethod();
-
   // Called when the .bss slot was empty or for main-path runtime call.
   ScopedQuickEntrypointChecks sqec(self);
     
@@ -263,8 +257,6 @@ REQUIRES_SHARED(Locks::mutator_lock_) {
     StoreTypeInBss(outer_method, dex::TypeIndex(type_idx), result,
         llvm_bss_slot);
   }
-  LOGLLVMDRT(INFO) << __func__ << ": Class: " << result->PrettyClass()
-    << ": " << std::hex << result.Ptr();
 
   return result.Ptr();
 }
@@ -274,7 +266,6 @@ extern "C" mirror::Class* artResolveTypeAndVerifyAccessFromLLVM(
 REQUIRES_SHARED(Locks::mutator_lock_) {
   UNUSED(llvm_bss_slot);
   LLVM_FRAME_FIXUP(self);
-  D5LOG(ERROR) <<  __func__;
 
   // Called when caller isn't guaranteed to have access to a type.
   ScopedQuickEntrypointChecks sqec(self);
@@ -286,9 +277,6 @@ REQUIRES_SHARED(Locks::mutator_lock_) {
       /* verify_access= */ true);
 
   // Do not StoreTypeInBss(); access check entrypoint is never used together with .bss.
-  D2LOG(INFO) << __func__ << ": class: " << result->PrettyClass()
-    << ": " << std::hex << result.Ptr();
-
   return result.Ptr();
 }
 
@@ -296,9 +284,7 @@ extern "C" mirror::Class* artResolveTypeInternalLLVM(
     ArtMethod* caller, uint32_t type_idx, void** llvm_bss_slot, Thread* self)
 REQUIRES_SHARED(Locks::mutator_lock_) {
   UNUSED(llvm_bss_slot);
-  D5LOG(ERROR) << "RTIVA: " << __func__;
   LLVM_FRAME_FIXUP(self);
-  D5LOG(WARNING) << "RTIVA: "<< __func__ << ": " << std::to_string(type_idx);
 
   // Called when caller isn't guaranteed to have access to a type.
   ScopedQuickEntrypointChecks sqec(self);
@@ -309,12 +295,9 @@ REQUIRES_SHARED(Locks::mutator_lock_) {
       /* can_run_clinit= */ false,
       /* verify_access= */ true);
 
-  D2LOG(WARNING) << __func__ << ": ResolveVerifyAndClinit returned";
+  D3LOG(WARNING) << __func__ << ": ResolveVerifyAndClinit returned";
 
   // Do not StoreTypeInBss(); access check entrypoint is never used together with .bss.
-
-  D5LOG(INFO) << __func__ << ": class: " << result->PrettyClass()
-    << ": " << std::hex << result.Ptr();
 
   return result.Ptr();
 }
@@ -322,7 +305,6 @@ REQUIRES_SHARED(Locks::mutator_lock_) {
 extern "C" mirror::String* artResolveStringFromLLVM(
     ArtMethod* caller, int32_t string_idx, void** llvm_bss_slot, Thread* self)
     REQUIRES_SHARED(Locks::mutator_lock_) {
-  LOGLLVM3(INFO) << __func__ << ": Caller: " << caller->PrettyMethod();
   LOGLLVM4(INFO) << __func__ << ": String Idx: " << string_idx;
   LLVM_FRAME_FIXUP(self);
 
@@ -347,15 +329,6 @@ extern "C" mirror::String* artResolveStringFromLLVM(
     LOGLLVM4(WARNING) << __func__ << ": Store in BSS";
     StoreStringInBss(outer_method, dex::StringIndex(string_idx), result, llvm_bss_slot);
   }
-#ifdef CRDEBUG2
-  else {
-    LOGLLVM(ERROR) << __func__ << ": nullptr (caller:"
-      << caller->PrettyMethod() << ")";
-  }
-#endif
-
-  LOGLLVM4(ERROR) << __func__ << ": Resolved: '"
-    <<  result.Ptr()->ToModifiedUtf8() << "'";
 
   return result.Ptr();
 }

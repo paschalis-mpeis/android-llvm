@@ -594,7 +594,7 @@ void ArtInterpreterToCompiledCodeBridge(Thread* self,
   ArtMethod* method = shadow_frame->GetMethod();
 #ifdef ART_MCR_DBG_INVOCATION
   if(mcr::McrRT::IsDebugInvokeProcess()) {
-    std::string pretty_method = method->PrettyMethod();
+    std::string pretty_method = method->PrettyMethod(); // INFO: PrettyMethod might crash RT
     DLOG(INFO) << "ItoQ: " << pretty_method;
   }
 #endif
