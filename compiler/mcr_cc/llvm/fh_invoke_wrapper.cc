@@ -261,12 +261,24 @@ if(histogram == nullptr && !McrDebug::SpeculativeDevirt()) {
     SwitchInst* Switch = SwitchInst::Create(
         obj_class_idx, spec_miss, histogram->GetSize(), irb->GetInsertBlock());
 
+    /* 
+     * When enabled (use_histogram=T):
+     *
+     * Created a switch instruction:
+     * - for each speculation (histogram entry)
+     *    - ADD a weighted label to the switch (branch predition),
+     *      based on the execution frequency that was observed earlier.
+     *      After the biased check, the method will be executed directly
+     *      (w/o RT intervention. w/o leaving LLVM code).
+     * - add default case:
+     *    - call method through RT:
+     *    - Something that Android would have done anyway
+     *      as this concerns non-direct calls (calls that did not "de-virtualized")
+     */
     // populate instructions for all blocks
     for (SortedSpeculationIterator it(histogram->begin());
         it != histogram->end(); it++) {
       mcr::InvokeInfo invoke_info = *it;
-      // const bool is_first = it == histogram->begin();
-      // const bool is_last = std::next(it) == histogram->end();
       const uint32_t class_idx = invoke_info.GetSpecClassIdx();
 
       // OPTIMIZE_LLVM recursive virtual calls:
